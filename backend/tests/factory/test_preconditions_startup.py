@@ -32,7 +32,7 @@ import pytest
 
 from app.factory.build.block_obligations import (
     BlockObligationError,
-    RESOURCE_OBLIGATIONS,
+    resource_obligations,
     _platform_ensure_input,
     describe_resource_obligations,
     platform_obligations_for,
@@ -40,7 +40,7 @@ from app.factory.build.block_obligations import (
     resource_obligations_for,
 )
 
-ALL_BLOCKS = sorted(RESOURCE_OBLIGATIONS)
+ALL_BLOCKS = sorted(resource_obligations())
 
 
 # -- which obligations may run at startup ---------------------------------
@@ -53,7 +53,7 @@ def test_every_resource_obligation_declares_a_scope():
     obligation that forgets the key is silently excluded from startup and
     nothing anywhere says so. Absence must be a test failure, not a shrug.
     """
-    for block_id, rule in RESOURCE_OBLIGATIONS.items():
+    for block_id, rule in resource_obligations().items():
         assert rule.get("scope") in {"platform", "per_record"}, (
             "%s declares scope=%r; startup emission is decided by this key"
             % (block_id, rule.get("scope"))
@@ -76,9 +76,9 @@ def test_storage_is_left_to_the_handler_because_its_inputs_are_caller_data():
     scope "platform", which would make the platform fabricate a record at
     every boot and still pass every other test in this file.
     """
-    assert RESOURCE_OBLIGATIONS["storage"]["scope"] == "per_record"
+    assert resource_obligations()["storage"]["scope"] == "per_record"
     with pytest.raises(BlockObligationError) as exc:
-        _platform_ensure_input(RESOURCE_OBLIGATIONS["storage"], "Lettings")
+        _platform_ensure_input(resource_obligations()["storage"], "Lettings")
     message = str(exc.value)
     assert "per_record" in message
     # It names the field that has no platform-level value rather than
@@ -101,7 +101,7 @@ def test_every_platform_scoped_rule_can_actually_be_fed_at_boot():
 def test_the_ensure_inputs_are_about_the_platform_not_about_a_record():
     """Mutation killed: filling a missing field with a plausible domain
     value ("Flat 3B") instead of raising."""
-    values = _platform_ensure_input(RESOURCE_OBLIGATIONS["team"], "Lettings Manager")
+    values = _platform_ensure_input(resource_obligations()["team"], "Lettings Manager")
     assert values["user_id"] == "system"
     assert values["name"] == "Lettings Manager system"
     assert values["slug"] == "lettings-manager-system"
@@ -112,7 +112,7 @@ def test_the_slug_survives_a_product_name_that_is_not_url_safe():
     an ampersand or an accent in it is refused by the block that receives
     it, at boot, where nobody is watching."""
     values = _platform_ensure_input(
-        RESOURCE_OBLIGATIONS["team"], "Ridge & Fell Lettings (UK)"
+        resource_obligations()["team"], "Ridge & Fell Lettings (UK)"
     )
     slug = values["slug"]
     assert slug == "ridge---fell-lettings--uk-system", slug
@@ -126,7 +126,7 @@ def test_an_unknown_ensure_field_is_named_rather_than_invented():
     """Mutation killed: `out[field] = known.get(field, "")` -- an empty
     string is a value, and the block would refuse it at boot with a message
     nobody reads."""
-    rule = dict(RESOURCE_OBLIGATIONS["team"])
+    rule = dict(resource_obligations()["team"])
     rule["ensure_input"] = ["user_id", "tenancy_reference"]
     with pytest.raises(BlockObligationError) as exc:
         _platform_ensure_input(rule, "Lettings")

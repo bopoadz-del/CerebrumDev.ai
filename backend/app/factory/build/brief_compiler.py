@@ -712,14 +712,22 @@ def render_slot_bodies(
     from app.factory.build.money_contract import money_brief_lines
 
     do_lines += ["", *money_brief_lines(blueprint)]
+    # Placeholder connectors: which capabilities answer the typed unavailable
+    # refusal, and what their tests assert instead of a round trip.
+    from app.factory.build.placeholder_connectors import brief_lines as placeholder_brief_lines
+
+    placeholder = placeholder_brief_lines(blueprint)
+    if placeholder:
+        do_lines += ["", *placeholder]
 
     acceptance = _section_lines(
         "Fails loud. The run is not done until ALL of these are true. "
         "ACCEPTANCE is run by the harness, not the coder.",
         "- the product boots  [check:boot]",
         f"- own gates green  [check:{SUITE_CHECK}]",
-        "- one-record round-trip per capability (POST creates, GET returns it)  "
-        f"[check:{PRODUCT_ROUND_TRIP_CHECK}]",
+        "- one-record round-trip per capability (POST creates, GET returns it); a capability "
+        "calling a declared placeholder connector answers HTTP 503 error_kind unavailable "
+        f"instead and is not judged  [check:{PRODUCT_ROUND_TRIP_CHECK}]",
         persist_accept_acceptance_line(),
         schema_accept_acceptance_line(),
         reuse_accept_acceptance_line(),

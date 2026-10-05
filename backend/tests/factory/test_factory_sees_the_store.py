@@ -116,11 +116,11 @@ class TestClearanceIsStillTheFactorysStatement:
         named refusals. Nothing on that list may be attachable, and the chat
         must still be able to name it rather than pretend it does not exist.
         """
-        from app.factory.dual_registry import NOT_CLEARED_BLOCK_IDS
+        from app.factory.dual_registry import not_cleared_block_ids
 
         catalog = store_catalog()
 
-        refused = set(NOT_CLEARED_BLOCK_IDS)
+        refused = set(not_cleared_block_ids())
         assert refused, "the Factory must still be able to refuse a block"
         assert not (refused & set(catalog["blocks"])), (
             "a refused block is attachable"
@@ -134,9 +134,9 @@ class TestClearanceIsStillTheFactorysStatement:
 
     def test_every_refusal_carries_its_reason(self):
         """A deny-list without reasons grows silently and is never revisited."""
-        from app.factory.dual_registry import NOT_CLEARED_BLOCK_IDS
+        from app.factory.dual_registry import not_cleared_block_ids
 
-        for bid, reason in NOT_CLEARED_BLOCK_IDS.items():
+        for bid, reason in not_cleared_block_ids().items():
             assert reason and len(reason) > 20, bid
 
 

@@ -116,6 +116,27 @@ def test_split_is_by_declared_id_never_by_finding_text():
     assert split.invented_checks == [INVENTED]
 
 
+def test_unjudged_round_trip_rows_are_never_classified():
+    """A placeholder-connector capability is UNJUDGED, not failed: it sits in
+    payload["unjudged"], never in findings, so it is neither handed to the
+    writer nor recorded as advisory -- and narrowing keeps it as it was."""
+    verdict = GateResult(
+        ok=False,
+        gate="product_green",
+        findings=["orders: GET returned 0 record(s)"],
+        payload={
+            "check": "round_trip",
+            "unjudged": ["ledger_sync: placeholder connector (503 unavailable)"],
+        },
+    )
+    split = brief_gates.split_failures(verdict, frozenset())
+
+    assert [f for _, f in split.invented] == ["orders: GET returned 0 record(s)"]
+    assert split.defined == ()
+    kept = brief_gates.narrowed(verdict, split)
+    assert kept.payload["unjudged"] == verdict.payload["unjudged"]
+
+
 # -- the runner ---------------------------------------------------------------
 
 

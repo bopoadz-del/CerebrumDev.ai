@@ -148,6 +148,14 @@ def _entity_map():
 ENTITIES = _entity_map()
 AUTH = {"Authorization": "Bearer " + os.environ.get("PLATFORM_TOKEN", "dev-local-token")}
 
+# The Factory-written declaration of placeholder connectors. A product built
+# before it existed declares none, so every capability is judged.
+try:
+    from app.placeholders import is_declared_refusal
+except Exception:
+    def is_declared_refusal(capability_id, status_code, body):
+        return False
+
 
 def _entity_of(cap_id, cls):
     return ENTITIES.get(cap_id) or getattr(cls, "ENTITY", None) or cap_id
@@ -202,10 +210,23 @@ for cap_id, cls in MODELS.items():
     except Exception as exc:
         misses.append("%s: POST raised %s: %s" % (cap_id, type(exc).__name__, exc))
         continue
+    try:
+        data = resp.json() if resp.content else {}
+    except Exception:
+        data = None
+    if is_declared_refusal(cap_id, resp.status_code, data):
+        # Its connector is a DECLARED placeholder: the typed refusal is the
+        # right answer, and there is no record to remember. Named with its
+        # reason, never counted as a pass or a miss.
+        unjudged.append(
+            "%s (declared placeholder connector(s) %s not configured)"
+            % (cap_id, ", ".join(data.get("settings") or []))
+        )
+        continue
     if resp.status_code != 200:
         misses.append("%s: POST answered HTTP %s" % (cap_id, resp.status_code))
         continue
-    data = resp.json() if resp.content else {}
+    data = data if isinstance(data, dict) else {}
     if isinstance(data, dict) and data.get("ok") is False:
         misses.append(
             "%s: POST refused its own sample payload: %s"

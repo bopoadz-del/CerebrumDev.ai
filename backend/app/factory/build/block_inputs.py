@@ -49,6 +49,18 @@ from app.factory.build.block_obligations import (
     is_envelope_status_vocab,
 )
 from app.factory.build.reuse_accept import default_block_action
+from app.factory.store_kits import (
+    DOCUMENT_EXTRACTION,
+    EVENTS,
+    JOBS,
+    LAYOUT,
+    MEMBERSHIP,
+    MESSAGING,
+    METRICS,
+    ORCHESTRATION,
+    RECORDS,
+    block_capability_class,
+)
 
 #: Path-like keys document_engine (and SCHEMA_OBLIGATIONS) accept.
 _DOC_PATH_KEYS = (
@@ -154,6 +166,7 @@ def prepare_block_input(
     product_name: str = "platform",
     entity: Optional[str] = None,
     default_actions: Optional[Dict[str, str]] = None,
+    capability_classes: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, Any]:
     """Return a payload the named block can accept for ``action``.
 
@@ -165,35 +178,52 @@ def prepare_block_input(
     workflow children receive it as ``step.action`` because the Store
     workflow calls ``execute(input, {})`` and otherwise drops the action
     factory dispatch would have passed.
+
+    Which shaping applies is what the block DECLARES: its signed
+    ``capability_class`` (``capability_classes`` maps id -> class for this
+    build; absent, the Store manifest is read). The id decides nothing, so a
+    block republished under a new id keeps its shaping and a block that
+    declares no class is passed through untouched.
     """
     _resolved, data = split_execute_action(domain, action=action)
     bid = str(block_id or "")
     merged_actions = dict(default_actions or {})
-    if bid == "notification":
-        return _for_notification(data, roster)
-    if bid == "workflow":
+    cls = _class_of(bid, capability_classes)
+    if cls == MESSAGING:
+        return _for_notification(data, roster, self_id=bid)
+    if cls == ORCHESTRATION:
         return _for_workflow(
             data,
             roster,
             product_name=product_name,
             entity=entity,
             default_actions=merged_actions,
+            self_id=bid,
+            capability_classes=capability_classes,
         )
-    if bid == "team":
+    if cls == MEMBERSHIP:
         return _for_team(data, product_name=product_name)
-    if bid == "document_engine":
+    if cls == DOCUMENT_EXTRACTION:
         return _for_document_engine(data)
-    if bid == "analytics":
+    if cls == METRICS:
         return _for_analytics(data)
-    if bid == "event_bus":
-        return _for_event_bus(data, roster)
-    if bid == "database":
+    if cls == EVENTS:
+        return _for_event_bus(data, roster, self_id=bid)
+    if cls == RECORDS:
         return _for_database(data, entity=entity)
-    if bid == "queue":
+    if cls == JOBS:
         return _for_queue(data)
-    if bid == "dashboard":
+    if cls == LAYOUT:
         return _for_dashboard(data)
     return data
+
+
+def _class_of(block_id: str, classes: Optional[Mapping[str, str]]) -> Optional[str]:
+    """The block's declared ``capability_class``: from this build's map when
+    one is given, else from the Store manifest."""
+    if classes is not None:
+        return classes.get(block_id)
+    return block_capability_class(block_id)
 
 
 def _summary_message(data: Dict[str, Any]) -> str:
@@ -274,15 +304,17 @@ def notification_channel(
     return _OFFLINE_NOTIFICATION_CHANNEL
 
 
-def _for_notification(data: Dict[str, Any], roster: Sequence[str]) -> Dict[str, Any]:
+def _for_notification(
+    data: Dict[str, Any], roster: Sequence[str], *, self_id: str
+) -> Dict[str, Any]:
     out = dict(data)
     out["channel"] = notification_channel(out.get("channel"), out)
     if not out.get("message"):
         body = out.get("body")
         out["message"] = body if isinstance(body, str) and body.strip() else _summary_message(data)
     if str(out.get("channel")).lower() == "mcp" and not out.get("block") and not out.get("tool"):
-        peers = [b for b in roster if b and b != "notification"]
-        out["block"] = peers[0] if peers else "notification"
+        peers = [b for b in roster if b and b != self_id]
+        out["block"] = peers[0] if peers else self_id
     return out
 
 
@@ -311,6 +343,7 @@ def _shape_workflow_steps(
     entity: Optional[str],
     default_actions: Optional[Dict[str, str]],
     fallback_domain: Dict[str, Any],
+    capability_classes: Optional[Mapping[str, str]] = None,
 ) -> List[Any]:
     """Prepare each existing step's input. Do not return coder steps as-is.
 
@@ -345,6 +378,7 @@ def _shape_workflow_steps(
             product_name=product_name,
             entity=entity,
             default_actions=default_actions,
+            capability_classes=capability_classes,
         )
         if not item.get("action"):
             action = _step_action(bid, default_actions)
@@ -424,6 +458,8 @@ def _for_workflow(
     product_name: str = "platform",
     entity: Optional[str] = None,
     default_actions: Optional[Dict[str, str]] = None,
+    self_id: str,
+    capability_classes: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, Any]:
     out = dict(data)
     steps = out.get("steps")
@@ -435,9 +471,10 @@ def _for_workflow(
             entity=entity,
             default_actions=default_actions,
             fallback_domain=data,
+            capability_classes=capability_classes,
         )
         return ensure_workflow_result(out)
-    peers = [b for b in roster if b and b != "workflow"]
+    peers = [b for b in roster if b and b != self_id]
     built: List[Dict[str, Any]] = []
     for block in peers[:3]:
         # workflow reads step.get("block"); "block_id" is ignored (live miss).
@@ -453,6 +490,7 @@ def _for_workflow(
                 product_name=product_name,
                 entity=entity,
                 default_actions=default_actions,
+                capability_classes=capability_classes,
             ),
         }
         action = _step_action(block, default_actions)
@@ -460,9 +498,10 @@ def _for_workflow(
             step["action"] = action
         built.append(step)
     if not built:
-        # Capability bound only to workflow: still supply a well-formed step
-        # list so the block's required-field check is not the failure mode.
-        built.append({"block": "workflow", "input": dict(data)})
+        # Capability bound only to the orchestrator: still supply a
+        # well-formed step list so its required-field check is not the
+        # failure mode.
+        built.append({"block": self_id, "input": dict(data)})
     out["steps"] = built
     return ensure_workflow_result(out)
 
@@ -626,6 +665,8 @@ def _topic_from_domain(data: Dict[str, Any]) -> str:
 def _for_event_bus(
     data: Dict[str, Any],
     roster: Sequence[str] = (),
+    *,
+    self_id: str,
 ) -> Dict[str, Any]:
     """Satisfy Store event_bus notify — not a copy of the schema sample.
 
@@ -671,9 +712,10 @@ def _for_event_bus(
         data.get("channel") if data.get("channel") is not None else inner.get("channel"),
         data,
     )
-    # MCP notify target is always event_bus. A peer id (database) as
-    # block/tool is the live automated_reminders Store step_0 refuse:
-    # workflow's first child is event_bus but notify looked for the peer.
+    # MCP notify target is always the events block itself. A peer id
+    # (database) as block/tool is the live automated_reminders Store step_0
+    # refuse: workflow's first child is event_bus but notify looked for the
+    # peer.
     return {
         "topic": topic,
         "payload": dict(payload),
@@ -681,8 +723,8 @@ def _for_event_bus(
         "event": topic,
         "message": str(message).strip() or _summary_message(data),
         "channel": channel,
-        "block": "event_bus",
-        "tool": "event_bus",
+        "block": self_id,
+        "tool": self_id,
     }
 
 
@@ -1327,12 +1369,28 @@ def align_spec_to_handler_source(
     return align_spec_to_handler_fields(spec, handler_field_contracts(handler_source))
 
 
-def render_block_inputs_module(default_actions: Optional[Mapping[str, str]] = None) -> str:
+def render_block_inputs_module(
+    default_actions: Optional[Mapping[str, str]] = None,
+    capability_classes: Optional[Mapping[str, str]] = None,
+) -> str:
     """Source for the generated platform's ``app/block_inputs.py``.
 
-    ``default_actions`` is THIS build's map, harvested from the blocks it
-    vendored. A product never carries another product's answers.
+    ``default_actions`` and ``capability_classes`` are THIS build's maps,
+    harvested from the manifests of the blocks it vendored. A product never
+    carries another product's answers.
+
+    ``capability_classes=None`` means the caller holds no vendored manifests:
+    the classes are then what the pinned Store's manifests declare. ``{}``
+    means "no block declares one" and shapes nothing.
     """
+    if capability_classes is None:
+        from app.factory.store_kits import block_manifests, capability_class
+
+        capability_classes = {
+            bid: cls
+            for bid, manifest in block_manifests().items()
+            if (cls := capability_class(manifest))
+        }
     return (
         '''"""Block input construction for this platform.
 
@@ -1350,6 +1408,10 @@ import tempfile
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 STORE_BLOCK_DEFAULT_ACTIONS = __STORE_BLOCK_DEFAULT_ACTIONS__
+#: block id -> the capability_class its signed block.json declares, read
+#: from the blocks this platform vendored. Input shaping is chosen by the
+#: class, never by the id.
+STORE_BLOCK_CAPABILITY_CLASSES = __STORE_BLOCK_CAPABILITY_CLASSES__
 
 
 def default_block_action(block_id, default_actions=None):
@@ -1462,29 +1524,31 @@ def prepare_block_input(
     merged_actions = dict(STORE_BLOCK_DEFAULT_ACTIONS)
     if default_actions:
         merged_actions.update(default_actions)
-    if bid == "notification":
-        return _for_notification(data, roster)
-    if bid == "workflow":
+    cls = STORE_BLOCK_CAPABILITY_CLASSES.get(bid)
+    if cls == "messaging":
+        return _for_notification(data, roster, self_id=bid)
+    if cls == "orchestration":
         return _for_workflow(
             data,
             roster,
             product_name=product_name,
             entity=entity,
             default_actions=merged_actions,
+            self_id=bid,
         )
-    if bid == "team":
+    if cls == "membership":
         return _for_team(data, product_name=product_name)
-    if bid == "document_engine":
+    if cls == "document_extraction":
         return _for_document_engine(data)
-    if bid == "analytics":
+    if cls == "metrics":
         return _for_analytics(data)
-    if bid == "event_bus":
-        return _for_event_bus(data, roster)
-    if bid == "database":
+    if cls == "events":
+        return _for_event_bus(data, roster, self_id=bid)
+    if cls == "records":
         return _for_database(data, entity=entity)
-    if bid == "queue":
+    if cls == "jobs":
         return _for_queue(data)
-    if bid == "dashboard":
+    if cls == "layout":
         return _for_dashboard(data)
     return data
 
@@ -1531,7 +1595,7 @@ def _notification_channel(value, data=None):
     return "mcp"
 
 
-def _for_notification(data: Dict[str, Any], roster: Sequence[str]) -> Dict[str, Any]:
+def _for_notification(data: Dict[str, Any], roster: Sequence[str], *, self_id: str) -> Dict[str, Any]:
     out = dict(data)
     out["channel"] = _notification_channel(out.get("channel"), out)
     if not out.get("message"):
@@ -1540,8 +1604,8 @@ def _for_notification(data: Dict[str, Any], roster: Sequence[str]) -> Dict[str, 
             body if isinstance(body, str) and body.strip() else _summary_message(data)
         )
     if str(out.get("channel")).lower() == "mcp" and not out.get("block") and not out.get("tool"):
-        peers = [b for b in roster if b and b != "notification"]
-        out["block"] = peers[0] if peers else "notification"
+        peers = [b for b in roster if b and b != self_id]
+        out["block"] = peers[0] if peers else self_id
     return out
 
 
@@ -1649,6 +1713,7 @@ def _for_workflow(
     product_name: str = "platform",
     entity: Optional[str] = None,
     default_actions: Optional[Dict[str, str]] = None,
+    self_id: str = "",
 ) -> Dict[str, Any]:
     out = dict(data)
     steps = out.get("steps")
@@ -1662,7 +1727,7 @@ def _for_workflow(
             fallback_domain=data,
         )
         return _ensure_workflow_result(out)
-    peers = [b for b in roster if b and b != "workflow"]
+    peers = [b for b in roster if b and b != self_id]
     built: List[Dict[str, Any]] = []
     for block in peers[:3]:
         step = {
@@ -1681,7 +1746,7 @@ def _for_workflow(
             step["action"] = action
         built.append(step)
     if not built:
-        built.append({"block": "workflow", "input": dict(data)})
+        built.append({"block": self_id, "input": dict(data)})
     out["steps"] = built
     return _ensure_workflow_result(out)
 
@@ -1810,7 +1875,7 @@ def _topic_from_domain(data):
     return (slug or "platform.event")[:80]
 
 
-def _for_event_bus(data, roster=()):
+def _for_event_bus(data, roster=(), self_id=""):
     inner = data.get("input") if isinstance(data.get("input"), dict) else {}
     topic = data.get("topic") or inner.get("topic")
     if not (isinstance(topic, str) and topic.strip()):
@@ -1848,8 +1913,8 @@ def _for_event_bus(data, roster=()):
         "event": topic,
         "message": str(message).strip() or _summary_message(data),
         "channel": channel,
-        "block": "event_bus",
-        "tool": "event_bus",
+        "block": self_id,
+        "tool": self_id,
     }
 
 
@@ -1939,4 +2004,7 @@ def _for_database(data: Dict[str, Any], *, entity: Optional[str] = None) -> Dict
     ).replace(
         "__STORE_BLOCK_DEFAULT_ACTIONS__",
         repr(dict(sorted((default_actions or {}).items()))),
+    ).replace(
+        "__STORE_BLOCK_CAPABILITY_CLASSES__",
+        repr(dict(sorted((capability_classes or {}).items()))),
     )

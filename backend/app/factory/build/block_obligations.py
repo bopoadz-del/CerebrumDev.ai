@@ -51,75 +51,78 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence
 
-#: Blocks that need a value only the CALLER can supply. ``any_of`` are the
-#: field names that satisfy the obligation; ``add`` is what the model spec
-#: gets when it satisfies none of them.
-SCHEMA_OBLIGATIONS: Dict[str, Dict[str, Any]] = {
-    "document_engine": {
-        "any_of": [
-            "file_path", "pdf_path", "docx_path", "xlsx_path",
-            "attachment_path", "document_path", "text", "bytes",
-        ],
-        "add": {"name": "attachment_path", "type": "str", "required": False},
-        "why": (
-            "document_engine parses a document. With no path or text field on "
-            "the capability it answers 'No input files provided "
-            "(pdf/docx/xlsx). Pass file_path as pdf_path, docx_path, or "
-            "xlsx_path.'"
-        ),
-    },
-}
+from app.factory.store_kits import block_manifests
 
-#: Blocks that need an id only the BLOCK can mint. The capability must call
-#: ``ensure`` first and carry the returned ``carry`` key into every action in
-#: ``into``.
-#: ``scope`` says WHERE the ensure step belongs, and it is a real
-#: distinction rather than a label:
-#:
-#: * ``platform`` -- the resource exists once for the whole platform and its
-#:   ensure inputs are platform constants. ``create_team`` needs
-#:   ``user_id``/``name``/``slug``, none of which is a domain value, so it can
-#:   and should run at STARTUP, before any capability (owner's ruling R1c).
-#: * ``per_record`` -- the resource is minted per record and its ensure inputs
-#:   ARE the caller's data. ``store`` needs ``content`` and ``filename``; a
-#:   boot-time step would have to invent a file, which is F18. It stays the
-#:   handler's job, and the WRITER contract probe names it when the handler
-#:   gets it wrong.
-#:
-#: Getting this backwards would be worse than leaving it alone: a startup
-#: step that fabricates a record is exactly the class of defect the factory
-#: refuses.
-RESOURCE_OBLIGATIONS: Dict[str, Dict[str, Any]] = {
-    "team": {
-        "resource": "team",
-        "scope": "platform",
-        "ensure": "create_team",
-        "ensure_input": ["user_id", "name", "slug"],
-        "carry": "team_id",
-        "into": [
-            "get_team_context", "get_team", "get_members", "invite_member",
-            "set_role", "check_permission", "switch_team", "delete_team",
-        ],
-        "why": (
-            "create_team returns the team_id. get_team_context without it "
-            "answers 'Team access denied' even for the owner that call just "
-            "created; with it, the same call answers role=owner."
-        ),
-    },
-    "storage": {
-        "resource": "stored_file",
-        "scope": "per_record",
-        "ensure": "store",
-        "ensure_input": ["content", "filename"],
-        "carry": "file_id",
-        "into": ["retrieve", "exists", "delete"],
-        "why": (
-            "store MINTS its own file_id and ignores the caller's. retrieve "
-            "by the caller's id answers file_not_found -- after a store that "
-            "reported success."
-        ),
-    },
-}
+#: The Store's ``requires_inputs`` types, as a model spec spells them.
+_SPEC_TYPES = {"string": "str", "text": "str", "number": "float", "boolean": "bool"}
+
+
+def schema_obligations(store_root: Any = None) -> Dict[str, Dict[str, Any]]:
+    """Blocks that need a value only the CALLER can supply.
+
+    Read from each block's signed ``requires_inputs``: an entry naming
+    ``satisfied_by`` is an obligation. ``any_of`` are the field names that
+    satisfy it; ``add`` is what the model spec gets when it carries none of
+    them. No block is named here.
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    for bid, manifest in sorted(block_manifests(store_root).items()):
+        for need in manifest.get("requires_inputs") or []:
+            alts = need.get("satisfied_by") if isinstance(need, dict) else None
+            if not (isinstance(alts, list) and alts and need.get("name")):
+                continue
+            declared = str(need.get("type") or "string")
+            out[bid] = {
+                "any_of": [str(a) for a in alts],
+                "add": {
+                    "name": str(need["name"]),
+                    "type": _SPEC_TYPES.get(declared, declared),
+                    "required": bool(need.get("required", False)),
+                },
+                "why": str(need.get("why") or ""),
+            }
+            break
+    return out
+
+
+#: The keys of a resource obligation, as the Store's ``preconditions[]``
+#: entry declares them (``ensure`` present = the block mints the resource).
+_ENSURE_KEYS = ("scope", "ensure", "ensure_input", "carry", "into", "why")
+
+
+def resource_obligations(store_root: Any = None) -> Dict[str, Dict[str, Any]]:
+    """Blocks that need an id only the BLOCK can mint.
+
+    Read from each block's signed ``preconditions``: an entry naming
+    ``ensure`` is an obligation. The capability must call ``ensure`` first
+    and carry the returned ``carry`` key into every action in ``into``.
+    ``scope`` says WHERE the ensure step belongs, and it is a real
+    distinction rather than a label:
+
+    * ``platform`` -- the resource exists once for the whole platform and its
+      ensure inputs are platform constants, so it can and should run at
+      STARTUP, before any capability (owner's ruling R1c).
+    * ``per_record`` -- the resource is minted per record and its ensure
+      inputs ARE the caller's data. A boot-time step would have to invent a
+      record, which is F18. It stays the handler's job, and the WRITER
+      contract probe names it when the handler gets it wrong.
+
+    Getting this backwards would be worse than leaving it alone: a startup
+    step that fabricates a record is exactly the class of defect the factory
+    refuses. No block is named here.
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    for bid, manifest in sorted(block_manifests(store_root).items()):
+        for pre in manifest.get("preconditions") or []:
+            if not (isinstance(pre, dict) and pre.get("ensure")):
+                continue
+            rule: Dict[str, Any] = {"resource": str(pre.get("kind") or bid)}
+            for key in _ENSURE_KEYS:
+                value = pre.get(key)
+                rule[key] = list(value) if isinstance(value, list) else value
+            out[bid] = rule
+            break
+    return out
 
 
 class BlockObligationError(ValueError):
@@ -224,11 +227,13 @@ def ensure_record_envelope(
 
 
 def schema_obligations_for(block_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
-    return {b: SCHEMA_OBLIGATIONS[b] for b in block_ids or () if b in SCHEMA_OBLIGATIONS}
+    rules = schema_obligations()
+    return {b: rules[b] for b in block_ids or () if b in rules}
 
 
 def resource_obligations_for(block_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
-    return {b: RESOURCE_OBLIGATIONS[b] for b in block_ids or () if b in RESOURCE_OBLIGATIONS}
+    rules = resource_obligations()
+    return {b: rules[b] for b in block_ids or () if b in rules}
 
 
 def _field_names(spec: Optional[Dict[str, Any]]) -> List[str]:

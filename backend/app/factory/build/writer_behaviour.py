@@ -113,7 +113,7 @@ HALTS = {}
 
 
 def _record(level, kind, text):
-    stream = sys.stdout if level == "miss" else sys.stderr
+    stream = sys.stdout if level in ("miss", "unjudged") else sys.stderr
     stream.write(json.dumps({"gate_record": level, "kind": kind, "text": text}) + "\n")
 
 
@@ -157,6 +157,16 @@ except Exception as exc:
 
 if not MODELS:
     _halt("no_models")
+
+# The Factory-written declaration of placeholder connectors. A product built
+# before it existed declares none, so every capability is judged.
+try:
+    from app.placeholders import is_declared_refusal
+except Exception:
+    def is_declared_refusal(capability_id, status_code, body):
+        return False
+
+placeholder_unjudged = []
 
 
 def _ann(cls, name):
@@ -530,12 +540,26 @@ for cap_id, cls in MODELS.items():
             "%s: POST raised %s" % (cap_id, _exc_text(exc))
         )
         continue
+    try:
+        data = resp.json() if resp.content else {}
+    except Exception:
+        data = None
+    if is_declared_refusal(cap_id, resp.status_code, data):
+        # Its connector is a DECLARED placeholder: the typed refusal is the
+        # right answer. Neither the round trip nor fail-closed under forced
+        # block failure is judgeable -- nothing is built to fail -- so it is
+        # named with its reason, not probed and not counted as a miss.
+        placeholder_unjudged.append(
+            "%s: not judgeable -- declared placeholder connector(s) need %s"
+            % (cap_id, ", ".join(data.get("settings") or []))
+        )
+        continue
     if resp.status_code != 200:
         schema_misses.append(
             "%s: baseline POST returned HTTP %s" % (cap_id, resp.status_code)
         )
         continue
-    data = resp.json() if resp.content else {}
+    data = data if isinstance(data, dict) else {}
     if data.get("ok") is not False:
         _check_round_trip(cap_id, cls, body)
     # House convention: ``ok is False`` is the refusal. A route that omits
@@ -581,9 +605,12 @@ if persist_misses:
     # the photographed Veterinary Care Platform class and must halt. Decided
     # by the exception's class (a database error), not its message.
     _halt("persist", [("persist", m) for m in persist_misses])
-if not targets:
+for _u in placeholder_unjudged:
+    _record("unjudged", "placeholder", _u)
+if not targets and (schema_misses or not placeholder_unjudged):
     # Every capability failed schema (or never reached a probeable
-    # state). Isolated schema misses do not take this path.
+    # state). Isolated schema misses do not take this path, and neither
+    # does a product whose only capabilities are declared placeholders.
     _halt("schema", list(findings) + [("schema", m) for m in schema_misses])
 
 # -- phase 2: every block call fails --------------------------------------
@@ -728,7 +755,7 @@ def _database_error_types() -> tuple:
 
 def probe_records(text: str) -> list[dict]:
     """The typed records in probe output: one JSON object per line carrying
-    ``gate_record`` (halt / finding / miss), ``kind`` and ``text``. Anything
+    ``gate_record`` (halt / finding / miss / unjudged), ``kind`` and ``text``. Anything
     else on the stream (a library's own print, a traceback) is not a record."""
     out: list[dict] = []
     for line in (text or "").splitlines():
@@ -738,7 +765,7 @@ def probe_records(text: str) -> list[dict]:
             continue
         if (
             isinstance(rec, dict)
-            and rec.get("gate_record") in ("halt", "finding", "miss")
+            and rec.get("gate_record") in ("halt", "finding", "miss", "unjudged")
             and isinstance(rec.get("kind"), str)
             and isinstance(rec.get("text"), str)
         ):
@@ -838,12 +865,12 @@ def _pass_detail(
 def _render_probe() -> str:
     """The probe with this factory's resource obligations and halt sentences
     baked in."""
-    from app.factory.build.block_obligations import RESOURCE_OBLIGATIONS
+    from app.factory.build.block_obligations import resource_obligations
 
     return (
         BEHAVIOUR_PROBE.replace(
             "RESOURCE_OBLIGATIONS = {}",
-            "RESOURCE_OBLIGATIONS = " + repr(dict(RESOURCE_OBLIGATIONS)),
+            "RESOURCE_OBLIGATIONS = " + repr(dict(resource_obligations())),
             1,
         ).replace("HALTS = {}", "HALTS = " + repr(dict(HALT_SENTENCES)), 1)
     )
@@ -884,6 +911,7 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
     raw_err = proc.stderr or ""
     records = probe_records(raw_out + "\n" + raw_err)
     miss_records = [r for r in records if r["gate_record"] == "miss"]
+    unjudged = [r["text"] for r in records if r["gate_record"] == "unjudged"]
 
     def _of(kind: str) -> list[str]:
         return [r["text"] for r in miss_records if r["kind"] == kind]
@@ -912,6 +940,11 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
         )
     if skipped:
         detail += f"; {len(skipped)} capability(ies) skipped — see payload"
+    if unjudged:
+        detail += (
+            f"; {len(unjudged)} capability(ies) not judgeable: declared "
+            "placeholder connector(s)"
+        )
     return GateResult(
         ok=True,
         gate=GATE_NAME,
@@ -925,6 +958,7 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
             "f1_misses": f1_misses,
             "contract_misses": contract_misses,
             "roundtrip_misses": roundtrip_misses,
+            "unjudged": unjudged,
         },
     )
 

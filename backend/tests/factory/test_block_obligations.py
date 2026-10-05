@@ -18,8 +18,8 @@ from app.factory.build.block_obligations import (
     BlockObligationError,
     DISTRIBUTIONS,
     ENVELOPE_STATUS_VALUES,
-    RESOURCE_OBLIGATIONS,
-    SCHEMA_OBLIGATIONS,
+    resource_obligations,
+    schema_obligations,
     assert_feedable,
     audit_capability,
     augment_model_spec,
@@ -65,7 +65,7 @@ def test_a_spec_that_already_carries_any_accepted_field_passes():
     Mutation killed: requiring the one canonical name and re-adding a field
     the agent already designed under a different name.
     """
-    for field in SCHEMA_OBLIGATIONS["document_engine"]["any_of"]:
+    for field in schema_obligations()["document_engine"]["any_of"]:
         assert audit_capability("cap", ["document_engine"], _spec("x", field)) == []
 
 
@@ -87,7 +87,7 @@ def test_augment_then_audit_is_always_clean():
 
     Mutation killed: an 'add' whose name is absent from its own any_of.
     """
-    for block_id in SCHEMA_OBLIGATIONS:
+    for block_id in schema_obligations():
         spec = augment_model_spec(_spec("unrelated"), [block_id])
         assert audit_capability("cap", [block_id], spec) == []
 
@@ -210,7 +210,7 @@ def test_no_resource_blocks_yields_no_prompt_noise():
 
 
 def test_every_resource_rule_carries_its_id_into_at_least_one_action():
-    for block_id, rule in RESOURCE_OBLIGATIONS.items():
+    for block_id, rule in resource_obligations().items():
         assert rule["into"], block_id
         assert rule["ensure"] not in rule["into"], block_id
         assert rule["carry"], block_id

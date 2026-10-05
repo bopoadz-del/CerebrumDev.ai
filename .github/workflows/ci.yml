@@ -207,6 +207,9 @@ jobs:
       # out above), the golden blueprints and every cerebrum-builds build
       # branch (additive: without the token the step runs on the Store and
       # blueprints and logs that the builds branches were skipped).
+      # block_name_dispatch: a Store block id (loaded from the same Store
+      # checkout) compared against / keyed on / aliased to a block reference.
+      # Enforced at baseline 0; with no Store the step fails closed.
       - name: Hardwiring gate (no new per-case form)
         working-directory: .
         env:

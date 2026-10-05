@@ -218,6 +218,19 @@ def needs_document_engine_parsers_package(text: str) -> bool:
     refs = _module_refs(text)
     return any(ref.endswith("document_engine.parsers") for ref in refs)
 
+def package_imports_own_parsers(text: str, package: str, shipped: str = "") -> bool:
+    """True when a package needs a ``parsers`` subpackage: its own source
+    imports one relatively (``from .parsers import``), or its own or any
+    other shipped source names ``<package>.parsers``."""
+    tree = _tree(text)
+    if tree is not None:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.level and node.module and node.module.split(".")[0] == "parsers":
+                return True
+    refs = _module_refs(text) | _module_refs(shipped) if shipped else _module_refs(text)
+    return any(ref.endswith(f"{package}.parsers") for ref in refs)
+
+
 _ENSURE_READY_FN = '''
 def _ensure_store_block_ready(instance):
     """DatabaseBlock only opens SQLite in _legacy_initialize.
