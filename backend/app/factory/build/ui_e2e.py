@@ -14,13 +14,15 @@ UI -- a second, unbuilt one is decoration.
 
 from __future__ import annotations
 
+from app.factory.build.brief_gates import UI_END_TO_END_CHECK
+
 import sys
 from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:  # pragma: no cover
     from app.factory.build.gates import GateContext, GateResult
 
-GATE_NAME = "ui_end_to_end"
+GATE_NAME = UI_END_TO_END_CHECK
 UI_NOT_WIRED = "ui_not_wired_end_to_end"
 UI_NOT_BUILT = "ui_shipped_unbuilt"
 

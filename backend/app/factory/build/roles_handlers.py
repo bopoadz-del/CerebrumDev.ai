@@ -4214,8 +4214,18 @@ def run_writer(
     # settings module are stamped before ANY writer path, so the agent builds
     # against them and the money contract can read them.
     from app.factory.build.money_contract import emit_money_artifacts
+    from app.factory.build.writer_behaviour import emit_self_check
 
     emit_money_artifacts(ctx.workspace, ctx.blueprint)
+    # The WRITER gate's own probe, so the writer can run what the gate runs
+    # (F1/F11/schema) before it declares done -- its own suite cannot.
+    emit_self_check(ctx.workspace)
+    # The Store gate's own harness, stamped before ANY writer path: the writer
+    # measures itself with the N checks the gate scores (``--self-check``),
+    # never a script of its own. Re-stamped before TESTER (factory_refresh).
+    from app.factory.build.store_acceptance import stamp_acceptance_harness
+
+    stamp_acceptance_harness(ctx.workspace, blueprint=ctx.blueprint)
     if writer_uses_codewhale(env):
         return _run_writer_via_codewhale_worker(ctx)
     writer_roster = _writer_block_roster(ctx.state)

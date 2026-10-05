@@ -203,6 +203,11 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             (LaneRoot.WORKSPACE, "scripts/backup.sh"),
             (LaneRoot.WORKSPACE, "scripts/bench.py"),
             (LaneRoot.WORKSPACE, "scripts/rollback.sh"),
+            # The WRITER gate's own probe, stamped by the Factory at WRITER
+            # start (writer_behaviour.emit_self_check) so the writer can run
+            # what the gate runs. Re-stamped every pass; the gate never reads
+            # it, so an edit cannot change a verdict.
+            (LaneRoot.WORKSPACE, "scripts/factory_checks.py"),
             (LaneRoot.WORKSPACE, ".github/workflows/ci.yml"),
             # Store ships both named OpenAPI files (openapi_committed).
             # Named, not a docs/** or root wildcard; vendor/** stays sealed.
