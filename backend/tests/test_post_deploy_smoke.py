@@ -428,16 +428,54 @@ class TestChatUntilDrafted:
             "event: blueprint\ndata: {}\n\n",
         ])
         sent = []
-        monkeypatch.setattr(smoke, "chat", lambda sid, tok, msg: (sent.append(msg), next(replies))[1])
+
+        def _chat(sid, tok, msg, action=None, value=None):
+            sent.append((msg, action))
+            return next(replies)
+
+        monkeypatch.setattr(smoke, "chat", _chat)
         raw, turns = smoke.chat_until_drafted("s", "t", "brief")
         assert turns == 3 and "event: blueprint" in raw
-        assert sent[0] == "brief"
+        # The brief goes in as free text; ending the questions is the TYPED
+        # draft action, never a sentence the Factory has to interpret.
+        assert sent[0] == ("brief", None)
+        assert sent[1:] == [("brief", "draft"), ("brief", "draft")]
 
     def test_a_first_turn_draft_needs_no_answer(self, smoke, monkeypatch):
-        monkeypatch.setattr(smoke, "chat", lambda sid, tok, msg: "event: blueprint\ndata: {}\n\n")
+        monkeypatch.setattr(smoke, "chat", lambda sid, tok, msg, **kw: "event: blueprint\ndata: {}\n\n")
         assert smoke.chat_until_drafted("s", "t", "brief")[1] == 1
 
     def test_a_server_that_never_stops_asking_is_bounded(self, smoke, monkeypatch):
-        monkeypatch.setattr(smoke, "chat", lambda sid, tok, msg: _info({"elicitation": True}))
+        monkeypatch.setattr(smoke, "chat", lambda sid, tok, msg, **kw: _info({"elicitation": True}))
         raw, turns = smoke.chat_until_drafted("s", "t", "brief")
         assert turns == smoke.MAX_SMOKE_ELICITATION_TURNS and "blueprint" not in raw
+
+
+
+def test_the_smoke_approves_with_the_typed_action(smoke):
+    """No approve -> no build: the smoke starts the build with the typed
+    approve action, never by sending the word 'approve' as chat text."""
+    import inspect
+
+    src = inspect.getsource(smoke)
+    assert 'chat(sid, tok, "", action="approve")' in src
+    assert 'chat(sid, tok, "approve")' not in src
+
+
+def test_chat_sends_the_typed_action_in_the_body(smoke, monkeypatch):
+    import json
+
+    seen = {}
+
+    class _Resp:
+        def read(self):
+            return b"event: done\ndata: \n\n"
+
+    def _urlopen(rq, timeout=None):
+        seen["body"] = json.loads(rq.data.decode())
+        return _Resp()
+
+    monkeypatch.setattr(smoke.urllib.request, "urlopen", _urlopen)
+    monkeypatch.setattr(smoke, "BASE", "http://zorblat.test", raising=False)
+    smoke.chat("s", "t", "", action="approve")
+    assert seen["body"] == {"message": "", "action": "approve"}

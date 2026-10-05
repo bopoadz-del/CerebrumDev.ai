@@ -277,17 +277,52 @@ export interface ChatEvent {
   data: unknown
 }
 
+/** Every action a Floor control can send (backend app.factory.floor_actions).
+ *  The Factory never decides an action from the words in the message. */
+export type FloorAction =
+  | 'approve'
+  | 'continue'
+  | 'run_pilot'
+  | 'draft'
+  | 'add_capability'
+  | 'remove_capability'
+  | 'rename'
+  | 'set_vertical'
+  | 'set_rigor'
+  | 'list_capabilities'
+  | 'chain'
+
+/** The build grades a blueprint can declare (ProductBlueprint.rigor). */
+export const RIGOR_LEVELS = ['prototype', 'light', 'standard', 'production'] as const
+
+export interface TypedFloorAction {
+  action: FloorAction
+  value?: string
+}
+
 export async function chatStream(
   sessionId: string,
   message: string,
   onEvent: (ev: ChatEvent) => void,
   vertical?: string | null,
   locale?: DeclaredLocale | null,
+  typed?: TypedFloorAction | null,
 ): Promise<void> {
   // The vertical, country and currency travel as their own typed fields,
   // never inside the message: the user types them on the Floor and the
   // Factory never infers them.
-  const body: { message: string; vertical?: string; country?: string; currency?: string } = { message }
+  const body: {
+    message: string
+    vertical?: string
+    country?: string
+    currency?: string
+    action?: FloorAction
+    value?: string
+  } = { message }
+  if (typed) {
+    body.action = typed.action
+    if (typed.value !== undefined) body.value = typed.value
+  }
   if (vertical !== undefined && vertical !== null) body.vertical = vertical
   if (locale) {
     body.country = locale.country

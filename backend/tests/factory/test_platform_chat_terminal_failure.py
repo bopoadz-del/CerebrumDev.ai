@@ -69,11 +69,14 @@ def _failed_lettings_state(tmp_path: Path) -> SessionState:
     return s
 
 
-async def _collect_events(session_id: str, message: str):
+async def _collect_events(session_id: str, message: str, action=None, value=None):
+    from app.factory.floor_actions import parse_action
     from app.routers import chat as chat_router
 
     events = []
-    async for raw in chat_router._stream_response(session_id, message):
+    async for raw in chat_router._stream_response(
+        session_id, message, parse_action(action), value
+    ):
         lines = [line for line in raw.strip().splitlines() if line]
         ev = {"event": "", "data": ""}
         for line in lines:
@@ -222,7 +225,7 @@ async def test_chat_new_brief_after_failed_run_drafts_not_resumes(tmp_path, monk
         return {
             "action": "start_coder",
             "brief": "",
-            "refine_message": "",
+            "refine": {"op": "", "value": ""},
             "message": "",
         }
 
@@ -234,6 +237,7 @@ async def test_chat_new_brief_after_failed_run_drafts_not_resumes(tmp_path, monk
         events = await _collect_events(
             state.session_id,
             "build me a platform for residential lettings in Manchester",
+            action="draft",
         )
     finally:
         session_store._session_store.pop(state.session_id, None)
@@ -272,7 +276,7 @@ async def test_chat_continue_after_failed_run_starts_fresh(tmp_path, monkeypatch
 
     monkeypatch.setattr(platform_chat_flow, "generate_product", fake_generate)
     try:
-        events = await _collect_events(state.session_id, "continue")
+        events = await _collect_events(state.session_id, "", action="continue")
     finally:
         session_store._session_store.pop(state.session_id, None)
 

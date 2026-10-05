@@ -65,11 +65,14 @@ def _state_with_approved_run(tmp_path: Path, *, succeeded: bool = False) -> Sess
     return s
 
 
-async def _collect_events(session_id: str, message: str):
+async def _collect_events(session_id: str, message: str, action=None, value=None):
+    from app.factory.floor_actions import parse_action
     from app.routers import chat as chat_router
 
     events = []
-    async for raw in chat_router._stream_response(session_id, message):
+    async for raw in chat_router._stream_response(
+        session_id, message, parse_action(action), value
+    ):
         lines = [line for line in raw.strip().splitlines() if line]
         ev = {"event": "", "data": ""}
         for line in lines:
@@ -81,20 +84,11 @@ async def _collect_events(session_id: str, message: str):
     return events
 
 
-@pytest.mark.parametrize(
-    "message",
-    ["continue", "resume", "keep going", "please continue", "pick up where you left off"],
-)
-def test_resume_request_positive(message):
-    assert platform_chat_flow.is_resume_request(message)
+@pytest.mark.parametrize("action", ["continue", "run_pilot"])
+def test_resume_is_a_typed_action(action):
+    from app.factory.floor_actions import RUN_ACTIONS, parse_action
 
-
-@pytest.mark.parametrize(
-    "message",
-    ["build me a platform for hotels", "continue adding capability audit", "approve", ""],
-)
-def test_resume_request_negative(message):
-    assert not platform_chat_flow.is_resume_request(message)
+    assert parse_action(action) in RUN_ACTIONS
 
 
 def test_approved_incomplete_generation_is_resumable(tmp_path):
@@ -316,8 +310,8 @@ async def test_chat_continue_resumes_instead_of_no_blueprint_pending(tmp_path, m
         }
 
     monkeypatch.setattr(platform_chat_flow, "generate_product", fake_generate)
-    # Even if the LLM repeats the live refusal, the deterministic continue
-    # door must fire first and never surface that text.
+    # The typed Continue action is dispatched before the model is asked, so
+    # a model that repeats the live refusal never surfaces that text.
     monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: True)
     monkeypatch.setattr(
         platform_chat_llm,
@@ -325,7 +319,7 @@ async def test_chat_continue_resumes_instead_of_no_blueprint_pending(tmp_path, m
         lambda s, m: {
             "action": "reply",
             "brief": "",
-            "refine_message": "",
+            "refine": {"op": "", "value": ""},
             "message": (
                 "I can't resume a coding run because no blueprint is currently "
                 "pending. If you want to build Dealership Command Center, please "
@@ -335,7 +329,7 @@ async def test_chat_continue_resumes_instead_of_no_blueprint_pending(tmp_path, m
     )
 
     try:
-        events = await _collect_events(state.session_id, "continue")
+        events = await _collect_events(state.session_id, "", action="continue")
     finally:
         session_store._session_store.pop(state.session_id, None)
 
@@ -373,7 +367,7 @@ async def test_chat_continue_after_success_opens_pilot(tmp_path, monkeypatch):
 
     monkeypatch.setattr(platform_chat_flow, "generate_product", fake_generate)
     try:
-        events = await _collect_events(state.session_id, "continue")
+        events = await _collect_events(state.session_id, "", action="continue")
     finally:
         session_store._session_store.pop(state.session_id, None)
 
@@ -421,12 +415,6 @@ def test_session_facts_forbid_start_coder_after_pilot_ready(tmp_path):
     facts = platform_chat_llm._session_facts(state)
     assert "pilot-ready" in facts
     assert "forbidden" in facts
-
-
-def test_pilot_request_positive():
-    assert platform_chat_flow.is_pilot_request("run the pilot")
-    assert platform_chat_flow.is_pilot_request("make it pilot-ready")
-    assert not platform_chat_flow.is_pilot_request("build me a hotel platform")
 
 
 def test_interrupted_pilot_without_terminal_still_resumes_as_pilot(tmp_path, monkeypatch):

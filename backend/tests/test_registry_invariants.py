@@ -164,8 +164,8 @@ def test_platform_chat_flow_exports():
         "draft_from_chat",
         "approve_and_generate",
         "has_pending_blueprint",
-        "is_approval",
-        "should_handle_platform_message",
+        "apply_refinement",
+        "platform_chat_enabled",
     ):
         fn = getattr(platform_chat_flow, name, None)
         assert callable(fn), f"{name} is not callable"
