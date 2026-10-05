@@ -11,7 +11,16 @@
     "probe_id"
   ],
   "roots": [
-    "backend/app/factory"
+    "backend/app/factory",
+    "backend/app/routers",
+    "backend/app/core",
+    "backend/app/blocks",
+    "backend/app/cerebrum_product_kernel",
+    "backend/app/domain_compiler",
+    "backend/app/models",
+    "backend/app/product_dna",
+    "backend/app/workbench",
+    "backend/app/main.py"
   ],
   "schema": "hardwiring_baseline.v1",
   "total": 0

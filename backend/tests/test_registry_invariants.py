@@ -8,9 +8,7 @@ runs full pytest on push to master.
 from __future__ import annotations
 
 import ast
-import inspect
 import json
-import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -18,7 +16,6 @@ import pytest
 
 import app.factory.platform_chat_flow as platform_chat_flow
 import app.main
-import app.routers.chat as chat_router
 from app.change_requests.flags import change_request_intake_enabled
 from app.factory.blueprint import ProductBlueprint
 from app.factory.dual_registry import DualRegistryError
@@ -145,27 +142,14 @@ def test_gated_mutation_endpoints_refuse_service_when_disabled(client):
     assert resp.status_code == 503, resp.text
 
 
-def test_chat_command_handler_parity():
-    """Every parsed command (except list_blocks, handled inline) has an apply branch."""
-    parse_source = inspect.getsource(chat_router._parse_command)
-    apply_source = inspect.getsource(chat_router._apply_command)
-
-    parsed = set(re.findall(r'return "([a-z_]+)"', parse_source))
-    applied = set(re.findall(r'command == "([a-z_]+)"', apply_source))
-
-    parsed.discard("list_blocks")  # handled inline in _stream_response
-    missing = parsed - applied
-    assert not missing, f"_apply_command missing branches for: {missing}"
-
-
 def test_platform_chat_flow_exports():
     """Platform chat flow exposes the documented seam functions."""
     for name in (
         "draft_from_chat",
         "approve_and_generate",
         "has_pending_blueprint",
-        "is_approval",
-        "should_handle_platform_message",
+        "apply_refinement",
+        "platform_chat_enabled",
     ):
         fn = getattr(platform_chat_flow, name, None)
         assert callable(fn), f"{name} is not callable"

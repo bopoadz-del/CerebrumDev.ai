@@ -110,12 +110,16 @@ def _clear_sticky_thin_authorship_error(
     last_error = getattr(pd, "last_error", None)
     live_build = (live_generation or {}).get("build") if isinstance(live_generation, dict) else None
     live_ok = isinstance(live_build, dict) and live_build.get("state") == "succeeded"
-    sticky = "FACTORY_CODE_CLI_THIN_AUTHORSHIP" in str(last_error or "")
+    # The refusal's typed blocker field -- the ``<BLOCKER>:`` token every named
+    # refusal leads with, read by position -- not a search of its sentence.
+    from app.factory.build_jobs import _thin_authorship_detail
+
+    sticky = _thin_authorship_detail(last_error)
     persisted = (getattr(pd, "generation", None) or {}).get("build")
     persisted_failed = (
         isinstance(persisted, dict)
         and persisted.get("state") == "failed"
-        and "FACTORY_CODE_CLI_THIN_AUTHORSHIP" in str(persisted.get("detail") or "")
+        and _thin_authorship_detail(persisted.get("detail"))
     )
     if not live_ok or not (sticky or persisted_failed):
         return last_error

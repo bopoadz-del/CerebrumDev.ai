@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set
+from urllib.parse import urlsplit
 
 VERDICT_GROUNDED = "grounded"
 VERDICT_FLAG = "flag-as-estimate"
@@ -52,7 +53,33 @@ def strict_figures() -> bool:
         return True
     return raw.strip().lower() not in {"0", "false", "no", "off", ""}
 
-_URL_RE = re.compile(r"https?://[^\s)\]}>\"']+")
+# Characters that enclose or end a URL in prose and are never part of one as
+# written: brackets, quotes, and the sentence punctuation that trails it.
+_URL_ENCLOSERS = "()[]{}<>\"'"
+_URL_TRAILERS = ".,;:!?"
+
+
+def _urls(text: str) -> List[str]:
+    """Every URL in ``text``, found by the stdlib URL grammar.
+
+    The text is cut into whitespace- and bracket-delimited tokens and each is
+    parsed with :func:`urllib.parse.urlsplit`; a token is a URL when the parse
+    gives it both a scheme and a network location. Nothing here is a pattern
+    of words.
+    """
+    found: List[str] = []
+    table = str.maketrans({c: " " for c in _URL_ENCLOSERS})
+    for token in (text or "").translate(table).split():
+        token = token.rstrip(_URL_TRAILERS)
+        try:
+            parts = urlsplit(token)
+        except ValueError:
+            continue
+        if parts.scheme and parts.netloc:
+            found.append(token)
+    return found
+
+
 # Figures worth checking: 2+ digit numbers, decimals, or percentages.
 _FIGURE_RE = re.compile(r"\b\d[\d,]*\.\d+%?|\b\d[\d,]{1,}%?")
 
@@ -103,7 +130,9 @@ def evaluate_grounding(
     supported = _supported_figures(corpus)
     reasons: List[str] = []
 
-    invented_urls = [u for u in _URL_RE.findall(answer) if u.rstrip(".,") not in corpus]
+    # URLs are compared as parsed URLs against the URLs the sources contain.
+    grounded_urls = set(_urls(corpus))
+    invented_urls = [u for u in _urls(answer) if u not in grounded_urls]
     if invented_urls:
         reasons.append(
             "invented URL(s) not present in any source: " + ", ".join(invented_urls)

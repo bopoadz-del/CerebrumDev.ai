@@ -69,7 +69,29 @@ from pathlib import Path
 from typing import Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_ROOTS = ("backend/app/factory",)
+#: Every backend/app package that handles user or agent text or decides
+#: behaviour, scanned like the Factory itself: the HTTP routers (the user's
+#: chat), all of core (auth, grounding, LLM routing, deploy, RAG), and the
+#: kernel / compiler / DNA / workbench packages. A root may be a directory or
+#: a single file.
+#:
+#: Not yet enforced, and why (measured, not grandfathered):
+#: ``backend/app/change_requests`` and ``backend/app/resident_engineer`` --
+#: their hits are the autonomy scale's level ids (``L1``..``L5``) read as
+#: probe ids, and a record key equal to a Store capability id. Bringing those
+#: to 0 is a gate-rule decision for the owner, not a product change.
+DEFAULT_ROOTS = (
+    "backend/app/factory",
+    "backend/app/routers",
+    "backend/app/core",
+    "backend/app/blocks",
+    "backend/app/cerebrum_product_kernel",
+    "backend/app/domain_compiler",
+    "backend/app/models",
+    "backend/app/product_dna",
+    "backend/app/workbench",
+    "backend/app/main.py",
+)
 BASELINE = ROOT / "scripts" / "hardwiring_baseline.json"
 
 #: form -> pattern over a single token's text (NAME or STRING, never COMMENT).
@@ -551,7 +573,8 @@ def scan(
         known = load_known_literals()
     for root in roots:
         base = ROOT / root
-        for path in sorted(base.rglob("*.py")):
+        paths = [base] if base.is_file() else sorted(base.rglob("*.py"))
+        for path in paths:
             if "tests" in path.parts or "__pycache__" in path.parts:
                 continue
             hits = scan_file(path, forms, known)

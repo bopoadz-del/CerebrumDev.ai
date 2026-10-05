@@ -299,13 +299,19 @@ async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
 
 
 def _mock_response(user_message: str, domain: str, available_blocks: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Mock response for testing without an LLM."""
+    """Mock response for testing without an LLM.
+
+    Built from the blocks that are AVAILABLE, never from the user's words:
+    it used to add OCR when the message said "image"/"scan" and a rule when it
+    said "rule"/"always" -- a phrase check over user chat deciding the chain.
+    Rules come only from a real model.
+    """
     block_names = [b.get("name") for b in available_blocks]
     chain_blocks = []
     connections = []
     if "pdf" in block_names:
         chain_blocks.append({"id": "pdf", "params": {"extract_tables": True}})
-    if "ocr" in block_names and ("image" in user_message.lower() or "scan" in user_message.lower()):
+    if "ocr" in block_names:
         chain_blocks.append({"id": "ocr", "params": {"preprocess": True}})
     if "chat" in block_names:
         chain_blocks.append({"id": "chat", "params": {"temperature": 0.7}})
@@ -313,9 +319,7 @@ def _mock_response(user_message: str, domain: str, available_blocks: List[Dict[s
     if len(chain_blocks) > 1:
         connections = [{"from": i, "to": i + 1} for i in range(len(chain_blocks) - 1)]
 
-    rules = []
-    if "rule" in user_message.lower() or "always" in user_message.lower():
-        rules.append("Flag urgent items explicitly mentioned by the user")
+    rules: List[str] = []
 
     return {
         "message": (

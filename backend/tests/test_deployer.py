@@ -205,6 +205,35 @@ def test_assert_no_client_data_staged_passes_when_guard_passed(tmp_path: Path):
     _assert_no_client_data_staged(str(repo), guard_passed=True)
 
 
+def test_the_scrub_check_reads_what_the_packager_declared(tmp_path: Path):
+    """Client data is what the packager declared as it wrote it -- a manifest
+    in the package -- not a list of names the deployer keeps."""
+    from app.core import client_data
+
+    package = tmp_path / "package"
+    (package / "uploads").mkdir(parents=True)
+    (package / "uploads" / "contract.pdf").write_text("secret", encoding="utf-8")
+    (package / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+    client_data.declare(package, package / "uploads")
+    declared = client_data.declared(package)
+    assert [str(p) for p in declared] == ["uploads"]
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run = lambda args, cwd: subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    _run(["init"], cwd=str(repo))
+    (repo / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+    _run(["add", "Dockerfile"], cwd=str(repo))
+    # A file the packager did not declare is not client data.
+    _assert_no_client_data_staged(str(repo), guard_passed=False, declared=declared)
+
+    (repo / "uploads").mkdir()
+    (repo / "uploads" / "contract.pdf").write_text("secret", encoding="utf-8")
+    _run(["add", "uploads"], cwd=str(repo))
+    with pytest.raises(RuntimeError, match="Scrub check failed"):
+        _assert_no_client_data_staged(str(repo), guard_passed=False, declared=declared)
+
+
 def test_verify_repo_private_invalid_url():
     ok, reason = _verify_repo_private("https://example.com/not-github", "token")
     assert ok is False

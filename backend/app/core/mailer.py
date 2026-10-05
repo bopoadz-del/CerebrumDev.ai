@@ -10,6 +10,7 @@ No external dependencies beyond stdlib + httpx (already a project dep).
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 import smtplib
@@ -48,9 +49,15 @@ def frontend_url_is_public() -> bool:
     host = (parsed.hostname or "").rstrip(".")
     if not host:
         return False
-    return host not in {"localhost", "127.0.0.1", "::1"} and not host.endswith(
-        ".localhost"
-    )
+    # Loopback by the address grammar (all of 127/8 and ::1), and the
+    # reserved ``localhost`` name and its subdomains (RFC 6761) by the host's
+    # last DNS label -- compared as a label, never searched for in the text.
+    try:
+        if ipaddress.ip_address(host).is_loopback:
+            return False
+    except ValueError:
+        pass
+    return host.split(".")[-1] != "localhost"
 
 
 def _resend_configured() -> bool:

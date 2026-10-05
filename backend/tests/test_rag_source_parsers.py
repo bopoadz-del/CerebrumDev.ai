@@ -61,6 +61,7 @@ def test_parse_pdf_character_limit():
     finally:
         tmp_path.unlink(missing_ok=True)
     assert len(result.text) <= 5
+    assert result.truncated is True
     assert any("truncated" in w for w in result.warnings)
 
 
@@ -87,6 +88,7 @@ def test_parse_html_character_limit():
     html = b"<p>" + b"x " * 10000 + b"</p>"
     result = parse_html(html, max_chars=10)
     assert len(result.text) <= 10
+    assert result.truncated is True
     assert any("truncated" in w for w in result.warnings)
 
 

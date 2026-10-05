@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 from ..models.session import SessionState
+from . import client_data
 from .chroma_store import load_chunks
 from .llm_config import get_llm_config
 
@@ -232,6 +233,7 @@ def package_session(state: SessionState, api_key: str = None) -> Dict[str, Any]:
 
     # 3. Uploaded docs
     docs_dir = package_root / "data" / "docs"
+    client_data.declare(package_root, package_root / "vectors.json", docs_dir)
     session_files = Path(STORAGE_PATH) / "sessions" / session_id / "files"
     if session_files.exists():
         docs_dir.mkdir(parents=True, exist_ok=True)
@@ -280,6 +282,7 @@ def package_session(state: SessionState, api_key: str = None) -> Dict[str, Any]:
     dotenv_lines = [f"{key}={value}" for key, value in env_vars.items()]
     dotenv_lines.append("# CEREBRUM_LLM_API_KEY=<owner-supplied>")
     dotenv.write_text("\n".join(dotenv_lines), encoding="utf-8")
+    client_data.declare(package_root, dotenv)
 
     readme = package_root / "README.deploy.md"
     llm_key_note = "Add your own `CEREBRUM_LLM_API_KEY` to the environment."

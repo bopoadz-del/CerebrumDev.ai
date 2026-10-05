@@ -20,39 +20,46 @@ from app.factory import platform_chat_flow
 from app.models.session import ProductDesignState, SessionState
 
 
-# --- (a) intent coverage: standard platform phrasings enter the platform flow
+# --- (a) routing is typed: no phrasing selects a path ------------------------
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "message",
     [
         "build a platform for retail",
-        "build me a retail platform",
-        "create a platform for my retail business",
-        "I need a platform for retail",
-        "i want a retail system",
-        "give me a retail platform",
-        "we are looking for a portal for retail operations",
-        "I'd like a product for retail inventory",
-        "set up a platform for retail",
-        "build me a tasting room for a family winery",
-        "Build me a platform for my hospitality domain",
-    ],
-)
-def test_standard_platform_phrasings_route_to_platform_flow(message):
-    assert platform_chat_flow.should_handle_platform_message(message) is True
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
+        "approve",
+        "go ahead, build it",
+        "continue",
+        "rename product to Zorblat",
         "add block vector_search to the chain",
-        "what learning rate does the lora use",
-        "show me the retail kit blocks",
     ],
 )
-def test_kit_configurator_vocabulary_stays_legacy(message):
-    assert platform_chat_flow.should_handle_platform_message(message) is False
+async def test_free_text_never_picks_an_action(session, message):
+    """With no typed action and no chat LLM, words decide nothing: no draft,
+    no approval, no resume, no rename, no legacy chain -- an honest pointer
+    at the Floor controls, and the pending blueprint untouched."""
+    before = dict(session.product_design.blueprint)
+    events = await _collect_events(session.session_id, message)
+    kinds = [e["event"] for e in events]
+    assert "blueprint" not in kinds and "generation" not in kinds
+    assert "chain" not in kinds and "status" not in kinds
+    assert session.product_design.blueprint == before
+    assert session.product_design.blueprint_approved is False
+    assert kinds[-1] == "done"
+
+
+@pytest.mark.asyncio
+async def test_the_chain_action_reaches_the_legacy_configurator(session, monkeypatch):
+    from app.routers import chat as chat_router
+
+    async def _boom(**kwargs):
+        raise RuntimeError("zorblat chain generator reached")
+
+    monkeypatch.setattr(chat_router, "generate_chain_suggestion", _boom)
+    events = await _collect_events(session.session_id, "review this contract", action="chain")
+    kinds = [e["event"] for e in events]
+    assert kinds[0] == "status"  # the legacy path opens with status:thinking
 
 
 # --- (b) + fallthrough: SSE stream contract ---------------------------------
@@ -68,11 +75,14 @@ def _state_with_pending_blueprint() -> SessionState:
     return s
 
 
-async def _collect_events(session_id: str, message: str):
+async def _collect_events(session_id: str, message: str, action=None, value=None):
+    from app.factory.floor_actions import parse_action
     from app.routers import chat as chat_router
 
     events = []
-    async for raw in chat_router._stream_response(session_id, message):
+    async for raw in chat_router._stream_response(
+        session_id, message, parse_action(action), value
+    ):
         lines = [l for l in raw.strip().splitlines() if l]
         ev = {"event": "", "data": ""}
         for line in lines:
@@ -96,9 +106,8 @@ def session(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_pending_blueprint_unrecognized_message_never_hits_legacy_chain(session):
-    # An off-script message while a blueprint is pending must produce
-    # platform-flow guidance — no legacy chain generation, no
-    # "Generated chain failed validation", no LLM call at all.
+    # Free text while a blueprint is pending (no chat LLM) gets an honest
+    # pointer at the controls -- no legacy chain, no failed validation.
     events = await _collect_events(session.session_id, "make the theme dark please")
     kinds = [e["event"] for e in events]
     assert "error" not in kinds
@@ -111,9 +120,9 @@ async def test_pending_blueprint_unrecognized_message_never_hits_legacy_chain(se
 
 @pytest.mark.asyncio
 async def test_blueprint_summary_emitted_exactly_once(session):
-    # Repeated build message re-drafts: the summary must arrive ONLY in the
-    # blueprint card event — zero delta re-stream (that doubled the text).
-    events = await _collect_events(session.session_id, "build a platform for retail")
+    # A typed Draft re-drafts: the summary must arrive ONLY in the blueprint
+    # card event -- zero delta re-stream (that doubled the text).
+    events = await _collect_events(session.session_id, "build a platform for retail", action="draft")
     kinds = [e["event"] for e in events]
     assert kinds.count("blueprint") == 1
     assert "delta" not in kinds
@@ -127,8 +136,50 @@ async def test_approval_generation_emitted_exactly_once(session, monkeypatch):
         return {"ok": True, "summary": "Platform generated.", "product_id": "p1"}
 
     monkeypatch.setattr(platform_chat_flow, "approve_and_generate", fake_approve)
-    events = await _collect_events(session.session_id, "approve")
+    events = await _collect_events(session.session_id, "", action="approve")
     kinds = [e["event"] for e in events]
     assert kinds.count("generation") == 1
     assert "delta" not in kinds
+    assert kinds[-1] == "done"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("llm_says_start", [False, True])
+async def test_approve_in_text_does_not_build(session, monkeypatch, llm_says_start):
+    """No approve -> no build. A chat message that SAYS 'approve' carries no
+    typed approve action, so it must not start a build -- with no chat model,
+    and with a chat model that answers start_coder."""
+    from app.factory import platform_chat_llm
+
+    started = []
+
+    def _approve(*a, **k):
+        started.append("approve")
+        return {}
+
+    def _resume(*a, **k):
+        started.append("resume")
+        return {}
+
+    monkeypatch.setattr(platform_chat_flow, "approve_and_generate", _approve)
+    monkeypatch.setattr(platform_chat_flow, "start_or_resume_coder", _resume)
+    if llm_says_start:
+        monkeypatch.setattr(platform_chat_llm, "should_orchestrate", lambda *a, **k: True)
+        monkeypatch.setattr(
+            platform_chat_llm,
+            "try_decide",
+            lambda *a, **k: {
+                "action": "start_coder",
+                "brief": "",
+                "message": "",
+                "refine": {"op": "", "value": ""},
+                "connectors": [],
+                "missing_connectors": [],
+            },
+        )
+    events = await _collect_events(session.session_id, "approve - please approve and build it")
+    kinds = [e["event"] for e in events]
+    assert started == []
+    assert "generation" not in kinds
+    assert session.product_design.blueprint_approved is False
     assert kinds[-1] == "done"

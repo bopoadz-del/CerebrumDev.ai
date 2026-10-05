@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..models.session import SessionState
+from . import client_data
 from .chroma_store import load_chunks, collection_exists
 from .engine_discovery import EngineDiscoveryError, resolve_engine_source
 from .packager import _safe_name
@@ -595,6 +596,7 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
     )
 
     docs_dir = package_root / "data" / "docs"
+    client_data.declare(package_root, package_root / "vectors.json", docs_dir)
     session_files = Path(STORAGE_PATH) / "sessions" / session_id / "files"
     if session_files.exists():
         docs_dir.mkdir(parents=True, exist_ok=True)
@@ -643,6 +645,7 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
 
     dotenv = package_root / ".env"
     dotenv.write_text("\n".join(dotenv_lines), encoding="utf-8")
+    client_data.declare(package_root, dotenv)
     _write_deploy_contract(package_root, service_name, env_vars)
     _write_readme(package_root, service_name)
     _drop_cli_artifacts(package_root, service_name, env_vars, engine_root)

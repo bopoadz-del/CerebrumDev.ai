@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 
 from app.factory import platform_chat_flow
-from app.factory.platform_chat_flow import refine_from_chat
+from app.factory.floor_actions import FloorAction
+from app.factory.platform_chat_flow import apply_refinement
 from app.models.session import ProductDesignState, SessionState
 
 
@@ -30,7 +31,7 @@ def _draft_retail(state):
 
 def test_refinement_add_capability(state):
     _draft_retail(state)
-    result = refine_from_chat(state, "add capability vector_search")
+    result = apply_refinement(state, FloorAction.ADD_CAPABILITY, "vector_search")
     assert result["ok"] is True
     assert result["refined"] is True
     cap_ids = [c["id"] for c in result["blueprint"]["capabilities"]]
@@ -42,7 +43,7 @@ def test_refinement_add_capability(state):
 
 def test_refinement_add_unknown_capability_becomes_generate(state):
     _draft_retail(state)
-    result = refine_from_chat(state, "add capability loyalty_rewards")
+    result = apply_refinement(state, FloorAction.ADD_CAPABILITY, "loyalty_rewards")
     assert result["ok"] is True
     cap = next(c for c in result["blueprint"]["capabilities"] if c["id"] == "loyalty_rewards")
     assert cap["strategy_hint"] == "GENERATE"
@@ -53,7 +54,7 @@ def test_refinement_remove_capability(state):
     _draft_retail(state)
     before = [c["id"] for c in state.product_design.blueprint["capabilities"]]
     assert "audit" in before
-    result = refine_from_chat(state, "remove capability audit")
+    result = apply_refinement(state, FloorAction.REMOVE_CAPABILITY, "audit")
     assert result["ok"] is True
     after = [c["id"] for c in result["blueprint"]["capabilities"]]
     assert "audit" not in after
@@ -62,29 +63,29 @@ def test_refinement_remove_capability(state):
 def test_refinement_cannot_remove_last_capability(state):
     _draft_retail(state)
     # remove audit first
-    refine_from_chat(state, "remove capability audit")
+    apply_refinement(state, FloorAction.REMOVE_CAPABILITY, "audit")
     # now only retail_core remains
-    result = refine_from_chat(state, "remove capability retail_core")
+    result = apply_refinement(state, FloorAction.REMOVE_CAPABILITY, "retail_core")
     assert result["ok"] is False
 
 
 def test_refinement_list_capabilities(state):
     _draft_retail(state)
-    result = refine_from_chat(state, "list capabilities")
+    result = apply_refinement(state, FloorAction.LIST_CAPABILITIES)
     assert result["ok"] is True
     assert "retail_core" in result["summary"]
 
 
 def test_refinement_rename_product(state):
     _draft_retail(state)
-    result = refine_from_chat(state, 'rename product to "Acme Retail Hub"')
+    result = apply_refinement(state, FloorAction.RENAME, "Acme Retail Hub")
     assert result["ok"] is True
     assert result["blueprint"]["product_name"] == "Acme Retail Hub"
 
 
 def test_refinement_set_vertical(state):
     _draft_retail(state)
-    result = refine_from_chat(state, "change vertical to boutique_retail")
+    result = apply_refinement(state, FloorAction.SET_VERTICAL, "boutique_retail")
     assert result["ok"] is True
     assert result["blueprint"]["vertical"] == "boutique_retail"
     assert result["blueprint"]["product_id"] == "boutique_retail"
@@ -104,43 +105,48 @@ def test_vertical_is_the_structured_hint_never_the_brief_prose():
     assert hinted.vertical == "zorblat_yards"
 
 
-def test_parse_refinement_command_variations():
-    assert platform_chat_flow.parse_refinement_command("add capability payments")[0] == "add_capability"
-    assert platform_chat_flow.parse_refinement_command("include chat")[0] == "add_capability"
-    assert platform_chat_flow.parse_refinement_command("drop capability audit")[0] == "remove_capability"
-    assert platform_chat_flow.parse_refinement_command("list capabilities")[0] == "list_capabilities"
+def test_no_text_is_parsed_into_a_refinement(state):
+    """Refinements arrive typed. There is no parser of command wording left."""
+    assert not hasattr(platform_chat_flow, "parse_refinement_command")
+    assert not hasattr(platform_chat_flow, "refine_from_chat")
+
+
+def test_a_refinement_without_its_value_is_refused(state):
+    _draft_retail(state)
+    result = apply_refinement(state, FloorAction.ADD_CAPABILITY, "")
+    assert result["ok"] is False and result["refined"] is False
 
 
 # ── set_rigor: the acceptance bar is the customer's to choose ────────────────
 
-@pytest.mark.parametrize("phrase,level", [
-    ("set rigor to prototype", "prototype"),
-    ("make it a test platform", "prototype"),
-    ("build a light platform", "light"),
-    ("make it half-ass", "light"),
-    ("rigor: standard", "standard"),
-    ("make it a production platform", "production"),
-    ("rigor to full", "production"),
-])
-def test_set_rigor_phrasings(state, phrase, level):
+@pytest.mark.parametrize("level", ["prototype", "light", "standard", "production"])
+def test_set_rigor_takes_the_declared_grade(state, level):
     _draft_retail(state)
-    result = refine_from_chat(state, phrase)
-    assert result is not None, phrase
-    assert result["ok"] and result["refined"], phrase
-    assert result["action"] == "set_rigor", phrase
-    assert result["blueprint"]["rigor"] == level, phrase
+    result = apply_refinement(state, FloorAction.SET_RIGOR, level)
+    assert result is not None, level
+    assert result["ok"] and result["refined"], level
+    assert result["action"] == "set_rigor", level
+    assert result["blueprint"]["rigor"] == level, level
+
+
+def test_an_undeclared_grade_is_refused_not_mapped(state):
+    """No synonym table: a grade outside the four declared levels is refused."""
+    _draft_retail(state)
+    before = dict(state.product_design.blueprint)
+    result = apply_refinement(state, FloorAction.SET_RIGOR, "zorblat-grade")
+    assert result["ok"] is False
+    assert state.product_design.blueprint == before
 
 
 def test_set_rigor_reflows_plan(state):
     _draft_retail(state)
     state.product_design.plan = {"stale": True}
-    refine_from_chat(state, "make it a prototype")
+    apply_refinement(state, FloorAction.SET_RIGOR, "prototype")
     assert state.product_design.plan is None  # bar changed -> re-plan
 
 
-def test_rigor_regex_does_not_hijack_add_remove(state):
+def test_add_and_remove_stay_themselves(state):
     _draft_retail(state)
-    # 'add'/'remove' commands must still parse as themselves
-    assert refine_from_chat(state, "add capability vector_search")["action"] == "add_capability"
-    r = refine_from_chat(state, "remove capability audit")
+    assert apply_refinement(state, FloorAction.ADD_CAPABILITY, "vector_search")["action"] == "add_capability"
+    r = apply_refinement(state, FloorAction.REMOVE_CAPABILITY, "audit")
     assert r["action"] == "remove_capability"

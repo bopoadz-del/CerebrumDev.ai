@@ -330,15 +330,18 @@ async def reset_password(body: ResetBody, request: Request):
 
 
 def _request_login_token(request: Request) -> str:
-    """The caller's current ``cdt_`` session, if any (Bearer, then cookie)."""
+    """The credential the caller presented (Bearer, X-API-Key, then cookie).
+
+    Whether it is a login session is decided by the store, which keeps the
+    session whose hash it holds -- never by the token's spelling. An API key
+    or the master key here keeps nothing: it matches no login-session row.
+    """
     authorization = (request.headers.get("Authorization") or "").strip()
     scheme, _, token = authorization.partition(" ")
-    if scheme.lower() == "bearer":
-        token = token.strip()
-        if token.startswith("cdt_"):
-            return token
+    if scheme.lower() == "bearer" and token.strip():
+        return token.strip()
     x_key = (request.headers.get("X-API-Key") or "").strip()
-    if x_key.startswith("cdt_"):
+    if x_key:
         return x_key
     return cookie_login_token(request)
 

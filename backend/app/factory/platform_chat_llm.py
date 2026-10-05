@@ -10,7 +10,7 @@ this orchestrator. The model returns a JSON action:
   draft_platform  — park a blueprint (architect LLM still drafts it)
   start_coder     — approve the pending blueprint and launch WRITER
   refine_blueprint — apply a refinement command already understood by
-                     platform_chat_flow.refine_from_chat
+                     platform_chat_flow.apply_refinement (typed op + value)
   reply           — talk, do not start the coder
   ask_user        — ask what the brief leaves open BEFORE drafting (who uses
                     it, documents to answer from, size, automation). The
@@ -35,6 +35,7 @@ from typing import Any, Dict, List, Optional
 
 from app.core.llm_config import get_llm_config
 from app.factory import platform_chat_flow
+from app.factory.floor_actions import REFINEMENT_ACTIONS, FloorActionError, parse_action
 from app.factory.product_architect import LlmSoftMiss
 from app.factory.product_architect import _llm_json_call as _architect_llm_json_call
 
@@ -124,9 +125,10 @@ call start_coder to open a pilot cycle. Do not call a code-cycle SUCCESS \
 "finished" or "download ready". After a FAILED run a new brief MUST call \
 draft_platform (new product); do not treat that brief as a resume.
 - refine_blueprint: the user wants to change the pending blueprint. Set \
-"refine_message" to a command the factory already understands, e.g. \
-"add capability inventory", "remove capability audit", \
-"rename product to Harbor Ops", "list capabilities".
+"refine" to {"op": ONE OF add_capability | remove_capability | rename | \
+set_vertical | set_rigor | list_capabilities, "value": the capability id, \
+the new product name, the vertical, or the grade (prototype | light | \
+standard | production); "" for list_capabilities}.
 - reply: questions, chit-chat, or a pending blueprint with no confirmation. \
 Set "message" to a short grounded reply. Tell them they can confirm to start \
 the coding agent. Do not pretend a build started.
@@ -147,7 +149,7 @@ user named that is NOT attachable (not in the store, or not cleared) in \
 "missing_connectors" by its plain name, and tell the user plainly that it \
 will ship as a marked placeholder until it is built — never as working.
 
-Return ONLY JSON: {"action": "...", "brief": "", "refine_message": "", "message": "", "connectors": [], "missing_connectors": []}.
+Return ONLY JSON: {"action": "...", "brief": "", "refine": {"op": "", "value": ""}, "message": "", "connectors": [], "missing_connectors": []}.
 """
 
 
@@ -180,17 +182,8 @@ def should_orchestrate(state: Any, message: str) -> bool:
         return False
     if not (message or "").strip():
         return False
-    if platform_chat_flow.is_kit_config_vocabulary(message):
-        return False
-    # Exact Approve gate is deterministic. Calling the LLM here is how
-    # empty OpenRouter completions became CEREBRUMDEV-BACKEND-F/G.
-    if platform_chat_flow.has_pending_blueprint(state) and platform_chat_flow.is_exact_approve_gate(
-        message
-    ):
-        return False
-    # The Floor is a product factory. When the LLM is keyed, let it classify
-    # business briefs that never say "platform" — regex intent is the offline
-    # fallback, not the live door.
+    # Typed Floor actions (Approve, Continue, the feature-list editor ...)
+    # are dispatched before this is asked; only free text reaches the model.
     return True
 
 
@@ -556,10 +549,20 @@ def decide(state: Any, message: str) -> Dict[str, Any]:
     return {
         "action": action,
         "brief": str(data.get("brief") or "").strip(),
-        "refine_message": str(data.get("refine_message") or "").strip(),
+        "refine": _refine_of(data.get("refine")),
         "message": str(data.get("message") or "").strip(),
         "connectors": _str_list(data.get("connectors")),
         "missing_connectors": _str_list(data.get("missing_connectors")),
+    }
+
+
+def _refine_of(raw: Any) -> Dict[str, str]:
+    """The model's typed refinement: {"op", "value"} as fields, never text."""
+    if not isinstance(raw, dict):
+        return {"op": "", "value": ""}
+    return {
+        "op": str(raw.get("op") or "").strip(),
+        "value": str(raw.get("value") or "").strip(),
     }
 
 
@@ -577,42 +580,6 @@ def try_decide(state: Any, message: str) -> Optional[Dict[str, Any]]:
     except Exception:
         logger.exception("Floor chat LLM failed; falling back to regex routing")
         return None
-
-
-def coerce_explicit_approval(decision: Dict[str, Any], state: Any, message: str) -> Dict[str, Any]:
-    """If the model forgets the tool on an explicit 'approve', still start WRITER.
-
-    The Approve button sends the word 'approve'. A rambling completion must
-    not strand a confirmed blueprint. Natural-language confirms rely on the
-    model; this seatbelt is only for is_approval() messages.
-    """
-    if decision.get("action") == "start_coder":
-        return decision
-    if platform_chat_flow.has_pending_blueprint(state) and platform_chat_flow.is_approval(message):
-        return {
-            "action": "start_coder",
-            "brief": "",
-            "refine_message": "",
-            "message": "",
-            "coerced": True,
-        }
-    if (
-        platform_chat_flow.is_resume_request(message)
-        or platform_chat_flow.is_pilot_request(message)
-    ) and (
-        platform_chat_flow.has_pending_blueprint(state)
-        or platform_chat_flow.is_generation_resumable(state)
-        or platform_chat_flow.is_generation_complete(state)
-        or platform_chat_flow.is_generation_terminal_failure(state)
-    ):
-        return {
-            "action": "start_coder",
-            "brief": "",
-            "refine_message": "",
-            "message": "",
-            "coerced": True,
-        }
-    return decision
 
 
 def _elicitation_allowed(state: Any) -> bool:
@@ -641,7 +608,7 @@ def enforce_elicitation_cap(
     return {
         "action": "draft_platform",
         "brief": decision.get("brief") or "",
-        "refine_message": "",
+        "refine": {"op": "", "value": ""},
         "message": "",
         "connectors": list(decision.get("connectors") or []),
         "missing_connectors": list(decision.get("missing_connectors") or []),
@@ -809,13 +776,21 @@ def apply_decision(state: Any, message: str, decision: Dict[str, Any]) -> Dict[s
     action = decision.get("action")
 
     if action == "start_coder":
-        result = platform_chat_flow.start_or_resume_coder(
-            state, triggered_by="chat_llm"
-        )
-        if result.get("generation") and not result.get("already_complete"):
-            result["sse"] = result.get("sse") or "generation"
-            result["stream_delta"] = False
-        return result
+        # No approve -> no build. A build starts only from the TYPED Floor
+        # Approve / Continue action; free text (however the model reads it)
+        # never spends a generation. Point the user at the control.
+        pending = platform_chat_flow.has_pending_blueprint(state)
+        return {
+            "sse": "info",
+            "ok": True,
+            "summary": (
+                "Press Approve to start the coding agent on this feature list."
+                if pending
+                else "Press Continue to resume the build."
+            ),
+            "stream_delta": True,
+            "awaiting_action": "approve" if pending else "continue",
+        }
 
     if action == "ask_user":
         pd = state.product_design
@@ -855,8 +830,14 @@ def apply_decision(state: Any, message: str, decision: Dict[str, Any]) -> Dict[s
         return result
 
     if action == "refine_blueprint":
-        refine_msg = decision.get("refine_message") or message
-        refined = platform_chat_flow.refine_from_chat(state, refine_msg)
+        refine = decision.get("refine") or {}
+        refined = None
+        try:
+            op = parse_action(refine.get("op"))
+            if op in REFINEMENT_ACTIONS:
+                refined = platform_chat_flow.apply_refinement(state, op, refine.get("value"))
+        except FloorActionError:
+            refined = None
         if refined:
             refined["sse"] = "blueprint" if refined.get("refined") else "info"
             refined["stream_delta"] = not refined.get("refined")
@@ -865,8 +846,8 @@ def apply_decision(state: Any, message: str, decision: Dict[str, Any]) -> Dict[s
             "sse": "info",
             "ok": True,
             "summary": (
-                "I could not apply that refinement. Try 'add capability X', "
-                "'remove capability X', or confirm to start the coding agent."
+                "I could not apply that change. Use the feature-list editor, "
+                "rename or grade controls on the Floor, or Approve to build."
             ),
             "stream_delta": True,
         }
@@ -880,12 +861,12 @@ def apply_decision(state: Any, message: str, decision: Dict[str, Any]) -> Dict[s
 
 
 def try_handle(state: Any, message: str) -> Optional[Dict[str, Any]]:
-    """Decide + apply. None means the caller should use the regex fallback."""
+    """Decide + apply. None means no chat LLM answered (the caller then
+    points the user at the Floor controls -- there is no prose fallback)."""
     if not should_orchestrate(state, message):
         return None
     decision = try_decide(state, message)
     if decision is None:
         return None
-    decision = coerce_explicit_approval(decision, state, message)
     decision = enforce_elicitation_cap(decision, state, message)
     return apply_decision(state, message, decision)

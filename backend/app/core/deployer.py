@@ -17,10 +17,11 @@ import tempfile
 import urllib.request
 import urllib.error
 import zipfile
-from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from pathlib import Path, PurePosixPath
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 from ..models.session import SessionState
+from . import client_data
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +42,10 @@ def _scrub_git_output(text: Optional[str]) -> str:
 DEPLOY_REPO_URL = os.getenv("DEPLOY_REPO_URL", "")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 
-# Paths inside a generated package that may contain client data. They must never
-# be staged for a git push unless the target repository has passed the private-
-# repo guard.
-_CLIENT_DATA_PATHS = {".env", "vectors.json", "data/docs/"}
+# Paths inside a generated package that carry client data must never be staged
+# for a git push unless the target repository has passed the private-repo
+# guard. Which paths those are is what the packager declared as it wrote them
+# (app.core.client_data) -- never a list of names kept here.
 
 
 def _safe_name(name: str) -> str:
@@ -117,12 +118,20 @@ def _verify_repo_private(repo_url: str, token: str) -> Tuple[bool, str]:
         return False, f"repository {owner}/{repo} verification failed: {exc}"
 
 
-def _assert_no_client_data_staged(repo_dir: str, guard_passed: bool) -> None:
+def _assert_no_client_data_staged(
+    repo_dir: str,
+    guard_passed: bool,
+    declared: Optional[Sequence[PurePosixPath]] = None,
+) -> None:
     """Packaging-time scrub check.
 
     Raise if any client-data path is staged for commit while the private-repo
     guard has not passed. This is a fail-safe: the deployer should never stage
     these files unless the target repository has been verified private.
+
+    ``declared`` is the packager's client-data manifest, as paths relative to
+    ``repo_dir``. With no manifest nothing proves a staged file is not client
+    data, so any staged file fails the check (fail closed).
     """
     if guard_passed:
         return
@@ -130,13 +139,12 @@ def _assert_no_client_data_staged(repo_dir: str, guard_passed: bool) -> None:
     staged = [line for line in status.stdout.splitlines() if line and line[0] in ("A", "M", "R")]
     for line in staged:
         # status lines look like "AM path/to/file"
-        path = line[3:].strip()
-        for client_path in _CLIENT_DATA_PATHS:
-            if path == client_path or path.startswith(client_path):
-                raise RuntimeError(
-                    f"Scrub check failed: client data path '{path}' is staged "
-                    "but the private-repo guard has not passed."
-                )
+        path = PurePosixPath(line[3:].strip())
+        if declared is None or client_data.covers(declared, path):
+            raise RuntimeError(
+                f"Scrub check failed: client data path '{path}' is staged "
+                "but the private-repo guard has not passed."
+            )
 
 
 def _authenticated_repo_url(repo_url: str, token: str) -> str:
@@ -207,7 +215,16 @@ def _push_package_to_branch(session_id: str, package_dir: str) -> Tuple[Optional
         # Fail-safe: the guard passed above, so this assertion must succeed.
         # It is kept as defense-in-depth in case future refactors stage files
         # before verification.
-        _assert_no_client_data_staged(clone_dir, guard_passed=True)
+        package_declared = client_data.declared(package_dir)
+        _assert_no_client_data_staged(
+            clone_dir,
+            guard_passed=True,
+            declared=(
+                None
+                if package_declared is None
+                else [PurePosixPath(deploy_path.as_posix()) / p for p in package_declared]
+            ),
+        )
 
         status = _run_git(["status", "--short"], cwd=clone_dir)
         if not status.stdout.strip():

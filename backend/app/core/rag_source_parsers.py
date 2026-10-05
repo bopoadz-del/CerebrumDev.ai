@@ -24,6 +24,9 @@ class ParseResult:
     parser_version: Optional[str] = None
     page_count: Optional[int] = None
     warnings: List[str] = None
+    #: The extracted text was cut at ``max_chars`` -- the typed fact the
+    #: truncation warning only describes.
+    truncated: bool = False
 
     def __post_init__(self):
         if self.warnings is None:
@@ -100,6 +103,7 @@ def parse_pdf(
         parser_version=getattr(__import__("pypdf", fromlist=["__version__"]), "__version__", None),
         page_count=total_pages,
         warnings=warnings,
+        truncated=len(full_text) > max_chars,
     )
 
 
@@ -139,6 +143,7 @@ def parse_html(raw_bytes: bytes, max_chars: int) -> ParseResult:
         parser_version=getattr(__import__("bs4", fromlist=["__version__"]), "__version__", None),
         page_count=None,
         warnings=warnings,
+        truncated=len(full_text) > max_chars,
     )
 
 
@@ -164,6 +169,7 @@ def parse_text(raw_bytes: bytes, max_chars: int) -> ParseResult:
         parser_version=None,
         page_count=None,
         warnings=warnings,
+        truncated=len(full_text) > max_chars,
     )
 
 
