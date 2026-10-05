@@ -1,0 +1,46 @@
+{
+  "schema": "floor_actions.v1",
+  "source": "backend/app/factory/floor_actions.py",
+  "actions": {
+    "approve": {
+      "value": null
+    },
+    "continue": {
+      "value": null
+    },
+    "run_pilot": {
+      "value": null
+    },
+    "draft": {
+      "value": null
+    },
+    "add_capability": {
+      "value": "string"
+    },
+    "remove_capability": {
+      "value": "string"
+    },
+    "rename": {
+      "value": "string"
+    },
+    "set_vertical": {
+      "value": "string"
+    },
+    "set_rigor": {
+      "value": {
+        "one_of": [
+          "prototype",
+          "light",
+          "standard",
+          "production"
+        ]
+      }
+    },
+    "list_capabilities": {
+      "value": null
+    },
+    "chain": {
+      "value": null
+    }
+  }
+}

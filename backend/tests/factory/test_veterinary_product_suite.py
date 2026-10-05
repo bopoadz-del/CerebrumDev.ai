@@ -338,14 +338,22 @@ def test_unrepaired_veterinary_domain_json_still_refused():
 
 
 def test_sess_a69c8ce_leftover_records_and_sample_priority():
-    """Platforms card: table=records + priority='sample' on accept-payload."""
+    """Platforms card: a leftover handler table + priority='sample' on
+    accept-payload. The table is the DECLARED entity's (Alembic creates
+    exactly that one), whatever name the handler carried; SQL a handler
+    passes is its own and is never rewritten from its text."""
     leftover = prepare_block_input(
         "database",
-        {"table": "records", "sql": "SELECT * FROM records", "pet_name": "Nala"},
+        {"table": "records", "pet_name": "Nala"},
         entity="pet_record",
     )
     assert leftover["table"] == "pet_record"
-    assert "FROM pet_record" in leftover["sql"]
+    assert leftover["values"] == {"pet_name": "Nala"}
+    own_sql = "SELECT * FROM records"
+    passed = prepare_block_input(
+        "database", {"table": "records", "sql": own_sql}, entity="pet_record"
+    )
+    assert passed["sql"] == own_sql
     queued = prepare_block_input("queue", {"priority": "sample", "id": "id-1"})
     assert queued["priority"] == 0
     assert "id" not in queued

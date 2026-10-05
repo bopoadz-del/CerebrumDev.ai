@@ -17,7 +17,7 @@ from __future__ import annotations
 import inspect
 
 from app.factory.build import roles_handlers
-from app.factory.build.block_inputs import handler_required_fields, settings_names
+from app.factory.build.block_inputs import align_spec_to_handler_source, settings_names
 from app.factory.build.block_obligations import dependency_obligations_on_disk
 from app.factory.build.roles_handlers import _render_requirements
 
@@ -73,7 +73,10 @@ def test_a_lower_case_name_read_from_the_environment_is_a_setting():
     )
 
     assert settings_names(source) == {"zz_client_id", "zz_secret"}
-    assert handler_required_fields(source) == ["folder_name"]
+    # Neither the settings nor the roster declare a record field: only the
+    # schema does (owner ruling 2026-10-05).
+    aligned, changed = align_spec_to_handler_source({"fields": []}, source)
+    assert aligned["fields"] == [] and changed == []
 
 
 def test_prose_naming_a_setting_does_not_make_it_one():

@@ -4,6 +4,8 @@
  * product design state, product package export, billing status.
  */
 
+import floorActionSpec from './floor_actions.json'
+
 const API_BASE =
   (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || ''
 
@@ -277,23 +279,15 @@ export interface ChatEvent {
   data: unknown
 }
 
-/** Every action a Floor control can send (backend app.factory.floor_actions).
- *  The Factory never decides an action from the words in the message. */
-export type FloorAction =
-  | 'approve'
-  | 'continue'
-  | 'run_pilot'
-  | 'draft'
-  | 'add_capability'
-  | 'remove_capability'
-  | 'rename'
-  | 'set_vertical'
-  | 'set_rigor'
-  | 'list_capabilities'
-  | 'chain'
+/** Every action a Floor control can send. ONE committed spec, exported from
+ *  the backend (app.factory.floor_actions) and shared with the browser e2e and
+ *  scripts/post_deploy_smoke.py; a backend test fails if it drifts. The
+ *  Factory never decides an action from the words in the message. */
+export type FloorAction = keyof typeof floorActionSpec.actions
 
-/** The build grades a blueprint can declare (ProductBlueprint.rigor). */
-export const RIGOR_LEVELS = ['prototype', 'light', 'standard', 'production'] as const
+/** The build grades a blueprint can declare (ProductBlueprint.rigor), from
+ *  the same spec's ``set_rigor`` value set. */
+export const RIGOR_LEVELS: readonly string[] = floorActionSpec.actions.set_rigor.value.one_of
 
 export interface TypedFloorAction {
   action: FloorAction

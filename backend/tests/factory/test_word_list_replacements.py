@@ -10,7 +10,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from app.factory.build import acceptance_floor as floor
-from app.factory.build.block_inputs import required_fields_from_rosters
+from app.factory.build.block_inputs import align_spec_to_handler_source
 from app.factory.build.level_grade import _cli_honesty_miss
 from app.factory.build.supply_chain import _text_has_outbound
 
@@ -58,10 +58,11 @@ def test_a_rendered_path_is_matched_by_its_segments_wherever_it_is_mounted():
     assert not floor._factory_rendered("lib/app/zorblat.py", rendered)  # relative, deeper
 
 
-# _ROSTER_CONSULTS_PAYLOAD -> AST: the loop looks its variable up in payload
+# _ROSTER_CONSULTS_PAYLOAD -> removed: a roster in code declares no field;
+# required fields come only from the declared schema (owner, 2026-10-05).
 
 
-def test_a_roster_is_one_whose_loop_consults_the_payload():
+def test_a_roster_in_code_declares_no_field_whether_or_not_it_consults_the_payload():
     consults = (
         'FROBS = ["zorb_ref", "quux_id"]\n'
         "def handle(payload):\n"
@@ -75,8 +76,9 @@ def test_a_roster_is_one_whose_loop_consults_the_payload():
         "    for name in FROBS:\n"
         "        log('missing not in payload .get(')\n"
     )
-    assert required_fields_from_rosters(consults) == ["zorb_ref", "quux_id"]
-    assert required_fields_from_rosters(words_only) == []
+    for source in (consults, words_only):
+        spec, changed = align_spec_to_handler_source({"fields": []}, source)
+        assert spec["fields"] == [] and changed == []
 
 
 # CLI_FOUNDING_HONESTY_MISS -> the receipt's typed blocker field

@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 
+import { postedAction, typedAction } from './floorActionClient'
+
 /**
  * Factory Floor / Your Platforms / Subscription / Account — beyond verify-email.
  * Routes are mocked so these pin the SPA contract without SMTP or a live coder.
@@ -168,10 +170,11 @@ function sse(event: string, data: unknown): string {
 test('Floor drafts a feature list and Approve & build starts the coding agent', async ({ page }) => {
   await mockVerifiedFactory(page)
   await page.route('**/v1/sessions/sess_e2e_floor/chat', async (route) => {
-    const posted = route.request().postDataJSON() as { message?: string }
-    const message = posted.message ?? ''
+    // The Approve & build button sends the TYPED action; the message text
+    // never decides it (#637).
+    const posted = route.request().postDataJSON() as { action?: string; value?: string }
     let body = sse('done', '')
-    if (message === 'approve') {
+    if (JSON.stringify(postedAction(posted)) === JSON.stringify(typedAction('approve'))) {
       body =
         sse('generation', {
           summary:
@@ -874,10 +877,10 @@ test('Floor code-cycle SUCCESS is a prototype with Continue to pilot — never F
       }),
     })
   })
-  const continuePosts: string[] = []
+  const continuePosts: Array<ReturnType<typeof postedAction>> = []
   await page.route('**/v1/sessions/sess_e2e_floor/chat', async (route) => {
-    const posted = route.request().postDataJSON() as { message?: string }
-    continuePosts.push(posted.message ?? '')
+    const posted = route.request().postDataJSON() as { action?: string; value?: string }
+    continuePosts.push(postedAction(posted))
     await route.fulfill({
       status: 200,
       contentType: 'text/event-stream',
@@ -906,7 +909,9 @@ test('Floor code-cycle SUCCESS is a prototype with Continue to pilot — never F
   await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
   await page.getByRole('button', { name: 'Continue to pilot' }).click()
   await expect(page.getByText('Opening pilot cycle for residential-lettings')).toBeVisible()
-  expect(continuePosts).toEqual(['continue'])
+  // The button opens the pilot cycle: the typed run_pilot action (#637),
+  // not the resume action and never the word in the message.
+  expect(continuePosts).toEqual([typedAction('run_pilot')])
 })
 
 test('Your Platforms shows a loading skeleton — never empty-state — while product fetch is in flight', async ({

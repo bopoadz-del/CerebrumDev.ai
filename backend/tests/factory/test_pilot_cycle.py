@@ -80,8 +80,12 @@ def test_cloner_emission_contains_sqlite_init_contract():
 
 
 def test_cloner_emission_rewrites_result_key_and_store_host_di():
-    """Live sess_f1fe691: RuntimeError: 'result' + DatabaseBlock HAL miss."""
+    """Live sess_f1fe691: RuntimeError: 'result' + DatabaseBlock HAL miss.
+
+    The fixture is a whole function (valid Python): the result-key rewrite
+    reads the module's AST and leaves source it cannot parse untouched."""
     src = (
+        "def _run_block(block_cls, envelope):\n"
         "        try:\n"
         "            from app.dependencies import _create_block_instance\n"
         "            inst = _create_block_instance(block_cls)\n"

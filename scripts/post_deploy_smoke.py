@@ -39,6 +39,7 @@ import urllib.error
 import urllib.request
 import uuid
 import zipfile
+from pathlib import Path
 
 DEFAULT_BASE = "https://api.cerebrum-dev.com"
 FAILURES = []
@@ -271,21 +272,44 @@ def check(name, ok, evidence=""):
         FAILURES.append(name)
 
 
+#: The ONE typed-action spec, shared with the SPA and its browser e2e
+#: (frontend/src/api/floor_actions.json, exported from the backend's
+#: app.factory.floor_actions; backend/tests/factory/test_floor_action_spec.py
+#: fails when they differ).
+FLOOR_ACTIONS = json.loads(
+    (Path(__file__).resolve().parents[1] / "frontend" / "src" / "api" / "floor_actions.json")
+    .read_text(encoding="utf-8")
+)["actions"]
+
+
+def typed_action(action, value=None):
+    """The ``action``/``value`` fields of a chat request, built from the shared
+    spec: an action it does not define, or a value of the wrong shape, is a
+    smoke bug and raises before anything is sent."""
+    if action not in FLOOR_ACTIONS:
+        raise ValueError(f"undefined Floor action {action!r}")
+    shape = FLOOR_ACTIONS[action]["value"]
+    if shape is None:
+        if value is not None:
+            raise ValueError(f"Floor action {action!r} takes no value")
+        return {"action": action}
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"Floor action {action!r} needs a value")
+    if isinstance(shape, dict) and value not in shape["one_of"]:
+        raise ValueError(f"Floor action {action!r} value must be one of {shape['one_of']}")
+    return {"action": action, "value": value}
+
+
 def chat(sid, tok, msg, retries=4, action=None, value=None):
     """POST one Floor chat turn. ``action``/``value`` are the TYPED Floor
-    action (approve, continue, draft, ...): the Factory never decides an
-    action from the words in ``msg``."""
+    action (approve, continue, draft, ...), built by ``typed_action`` from the
+    shared spec: the Factory never decides an action from the words in ``msg``."""
+    typed = typed_action(action, value) if action else {}
     last_err = None
     for attempt in range(retries + 1):
         rq = urllib.request.Request(
             BASE + f"/v1/sessions/{sid}/chat", method="POST",
-            data=json.dumps(
-                {
-                    "message": msg,
-                    **({"action": action} if action else {}),
-                    **({"value": value} if value is not None else {}),
-                }
-            ).encode(),
+            data=json.dumps({"message": msg, **typed}).encode(),
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {tok}"},
         )
         try:

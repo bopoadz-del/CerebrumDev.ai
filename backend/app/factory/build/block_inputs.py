@@ -927,14 +927,6 @@ def extract_capability_route_source(routes_text: str, capability_id: str) -> str
     return rest
 
 
-def _inferred_field_shape(name: str) -> Dict[str, Any]:
-    """The shape of a handler-required field the body never type-checks: a
-    required string. A type, bound or vocabulary comes only from what the
-    handler enforces (mined into the contract, which overrides this) -- never
-    from the field's name."""
-    return {"type": "str", "required": True}
-
-
 def _merge_field_contract(
     field: Dict[str, Any],
     contract: Optional[Dict[str, Any]],
@@ -984,60 +976,6 @@ def _merge_field_contract(
 
 def _mentions(node: ast.AST, name: str) -> bool:
     return any(isinstance(n, ast.Name) and n.id == name for n in ast.walk(node))
-
-
-def _consults_payload(var: str, nodes: Sequence[ast.AST]) -> bool:
-    """``nodes`` look the iteration variable ``var`` up in the payload: a
-    membership test against it (``f not in payload``) or a read of it
-    (``payload.get(f)`` / ``payload[f]``). Read from the syntax tree, so the
-    words of an error message decide nothing."""
-    for root in nodes:
-        for node in ast.walk(root):
-            if isinstance(node, ast.Compare) and any(
-                isinstance(op, (ast.In, ast.NotIn)) for op in node.ops
-            ):
-                sides = [node.left, *node.comparators]
-                if any(_mentions(s, var) for s in sides) and any(
-                    _mentions(s, "payload") for s in sides
-                ):
-                    return True
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and _mentions(node.func.value, "payload")
-                and any(_mentions(arg, var) for arg in node.args)
-            ):
-                return True
-            if (
-                isinstance(node, ast.Subscript)
-                and _mentions(node.value, "payload")
-                and _mentions(node.slice, var)
-            ):
-                return True
-    return False
-
-
-def _iterations_over(tree: ast.AST, const: str):
-    """(variable, the nodes that see it) for every iteration over ``const``:
-    a ``for`` statement (its body) or a comprehension generator (its element
-    and its filters)."""
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.For)
-            and isinstance(node.iter, ast.Name)
-            and node.iter.id == const
-            and isinstance(node.target, ast.Name)
-        ):
-            yield node.target.id, list(node.body)
-        if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
-            heads = [node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]
-            for gen in node.generators:
-                if (
-                    isinstance(gen.iter, ast.Name)
-                    and gen.iter.id == const
-                    and isinstance(gen.target, ast.Name)
-                ):
-                    yield gen.target.id, heads + list(gen.ifs)
 
 
 def settings_names(source: str) -> set:
@@ -1207,10 +1145,6 @@ def _string_constants(node: ast.AST) -> Optional[List[str]]:
     return values
 
 
-def _is_empty_sentinel(node: ast.AST) -> bool:
-    return isinstance(node, ast.Constant) and node.value in (None, "")
-
-
 def _roster_bindings(tree: ast.AST) -> Dict[str, List[str]]:
     """Names bound to a list/tuple literal of string constants."""
     out: Dict[str, List[str]] = {}
@@ -1226,105 +1160,43 @@ def _roster_bindings(tree: ast.AST) -> Dict[str, List[str]]:
     return out
 
 
-def _differenced_against_payload(tree: ast.AST, const: str) -> bool:
-    """``set(C) - set(payload)`` or ``C.difference(...)`` / ``set(C).difference(...)``."""
-
-    def _is_const(node: ast.AST) -> bool:
-        if isinstance(node, ast.Name) and node.id == const:
-            return True
-        return (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "set"
-            and len(node.args) == 1
-            and isinstance(node.args[0], ast.Name)
-            and node.args[0].id == const
-        )
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Sub) and _is_const(node.left):
-            return True
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "difference"
-            and _is_const(node.func.value)
-        ):
-            return True
-    return False
-
-
-def required_fields_from_rosters(handler_source: str) -> List[str]:
-    """Field names from a required-roster constant, whatever it is named: a
-    list/tuple literal of names that is iterated with each name looked up in
-    the payload, or differenced against the payload's keys."""
-    tree = _parse_source(handler_source)
-    if tree is None:
-        return []
-    found: List[str] = []
-    for const, names in _roster_bindings(tree).items():
-        usable = [n for n in (_usable_align_name(v) for v in names) if n]
-        if not usable:
-            continue
-        driven = _differenced_against_payload(tree, const) or any(
-            _consults_payload(var, nodes) for var, nodes in _iterations_over(tree, const)
-        )
-        if driven:
-            found.extend(usable)
-    # The same roster written in place: ``for f in ("a", "b"): if f not in payload``.
-    for node in ast.walk(tree):
-        pairs = []
-        if isinstance(node, ast.For) and isinstance(node.target, ast.Name):
-            pairs.append((node.iter, node.target.id, list(node.body)))
-        if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
-            heads = [node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]
-            for gen in node.generators:
-                if isinstance(gen.target, ast.Name):
-                    pairs.append((gen.iter, gen.target.id, heads + list(gen.ifs)))
-        for iterable, var, nodes in pairs:
-            names = _string_constants(iterable)
-            if names and _consults_payload(var, nodes):
-                found.extend(n for n in (_usable_align_name(v) for v in names) if n)
-    return found
-
-
-def _mined_contracts(text: str) -> Tuple[Dict[str, Dict[str, Any]], set]:
-    """Every field the code checks, and how: required, type, vocabulary, bounds.
+def _mined_contracts(text: str) -> Dict[str, Dict[str, Any]]:
+    """The type / vocabulary / bounds the code enforces on a field.
 
     Read only from the syntax tree -- the checks themselves, never the words of
     the refusal they raise:
 
-    * ``"k" not in payload`` / ``not payload.get("k")`` / ``payload.get("k") in
-      (None, "")`` / ``... is None`` -> required;
-    * ``payload.get("k") not in (...)`` -> its vocabulary;
+    * ``payload.get("k") not in (...)`` (or a name bound to a literal) -> its
+      vocabulary;
     * ``isinstance(payload.get("k"), int)`` -> its type;
     * ``payload.get("k") < n`` (refused) -> its lower bound, ``> n`` its upper;
-    * a roster of names iterated / differenced against the payload -> required;
     * the Factory's own ``constraints = {...}`` literal -> as declared.
+
+    NEVER a required field (owner ruling 2026-10-05): which fields a request
+    must carry comes only from the declared schema (the spec's ``fields`` /
+    the model's FIELDS and CONSTRAINTS). A function parameter, a dict-key
+    read, a membership test or a roster in code is not a declaration -- live,
+    the generated block wrapper's ``kw.get("params")`` made every route demand
+    a ``params`` field. These contracts only ENRICH fields the schema already
+    declares (see ``align_spec_to_handler_fields``).
     """
     tree = _parse_source(text)
     contracts: Dict[str, Dict[str, Any]] = {}
-    required_names: set = set()
     if tree is None:
-        return contracts, required_names
+        return contracts
     aliases = _aliases(tree)
     rosters = _roster_bindings(tree)
 
-    def slot(name: Optional[str], *, required: bool = False) -> Optional[Dict[str, Any]]:
+    def slot(name: Optional[str]) -> Optional[Dict[str, Any]]:
         usable = _usable_align_name(name)
         if not usable:
             return None
-        if required:
-            required_names.add(usable)
-        return contracts.setdefault(usable, {"name": usable, "required": True})
+        return contracts.setdefault(usable, {"name": usable})
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Compare):
             sides = [node.left, *node.comparators]
             for op, left, right in zip(node.ops, sides, sides[1:]):
-                if isinstance(op, ast.NotIn) and isinstance(left, ast.Constant) and isinstance(left.value, str):
-                    slot(left.value, required=True)
-                    continue
                 key = _read_key(left, aliases)
                 if key is None:
                     continue
@@ -1333,16 +1205,13 @@ def _mined_contracts(text: str) -> Tuple[Dict[str, Dict[str, Any]], set]:
                     if values is None and isinstance(right, ast.Name):
                         # A vocabulary bound to a name: its own literal.
                         values = rosters.get(right.id)
-                    target = slot(key)
-                    if target is not None and values:
-                        _assign_allowed_values(target, values)
-                elif isinstance(op, ast.In) and isinstance(right, (ast.List, ast.Tuple, ast.Set)):
-                    if any(_is_empty_sentinel(e) for e in right.elts):
-                        slot(key, required=True)
-                elif isinstance(op, (ast.Is, ast.Eq)) and _is_empty_sentinel(right):
-                    slot(key, required=True)
+                    if values:
+                        target = slot(key)
+                        if target is not None:
+                            _assign_allowed_values(target, values)
                 elif isinstance(right, ast.Constant) and isinstance(right.value, (int, float)) \
-                        and not isinstance(right.value, bool):
+                        and not isinstance(right.value, bool) \
+                        and isinstance(op, (ast.Lt, ast.LtE, ast.Gt, ast.GtE)):
                     target = slot(key)
                     if target is None:
                         continue
@@ -1355,10 +1224,6 @@ def _mined_contracts(text: str) -> Tuple[Dict[str, Dict[str, Any]], set]:
                         target["max"] = right.value
                     elif isinstance(op, ast.GtE):
                         target["max"] = right.value - 1
-        elif isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
-            key = _read_key(node.operand, aliases)
-            if key is not None:
-                slot(key, required=True)
         elif (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
@@ -1373,8 +1238,8 @@ def _mined_contracts(text: str) -> Tuple[Dict[str, Dict[str, Any]], set]:
                 from app.factory.build.roles_handlers import _resolve_known_field_type
 
                 kind = _resolve_known_field_type(kind)
-            target = slot(key) if key is not None else None
-            if target is not None and kind:
+            target = slot(key) if key is not None and kind else None
+            if target is not None:
                 target["type"] = kind
         elif (
             isinstance(node, ast.Assign)
@@ -1405,76 +1270,44 @@ def _mined_contracts(text: str) -> Tuple[Dict[str, Dict[str, Any]], set]:
                 if rules.get("approval") is True:
                     target["approval"] = True
 
-    for name in required_fields_from_rosters(text):
-        slot(name, required=True)
     for setting in settings_names(text):
         contracts.pop(setting, None)
-        required_names.discard(setting)
-    return contracts, required_names
-
-
-def handler_required_fields(handler_source: str) -> List[str]:
-    """Domain field names a handler body treats as required -- decided by the
-    checks in its code (see ``_mined_contracts``), never by its messages."""
-    return sorted(_mined_contracts(handler_source)[1])
+    return contracts
 
 
 def handler_field_contracts(handler_source: str) -> Dict[str, Dict[str, Any]]:
-    """Required names plus the type / vocabulary / bounds the handler enforces.
+    """The type / vocabulary / bounds the handler enforces, per field name.
 
-    Live VetConnect (sess_73409fa): LLM handlers demanded ``role`` in
-    {veterinarian, ...}, ``is_active`` bool, ``login_count`` int >= 0, and
-    non-empty ``*_id`` columns the model_specs never declared. Mining the checks
-    keeps ``align_spec_to_handler_fields`` and ``_sample_payload`` in lockstep
-    with what the handler enforces. A refusal MESSAGE contributes nothing: its
-    words, placeholders (``"%s must be an integer"``) and listings are prose.
+    Live VetConnect (sess_73409fa): LLM handlers enforced ``role`` in
+    {veterinarian, ...}, ``is_active`` bool, ``login_count`` int >= 0 on fields
+    the spec declared as bare ``str``. Copying the enforced shape onto the
+    DECLARED field keeps ``_sample_payload`` in lockstep with the guard. A
+    refusal MESSAGE contributes nothing, and nothing here makes a field
+    required or adds one the schema does not declare.
     """
-    return _mined_contracts(handler_source)[0]
+    return _mined_contracts(handler_source)
 
 
 def align_spec_to_handler_fields(
     spec: Optional[Dict[str, Any]],
-    required_names: Iterable[str],
     contracts: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Tuple[Dict[str, Any], List[str]]:
-    """Add / enrich handler-required domain fields the model_specs omitted.
+    """Enrich the spec's DECLARED fields with what the handler enforces.
 
-    Live miss: handler validated ``property_reference_code`` while the
-    model_specs (and therefore ``_sample_payload``) never declared it, so
-    pilot rejected "a payload built from its own schema".
-
-    A later VetConnect miss: fields existed as bare ``str`` (or were skipped
-    because ``status`` / ``channel`` sat on the envelope skip list) while the
-    handler enforced a vocabulary, a bool, or ``int >= 0``. This merge copies
-    those contracts onto the spec so the sample payload satisfies the guard.
+    A VetConnect miss: fields existed as bare ``str`` while the handler
+    enforced a vocabulary, a bool, or ``int >= 0``. This merge copies those
+    contracts onto the declared field so the sample payload satisfies the
+    guard. A name the schema does not declare is never added, and nothing
+    here sets ``required``: the declared schema is the only source of both.
     """
     base = dict(spec or {})
     fields = [dict(f) for f in (base.get("fields") or []) if isinstance(f, dict)]
     by_name = {str(f.get("name")): f for f in fields if f.get("name")}
-    contracts = dict(contracts or {})
     changed: List[str] = []
-
-    names: List[str] = []
-    for name in required_names:
-        usable = _usable_align_name(name)
-        if usable and usable not in names:
-            names.append(usable)
-    for name in contracts:
-        usable = _usable_align_name(name)
-        if usable and usable not in names:
-            names.append(usable)
-
-    for name in names:
-        contract = contracts.get(name) or {}
-        if name in by_name:
-            if _merge_field_contract(by_name[name], contract):
-                changed.append(name)
-            continue
-        field = {"name": name, **_inferred_field_shape(name)}
-        _merge_field_contract(field, contract)
-        fields.append(field)
-        by_name[name] = field
-        changed.append(name)
+    for name, contract in (contracts or {}).items():
+        field = by_name.get(name)
+        if field is not None and _merge_field_contract(field, contract):
+            changed.append(name)
 
     if not changed:
         return base if spec is not None else {"fields": fields}, []
@@ -1490,13 +1323,8 @@ def align_spec_to_handler_source(
     spec: Optional[Dict[str, Any]],
     handler_source: str,
 ) -> Tuple[Dict[str, Any], List[str]]:
-    """Mine a handler (or route) body and align the spec in one step."""
-    contracts = handler_field_contracts(handler_source)
-    return align_spec_to_handler_fields(
-        spec,
-        handler_required_fields(handler_source),
-        contracts=contracts,
-    )
+    """Mine a handler (or route) body and enrich the declared spec in one step."""
+    return align_spec_to_handler_fields(spec, handler_field_contracts(handler_source))
 
 
 def render_block_inputs_module(default_actions: Optional[Mapping[str, str]] = None) -> str:

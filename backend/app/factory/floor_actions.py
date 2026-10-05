@@ -63,6 +63,33 @@ VALUE_REQUIRED = frozenset(REFINEMENT_ACTIONS - {FloorAction.LIST_CAPABILITIES})
 RUN_ACTIONS = frozenset({FloorAction.APPROVE, FloorAction.CONTINUE, FloorAction.RUN_PILOT})
 
 
+#: The committed, shared action spec (repo-relative). The SPA, its browser e2e
+#: and scripts/post_deploy_smoke.py all build their typed requests from this
+#: one file; tests/factory/test_floor_action_spec.py fails when it differs
+#: from ``action_spec()`` -- the set this module accepts.
+ACTION_SPEC_PATH = "frontend/src/api/floor_actions.json"
+ACTION_SPEC_SCHEMA = "floor_actions.v1"
+
+
+def action_spec() -> dict:
+    """Every action this module accepts, with the shape of its ``value``:
+    ``null`` (no value), ``"string"`` (free text: an id, a name, a vertical),
+    or ``{"one_of": [...]}`` (a closed set)."""
+
+    def value_shape(action: "FloorAction"):
+        if action is FloorAction.SET_RIGOR:
+            return {"one_of": [r.value for r in RigorLevel]}
+        if action in VALUE_REQUIRED:
+            return "string"
+        return None
+
+    return {
+        "schema": ACTION_SPEC_SCHEMA,
+        "source": "backend/app/factory/floor_actions.py",
+        "actions": {a.value: {"value": value_shape(a)} for a in FloorAction},
+    }
+
+
 class FloorActionError(ValueError):
     """An action the Floor does not define, or one missing its value."""
 
