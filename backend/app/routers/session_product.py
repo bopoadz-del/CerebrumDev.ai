@@ -137,6 +137,10 @@ def _clear_sticky_thin_authorship_error(
 class DraftBody(BaseModel):
     brief: str = Field(..., min_length=1)
     vertical_hint: Optional[str] = None
+    #: Country (ISO 3166 alpha-2) and currency (ISO 4217) the user typed --
+    #: typed fields, shape-validated, persisted on the session.
+    country: Optional[str] = None
+    currency: Optional[str] = None
     #: Client's delivery choice at request time: zip | github_repo.
     delivery_format: Optional[str] = None
 
@@ -634,6 +638,9 @@ def product_verticals(
         "verticals": options,
         "chosen": state.product_design.vertical,
         "default": NO_VERTICAL,
+        # The country/currency the user declared (typed, never inferred).
+        "country": state.product_design.country,
+        "currency": state.product_design.currency,
     }
 
 
@@ -661,6 +668,11 @@ def draft_product(
             bp.delivery_format = body.delivery_format
         state.product_design.brief = body.brief
         state.product_design.blueprint = bp.model_dump(mode="json")
+        from app.factory.locale_choice import apply_locale_choice
+
+        # The declared country/currency rides on the blueprint (never read
+        # out of the brief); unset fields keep the session's earlier answer.
+        apply_locale_choice(state.product_design, body.country, body.currency)
         state.product_design.plan = None
         state.product_design.blueprint_approved = False
         state.product_design.generation = None
@@ -689,6 +701,9 @@ def plan_product(
     # Same resolver as the chat flow (env path, then Store clone).
     blocks_root = resolve_blocks_root()
     try:
+        from app.factory.locale_choice import sync_blueprint_locale
+
+        sync_blueprint_locale(state.product_design)
         bp = ProductBlueprint.model_validate(state.product_design.blueprint)
         plan = plan_blueprint(bp, blocks_root=blocks_root)
         state.product_design.plan = plan.to_dict()
@@ -785,6 +800,9 @@ def _run_n3_reseed(
             status_code=400, detail="approve blueprint before n3_reseed"
         )
     if output_dir:
+        from app.factory.locale_choice import sync_blueprint_locale
+
+        sync_blueprint_locale(state.product_design)
         bp = ProductBlueprint.model_validate(state.product_design.blueprint)
         out = safe_output_dir(output_dir, bp.product_id)
         gen = dict(state.product_design.generation or {})
@@ -894,6 +912,9 @@ def generate_approved_product(
     # Same resolver as the chat flow (env path, then Store clone).
     blocks_root = resolve_blocks_root()
     try:
+        from app.factory.locale_choice import sync_blueprint_locale
+
+        sync_blueprint_locale(state.product_design)
         bp = ProductBlueprint.model_validate(state.product_design.blueprint)
         from app.factory.platform_chat_flow import _compile_and_lint_approved
 

@@ -78,6 +78,23 @@ class ProductBlueprint(BaseModel):
     #: time, never after the build: "zip" (download in the Floor) or
     #: "github_repo" (pushed to a repo, URL returned on the build).
     delivery_format: str = "zip"
+    #: The country / currency the USER declared on the Floor (typed fields,
+    #: validated by shape only): {"country": "XX", "currency": "XXX"}.
+    #: None when the user declared none -- money is then WITHHELD, never
+    #: guessed (money_contract).
+    locale: Optional[Dict[str, str]] = None
+
+    @field_validator("locale")
+    @classmethod
+    def _locale(cls, v: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
+        if v is None:
+            return None
+        from app.factory.build.money_contract import declared_locale
+
+        shaped = declared_locale(v.get("country"), v.get("currency"))
+        if shaped is None:
+            raise ValueError("locale needs a 2-letter country and a 3-letter currency code")
+        return shaped
 
     @field_validator("delivery_format")
     @classmethod

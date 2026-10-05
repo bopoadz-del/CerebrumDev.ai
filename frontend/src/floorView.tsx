@@ -9,6 +9,7 @@ import {
   watchBuildStatus,
   type BuildStatus,
   type ChatEvent,
+  type DeclaredLocale,
   type ProductDesign,
 } from './api/factory'
 import { FactoryCodeCliStatus, useFactoryCodeCliHonesty } from './factoryReadinessView'
@@ -34,6 +35,7 @@ import {
 } from './buildProgress'
 import { LevelGradeStrip } from './levelGradeView'
 import { VerticalPicker } from './verticalPicker'
+import { LocalePicker } from './localePicker'
 import { displayProductName, humanizeProductId, latestBlueprintIn } from './productDisplay'
 
 interface Capability {
@@ -492,6 +494,15 @@ export function Floor({
     setVerticalDirty(true)
   }, [])
   const syncVertical = useCallback((v: string) => setVertical(v), [])
+  // The country/currency the user declares (typed fields, shape-checked).
+  // Sent only when changed, like the vertical; '' = undeclared.
+  const [locale, setLocale] = useState<DeclaredLocale>({ country: '', currency: '' })
+  const [localeDirty, setLocaleDirty] = useState(false)
+  const pickLocale = useCallback((next: DeclaredLocale) => {
+    setLocale(next)
+    setLocaleDirty(true)
+  }, [])
+  const syncLocale = useCallback((next: DeclaredLocale) => setLocale(next), [])
   const [busy, setBusy] = useState(false)
   const [coderBuild, setCoderBuild] = useState<BuildStatus | null>(null)
   const [productDesign, setProductDesign] = useState<ProductDesign | null>(null)
@@ -595,6 +606,12 @@ export function Floor({
       let runnerStarted = false
       setMsgs((m) => [...m, { role: 'user', text: message }, { role: 'factory', text: '' }])
       try {
+        // Trailing typed fields, only when the user changed them.
+        const typedFields: [vertical?: string | null, locale?: DeclaredLocale | null] = localeDirty
+          ? [verticalDirty ? vertical : undefined, locale]
+          : verticalDirty
+            ? [vertical]
+            : []
         await chatStream(
           sessionId,
           message,
@@ -684,9 +701,10 @@ export function Floor({
             })
           }
           },
-          ...(verticalDirty ? [vertical] : []),
+          ...typedFields,
         )
         if (verticalDirty) setVerticalDirty(false)
+        if (localeDirty) setLocaleDirty(false)
       } catch (e) {
         setMsgs((m) => [
           ...m.slice(0, -1),
@@ -695,7 +713,7 @@ export function Floor({
       }
       return { runnerStarted }
     },
-    [sessionId, vertical, verticalDirty],
+    [sessionId, vertical, verticalDirty, locale, localeDirty],
   )
 
   const send = useCallback(
@@ -1172,6 +1190,13 @@ export function Floor({
         value={vertical}
         onChange={pickVertical}
         onLoaded={syncVertical}
+        onLocaleLoaded={syncLocale}
+        disabled={busy || coderBuilding || accessPaused}
+      />
+      <LocalePicker
+        country={locale.country}
+        currency={locale.currency}
+        onChange={pickLocale}
         disabled={busy || coderBuilding || accessPaused}
       />
       <form

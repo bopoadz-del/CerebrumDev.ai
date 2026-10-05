@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 from .blueprint import CapabilitySpec, ProductBlueprint
 from .dual_registry import dual_registered_ids
+from .locale_choice import sync_blueprint_locale
 from .blocks_source import resolve_blocks_root
 from .paths import factory_outputs_root
 from .product_architect import (
@@ -331,6 +332,7 @@ def refine_from_chat(state: Any, message: str) -> Optional[Dict[str, Any]]:
     if not action:
         return None
 
+    sync_blueprint_locale(pd)  # the user's declared country/currency, never a guess
     bp = ProductBlueprint.model_validate(pd.blueprint)
     caps = [c.model_dump(mode="json") for c in bp.capabilities]
     cap_ids = {c["id"] for c in caps}
@@ -641,6 +643,7 @@ def approve_and_generate(
     if not pd.blueprint:
         raise ValueError("no blueprint drafted â€” describe the platform first")
 
+    sync_blueprint_locale(pd)  # the user's declared country/currency, never a guess
     bp = ProductBlueprint.model_validate(pd.blueprint)
     pd.blueprint_approved = True
     gated = _compile_and_lint_approved(state, bp)
@@ -1248,6 +1251,7 @@ def reseed_and_ingest_n3(
     if pd is None or not getattr(pd, "blueprint", None):
         raise ValueError("no blueprint â€” draft and approve before n3_reseed")
 
+    sync_blueprint_locale(pd)  # the user's declared country/currency, never a guess
     bp = ProductBlueprint.model_validate(pd.blueprint)
     out = _generation_output_dir(state, output_root)
     if out is None:
@@ -1344,6 +1348,7 @@ def start_fresh_generation(
         reply["already_running"] = True
         return reply
 
+    sync_blueprint_locale(pd)  # the user's declared country/currency, never a guess
     bp = ProductBlueprint.model_validate(pd.blueprint)
     pd.blueprint_approved = True
     if not pd.plan:
@@ -1534,6 +1539,7 @@ def resume_generation(
             state, output_root=output_root, triggered_by=resume_by
         )
 
+    sync_blueprint_locale(pd)  # the user's declared country/currency, never a guess
     bp = ProductBlueprint.model_validate(pd.blueprint)
     pd.blueprint_approved = True
     if not pd.plan:
@@ -1640,6 +1646,7 @@ def resume_pilot_cycle(
     pd = state.product_design
     if not pd or not pd.blueprint:
         raise ValueError("no blueprint drafted â€” describe the platform first")
+    sync_blueprint_locale(pd)  # the user's declared country/currency, never a guess
     bp = ProductBlueprint.model_validate(pd.blueprint)
     pd.blueprint_approved = True
     if not pd.plan:

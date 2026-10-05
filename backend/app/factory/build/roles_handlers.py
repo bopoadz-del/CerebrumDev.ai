@@ -2067,6 +2067,13 @@ def _render_models(specs: Dict[str, Dict[str, Any]]) -> str:
             # validates against these and the tests build payloads from them,
             # so neither side can invent a rule the other cannot satisfy.
             "    CONSTRAINTS = " + repr(_constraints_of(spec)),
+            # Fields whose DECLARED type is money (storage collapses them to
+            # float, so the declaration is kept here): the money contract
+            # reads this, never a field's name.
+            "    MONEY_FIELDS = " + repr([
+                f["name"] for f in spec["fields"]
+                if _semantic_field_type(f.get("type")) == MONEY_SEMANTIC_TYPE
+            ]),
             "    _FIELD_PY = " + repr(json_to_py),
             "    _FIELD_JSON = " + repr(py_to_json),
             "",
@@ -4051,6 +4058,13 @@ def run_writer(
     # production, FACTORY_CODEWHALE_WRITER=1 makes it the only path taken.
     # The kimi CLI vehicle underneath has been removed outright (see
     # app/factory/code_cli.py), so no later branch can shell out to it.
+    #
+    # The locale the user declared on the Floor and the run-time money
+    # settings module are stamped before ANY writer path, so the agent builds
+    # against them and the money contract can read them.
+    from app.factory.build.money_contract import emit_money_artifacts
+
+    emit_money_artifacts(ctx.workspace, ctx.blueprint)
     if writer_uses_codewhale(env):
         return _run_writer_via_codewhale_worker(ctx)
     writer_roster = _writer_block_roster(ctx.state)
@@ -5260,6 +5274,19 @@ def _resolve_known_field_type(raw: Any) -> Optional[str]:
     if not kind:
         return "str"
     return _TYPE_ALIASES.get(kind)
+
+
+#: Declared types that carry meaning beyond their storage type. A money field
+#: is stored as float; its declaration is what the money contract reads.
+MONEY_SEMANTIC_TYPE = "money"
+_SEMANTIC_TYPES = {"money": MONEY_SEMANTIC_TYPE, "currency": MONEY_SEMANTIC_TYPE}
+
+
+def _semantic_field_type(raw: Any) -> Optional[str]:
+    """The declared type's meaning (e.g. money), or None for plain types."""
+    kind = str(raw or "").strip().lower().split("(", 1)[0]
+    kind = kind.replace("optional[", "").replace("]", "").strip()
+    return _SEMANTIC_TYPES.get(kind)
 
 
 def _normalize_field_type(raw: Any) -> str:

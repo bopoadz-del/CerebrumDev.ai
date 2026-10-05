@@ -42,6 +42,10 @@ class ChatMessage(BaseModel):
     #: never read out of ``message``. Sent once is enough: it persists on the
     #: session (``product_design.vertical``) until the user changes it.
     vertical: Optional[str] = None
+    #: Country (ISO 3166 alpha-2) and currency (ISO 4217) the user typed on
+    #: the Floor -- typed fields, persisted on the session like ``vertical``.
+    country: Optional[str] = None
+    currency: Optional[str] = None
 
 
 class ApproveRequest(BaseModel):
@@ -623,6 +627,16 @@ async def chat(
 
         choice = chosen_vertical(body.vertical)
         state.product_design.vertical = None if choice == NO_VERTICAL else choice
+        update_session(state.session_id, state)
+    # The declared country/currency, and the stored blueprint kept carrying
+    # exactly that pair on EVERY request -- a blueprint drafted mid-chat
+    # picks it up before an approve starts the build.
+    from ..factory.locale_choice import apply_locale_choice, sync_blueprint_locale
+
+    if body.country is not None or body.currency is not None:
+        apply_locale_choice(state.product_design, body.country, body.currency)
+        update_session(state.session_id, state)
+    elif sync_blueprint_locale(state.product_design):
         update_session(state.session_id, state)
     if _chat_starts_generation(state, body.message):
         assert_entitled(principal)

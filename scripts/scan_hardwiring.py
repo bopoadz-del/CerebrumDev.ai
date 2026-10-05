@@ -323,6 +323,38 @@ def _is_phrase(value: object) -> bool:
     )
 
 
+#: Regex structure that carries letters without being words: a character
+#: class ([A-Za-z]) or an escape (\b, \s, \d).
+_REGEX_STRUCTURE = re.compile(r"\[(?:\\.|[^\]])*\]|\\.")
+_COMPILED_TEXT_METHODS = ("search", "match", "fullmatch", "findall", "finditer", "split", "sub", "subn")
+
+
+def _regex_is_phrase(pattern: object) -> bool:
+    """A compiled pattern is a phrase when a word survives once its classes
+    and escapes are removed: ``FROM\\s+records`` is; ``[A-Z]{2}`` is not."""
+    if not isinstance(pattern, str):
+        return False
+    return bool(_PHRASE_WORD.search(_REGEX_STRUCTURE.sub(" ", pattern)))
+
+
+def _module_compiled_patterns(tree: ast.AST) -> Dict[str, str]:
+    """name -> literal for module-scope ``NAME = re.compile("<literal>", ...)``."""
+    out: Dict[str, str] = {}
+    for node in getattr(tree, "body", []):
+        value = node.value if isinstance(node, (ast.Assign, ast.AnnAssign)) else None
+        if not (isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute)
+                and value.func.attr == "compile" and isinstance(value.func.value, ast.Name)
+                and value.func.value.id == "re" and value.args
+                and isinstance(value.args[0], ast.Constant)
+                and _regex_is_phrase(value.args[0].value)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if isinstance(target, ast.Name):
+                out[target.id] = value.args[0].value
+    return out
+
+
 def _code_templates(tree: ast.AST) -> List[Tuple[int, str]]:
     """(line offset, source) of every string constant that is itself Python
     code the Factory emits -- a probe, a harness -- so a phrase check hidden
@@ -378,8 +410,18 @@ def phrase_matches(source: str, offset: int = 0) -> List[Tuple[int, str]]:
     def is_text(expr: ast.AST, names: set) -> bool:
         return not isinstance(expr, ast.Constant) and _is_text(expr, names)
 
+    # A phrase compiled once at module scope and applied to text later is the
+    # same decision as re.search("<phrase>", text) -- caught at the use site.
+    compiled = _module_compiled_patterns(tree)
+
     for node in ast.walk(tree):
         names = text_in.get(id(node), set())
+        if (compiled and isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _COMPILED_TEXT_METHODS
+                and isinstance(node.func.value, ast.Name) and node.func.value.id in compiled):
+            haystack_at = 1 if node.func.attr in ("sub", "subn") else 0
+            if len(node.args) > haystack_at and is_text(node.args[haystack_at], names):
+                out.append((node.lineno, compiled[node.func.value.id]))
         if isinstance(node, ast.Compare):
             if (isinstance(node.left, ast.Constant) and _is_phrase(node.left.value)
                     and any(isinstance(o, (ast.In, ast.NotIn)) for o in node.ops)

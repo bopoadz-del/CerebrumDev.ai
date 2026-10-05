@@ -282,11 +282,17 @@ export async function chatStream(
   message: string,
   onEvent: (ev: ChatEvent) => void,
   vertical?: string | null,
+  locale?: DeclaredLocale | null,
 ): Promise<void> {
-  // The vertical travels as its own typed field, never inside the message:
-  // the user picks or types it on the Floor and the Factory never infers it.
-  const body: { message: string; vertical?: string } = { message }
+  // The vertical, country and currency travel as their own typed fields,
+  // never inside the message: the user types them on the Floor and the
+  // Factory never infers them.
+  const body: { message: string; vertical?: string; country?: string; currency?: string } = { message }
   if (vertical !== undefined && vertical !== null) body.vertical = vertical
+  if (locale) {
+    body.country = locale.country
+    body.currency = locale.currency
+  }
   const res = await fetch(`${API_BASE}/v1/sessions/${sessionId}/chat`, {
     method: 'POST',
     headers: authHeaders(),
@@ -373,12 +379,24 @@ export interface DeclaredVertical {
   build_ready: boolean
 }
 
+/** The country (ISO 3166 alpha-2) and currency (ISO 4217) the user typed. */
+export interface DeclaredLocale {
+  country: string
+  currency: string
+}
+
 export const product = {
   get: (sid: string) => req<ProductDesign>('GET', `/v1/sessions/${sid}/product`),
   /** The Floor's vertical picker: options from the Store kits' declarations,
-   *  plus the user's current choice. */
+   *  plus the user's current choice and declared country/currency. */
   verticals: (sid: string) =>
-    req<{ verticals: DeclaredVertical[]; chosen: string | null; default: string }>(
+    req<{
+      verticals: DeclaredVertical[]
+      chosen: string | null
+      default: string
+      country?: string | null
+      currency?: string | null
+    }>(
       'GET',
       `/v1/sessions/${sid}/product/verticals`,
     ),

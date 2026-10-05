@@ -893,27 +893,38 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
     # instruction the factory does not verify is a suggestion. FinOps
     # (sess_065fc3eac75c4f62) hardcoded UK VAT and GBP for a Dubai business
     # and passed 13/13 -- no gate had ever read a tax rate.
-    from app.factory.build.money_contract import MONEY_ASSUMED, money_findings
+    # The locale is the user's typed answer (Floor -> blueprint.locale ->
+    # docs/declared_locale.json); the product's models declare which fields
+    # are money. VETO on a literal code or rate; WITHHELD when money exists
+    # but no currency was declared -- never a frozen guess.
+    from app.factory.build.money_contract import MONEY_ASSUMED, money_verdict
 
-    money = money_findings(ctx.workspace, ctx.brief)
-    if money:
+    money = money_verdict(ctx.workspace)
+    if money.status == "FAIL":
         return GateResult(
             ok=False,
             gate="writer_contract",
             reason=MONEY_ASSUMED,
-            detail=(
-                f"{MONEY_ASSUMED}: the brief names no country or currency and "
-                f"the product decides for it -- {money[0]}"
-            ),
-            findings=list(money),
-            payload={"money_assumptions": len(money)},
+            detail=f"{MONEY_ASSUMED}: {money.findings[0]}",
+            findings=list(money.findings),
+            payload={"money_contract": "FAIL", "money_findings": len(money.findings)},
         )
+    money_line = (
+        f"money_contract WITHHELD({money.reason})"
+        if money.status == "WITHHELD"
+        else f"money_contract {money.status}"
+    )
     return GateResult(
         ok=True,
         gate="writer_contract",
-        detail=f"{compiled.detail}; {behaviour.detail}; {surface.detail}",
+        detail=f"{compiled.detail}; {behaviour.detail}; {surface.detail}; {money_line}",
         findings=list(behaviour.findings),
-        payload={**dict(behaviour.payload), "agent_written": len(agent_written)},
+        payload={
+            **dict(behaviour.payload),
+            "agent_written": len(agent_written),
+            "money_contract": money.status,
+            "money_reason": money.reason,
+        },
     )
 
 

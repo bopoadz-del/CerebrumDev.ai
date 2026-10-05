@@ -212,6 +212,33 @@ def test_prose_paths_keys_and_closed_vocabulary_are_not_phrases(src):
     assert _gate().phrase_matches(src) == [], src
 
 
+def test_a_phrase_compiled_at_module_scope_and_applied_to_text_is_caught():
+    """A phrase compiled once and applied to text later is the same decision
+    as re.search("<phrase>", text): red at the use site, then green once the
+    pattern is gone. The rewrite of 'FROM records' SQL was exactly this."""
+    gate = _gate()
+    injected = (
+        "import re\n"
+        "_ZORBLAT_TABLE = re.compile(r'\\b(FROM|INTO)\\s+zorblat_rows\\b')\n"
+        "\n"
+        "def retarget(sql: str) -> str:\n"
+        "    return _ZORBLAT_TABLE.sub('FROM zorblat_entity', sql)\n"
+    )
+    hits = gate.phrase_matches(injected)
+    assert hits and hits[0][0] == 5, hits
+    removed = "def retarget(sql: str) -> str:\n    return sql\n"
+    assert gate.phrase_matches(removed) == []
+    # Shape patterns are structure, not phrases: a class and a count carry
+    # no word.
+    shape = (
+        "import re\n"
+        "_ZQ_SHAPE = re.compile(r'[A-Z]{3}')\n"
+        "def ok(value: str) -> bool:\n"
+        "    return bool(_ZQ_SHAPE.fullmatch(value))\n"
+    )
+    assert gate.phrase_matches(shape) == []
+
+
 # -- group C: prose and log signals became typed ---------------------------
 
 

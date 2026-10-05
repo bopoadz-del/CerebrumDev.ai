@@ -232,6 +232,9 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             (LaneRoot.WORKSPACE, "docs/coder_control.json"),
             (LaneRoot.WORKSPACE, "docs/coder_receipt.json"),
             (LaneRoot.WORKSPACE, "docs/intake_blueprint.json"),
+            # The country/currency the user declared on the Floor, stamped by
+            # the Factory at WRITER start (money_contract).
+            (LaneRoot.WORKSPACE, "docs/declared_locale.json"),
             (LaneRoot.WORKSPACE, "frontend/**"),
         ),
         # Deliberately NOT tests/** — a writer that can edit the tests that

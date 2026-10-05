@@ -326,10 +326,13 @@ def test_database_synthesizes_table_from_domain_record():
     domain = {"reference": "dash-1", "status": "open", "quantity": 2}
     raw = _refuse_like_live("database", domain)
     assert raw["error"] == _LIVE_SQL
-    out = prepare_block_input("database", domain)
-    assert out["table"] == "records"
+    # The table is the declared schema's (the capability entity) ...
+    out = prepare_block_input("database", domain, entity="zorblat_ticket")
+    assert out["table"] == "zorblat_ticket"
     assert out["values"]["reference"] == "dash-1"
     assert _refuse_like_live("database", out)["status"] == "ok"
+    # ... and with no entity and no named table, none is invented.
+    assert "table" not in prepare_block_input("database", domain)
 
 
 def test_database_uses_capability_entity_not_records():
@@ -545,15 +548,18 @@ def test_database_records_table_retargets_to_entity():
     assert out["table"] != "records"
 
 
-def test_database_sql_from_records_retargets_to_entity():
+def test_database_sql_a_handler_passes_is_never_rewritten_from_its_text():
+    """The text-rewrite of 'FROM records' is gone: the emitted store builds
+    SQLAlchemy Core statements from the declared tables, and a handler's own
+    SQL is its own -- judged by the harness, never patched by a regex."""
+    sql = "SELECT * FROM zorblat_legacy"
     out = prepare_block_input(
         "database",
-        {"sql": "SELECT * FROM records", "pet_name": "Nala"},
+        {"sql": sql, "pet_name": "Nala"},
         entity="pet_record",
     )
-    assert "pet_record" in out["sql"]
-    assert "FROM records" not in out["sql"]
-    assert out["table"] == "pet_record"
+    assert out["sql"] == sql
+    assert "table" not in out
 
 
 def test_database_keeps_caller_sql():
@@ -582,8 +588,11 @@ def test_emitted_module_matches_factory_for_live_contract_blocks(tmp_path, monke
     spec.loader.exec_module(mod)
     domain = {"reference": "V1", "status": "open", "quantity": 1}
     for bid in ("event_bus", "document_engine", "database", "team"):
-        factory = prepare_block_input(bid, domain, product_name="VetCare Hub")
-        emitted = mod.prepare_block_input(bid, domain, product_name="VetCare Hub")
+        # The handler wrapper always supplies the capability's entity; the
+        # database table is that declared table, never an invented default.
+        extra = {"entity": "pet_record"} if bid == "database" else {}
+        factory = prepare_block_input(bid, domain, product_name="VetCare Hub", **extra)
+        emitted = mod.prepare_block_input(bid, domain, product_name="VetCare Hub", **extra)
         assert _refuse_like_live(bid, factory)["status"] == "ok", (bid, factory)
         assert _refuse_like_live(bid, emitted)["status"] == "ok", (bid, emitted)
         if bid == "event_bus":
@@ -594,7 +603,7 @@ def test_emitted_module_matches_factory_for_live_contract_blocks(tmp_path, monke
             assert event_bus_step_is_store_ready(factory)
             assert event_bus_step_is_store_ready(emitted)
         if bid == "database":
-            assert factory["table"] == emitted["table"] == "records"
+            assert factory["table"] == emitted["table"] == "pet_record"
         if bid == "document_engine":
             assert Path(factory["pdf_path"]).is_file()
             assert Path(emitted["pdf_path"]).is_file()
