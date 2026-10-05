@@ -586,6 +586,16 @@ def _verdict_from_junit(
     failing = failing_tests_from_junit(workspace, junit_path)
     if failing is None:
         return None
+    # The product's own typed record of which test it answered a DECLARED
+    # placeholder refusal (app/placeholders.py, beside the JUnit report).
+    from app.factory.build.placeholder_connectors import (
+        REFUSAL_LOG_SUFFIX,
+        read_refusal_log,
+    )
+
+    refusals = read_refusal_log(str(junit_path) + REFUSAL_LOG_SUFFIX)
+    for row in failing:
+        row["placeholder_refusals"] = list(refusals.get(row["nodeid"]) or [])
     if returncode in (3, 4) or (returncode == 2 and not failing):
         return GateResult(
             ok=False,
@@ -626,7 +636,13 @@ def _verdict_from_junit(
         payload={
             "returncode": returncode,
             "failing_tests": [
-                {k: f[k] for k in ("nodeid", "file", "name", "kind", "message", "innermost")}
+                {
+                    k: f[k]
+                    for k in (
+                        "nodeid", "file", "name", "kind", "message", "innermost",
+                        "placeholder_refusals",
+                    )
+                }
                 for f in failing
             ],
             "assertion_classes": suite_assertion_classes(findings, raw),

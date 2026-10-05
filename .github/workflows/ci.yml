@@ -68,7 +68,10 @@ jobs:
     # on #547 with no test red, which reads as a failure and blocks the merge.
     # A limit the healthy suite cannot fit inside measures the runner, not
     # the code. Still bounded, so a genuine hang is still killed.
-    timeout-minutes: 25
+    # 40, not 25: by 2026-10-05 the suite alone was ~21.7 min (3,794 tests)
+    # and #648's job was CANCELLED at 25m06s after "3794 passed" -- the same
+    # runner-not-code failure, again.
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: backend
