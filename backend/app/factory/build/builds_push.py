@@ -280,6 +280,11 @@ def _default_run_git(args: Sequence[str], *, cwd: Path) -> subprocess.CompletedP
 #: Store gate's workflows. Everything else must come from the workspace.
 _INHERITED_FROM_MAIN = frozenset({".git", ".github"})
 
+#: The Store gate's own workflow. ``workflow_dispatch`` runs the workflow file
+#: of the dispatched ref, so whatever a build branch carries here IS the gate:
+#: it is always ``main``'s, never a copy a workspace happens to hold.
+STORE_GATE_PATH = ".github/workflows/store-gate.yml"
+
 
 def _drop_inherited_product(tree: Path) -> None:
     """Remove whatever product ``main`` happens to carry before the overlay.
@@ -332,6 +337,11 @@ def _sync_workspace_onto_tree(src: Path, dest: Path) -> None:
             for sub in item.rglob("*"):
                 rel = sub.relative_to(src)
                 if sub.is_dir() or not is_exported(rel):
+                    continue
+                if rel.as_posix() == STORE_GATE_PATH:
+                    # The gate is main's (live 2026-10-05: a stale workspace
+                    # copy replaced it, dropped the bandit step, and
+                    # audit_clean read "unmeasured" -- 21/22).
                     continue
                 out = dest / rel
                 out.parent.mkdir(parents=True, exist_ok=True)
