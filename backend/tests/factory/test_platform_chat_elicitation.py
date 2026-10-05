@@ -374,48 +374,53 @@ def test_the_models_words_survive_an_immediate_draft(monkeypatch):
     assert s.index("simple one.") < s.index("Blueprint drafted."), "model's words come first"
 
 
-def test_an_uncertified_shelf_kit_is_named_not_denied(monkeypatch):
-    """Live 2026-09-30: the shelf held an automotive kit (uncertified) and the
-    notice still opened with the no-kit line -- absent and uncertified are
-    different truths. When a shelf kit's own name appears in the owner's
-    message, the notice names that kit and how to build on it."""
+def test_an_uncertified_kit_for_the_chosen_vertical_is_named_not_denied(monkeypatch):
+    """Live 2026-09-30: the shelf held a kit (uncertified) for the business and
+    the notice still opened with the no-kit line -- absent and uncertified are
+    different truths. The user CHOSE the vertical; the Store kit serving it is
+    not declared ready, so the notice names that kit and how to build on it."""
     state = _real_draft_state(monkeypatch)
-    _catalog(monkeypatch, kits=("platform", "automotive"))
+    _catalog(monkeypatch, kits=("zorblat",))
+    _domain_kits(monkeypatch, {"zorblat": {"serves_verticals": ["zorblat_yards"], "build_ready": False}})
+    state.product_design.vertical = "zorblat_yards"
     _script(
         monkeypatch,
         [{"action": "ask_user", "message": "One question before drafting."}],
     )
 
-    result = _say(state, "an AI operations platform for a multi-brand automotive group")
+    result = _say(state, "an operations platform for our yards")
 
     s2 = result["summary"]
-    assert "automotive" in s2, s2
+    assert "zorblat" in s2, s2
     assert "uncertified" in s2 or "unverified" in s2, s2
     assert "don't have a top-notch kit" not in s2, (
-        "the shelf HAS a matching kit; absence must not be claimed: " + s2
+        "a kit serves the chosen vertical; absence must not be claimed: " + s2
     )
 
 
-def test_a_generic_kit_id_does_not_hijack_the_notice(monkeypatch):
-    """'platform' appears in nearly every brief; a generic kit id must not
-    convert every notice into a named-kit claim."""
+def test_no_choice_means_the_no_kit_notice_whatever_the_message_names(monkeypatch):
+    """No vertical chosen -> "product" -> no domain kit, so the honest no-kit
+    notice -- even when the message names a kit that is on the shelf. The kit
+    is never inferred from the user's words."""
     state = _real_draft_state(monkeypatch)
-    _catalog(monkeypatch, kits=("platform",))
+    _catalog(monkeypatch, kits=("zorblat",))
+    _domain_kits(monkeypatch, {"zorblat": {"serves_verticals": ["zorblat_yards"], "build_ready": True}})
     _script(
         monkeypatch,
         [{"action": "ask_user", "message": "One question before drafting."}],
     )
 
-    result = _say(state, "a falconry school platform")
+    result = _say(state, "a zorblat yards platform, like the zorblat kit")
 
-    from app.factory import platform_chat_llm
-
+    assert state.product_design.vertical is None
     assert platform_chat_llm.KIT_NOTICE in result["summary"]
 
 
 def test_the_system_prompt_teaches_kit_honesty_and_connector_choice():
     prompt = " ".join(platform_chat_llm._SYSTEM.split())
-    assert '"kit_match"' in prompt
+    # The model no longer picks a kit: the user's vertical choice decides it.
+    assert "kit_match" not in prompt
+    assert "Do not pick a kit or a vertical for them" in prompt
     assert "never imply a kit exists when it does not" in prompt
     # The sentence itself is the factory's, so the model cannot skip it.
     for phrase in ("top-notch kit", "take longer", "cost more"):
@@ -461,6 +466,13 @@ def test_the_catalog_is_derived_from_manifests_not_names(tmp_path, monkeypatch):
 # -- the kit notice is the factory's sentence, not the model's -----------------
 
 
+def _domain_kits(monkeypatch, manifests):
+    """The Store's domain kit declarations the kit notice resolves against."""
+    from app.factory import store_kits
+
+    monkeypatch.setattr(store_kits, "domain_kits", lambda *a, **k: dict(manifests))
+
+
 def _kits(monkeypatch, kits):
     from app.factory import store_catalog as sc
 
@@ -468,6 +480,8 @@ def _kits(monkeypatch, kits):
         sc, "store_catalog",
         lambda *a, **k: {"blocks": [], "connectors": [], "mcp": [], "not_cleared": [], "kits": list(kits)},
     )
+    # Each kit serves the vertical of the same id and is declared ready.
+    _domain_kits(monkeypatch, {k: {"serves_verticals": [k], "build_ready": True} for k in kits})
 
 
 def test_no_kit_for_the_business_is_said_by_the_factory_not_left_to_the_model(monkeypatch):
@@ -498,23 +512,26 @@ def test_the_notice_is_said_once(monkeypatch):
     assert platform_chat_llm.KIT_NOTICE not in second["summary"]
 
 
-def test_a_real_kit_match_suppresses_the_notice(monkeypatch):
+def test_a_chosen_vertical_with_a_ready_kit_suppresses_the_notice(monkeypatch):
     state = _fresh_state()
     _capture_draft(monkeypatch)
-    _kits(monkeypatch, ["private_estate_operations"])
-    _script(monkeypatch, [{"action": "ask_user", "message": "q", "kit_match": "private_estate_operations"}])
+    _kits(monkeypatch, ["zorblat_yards"])
+    state.product_design.vertical = "zorblat_yards"
+    _script(monkeypatch, [{"action": "ask_user", "message": "q"}])
 
-    result = _say(state, "a platform to run my family's estates")
+    result = _say(state, "a platform to run my yards")
 
     assert platform_chat_llm.KIT_NOTICE not in result["summary"]
     assert state.product_design.kit_notice_given is False
 
 
-def test_the_model_cannot_talk_the_notice_away_with_a_kit_that_does_not_exist(monkeypatch):
+def test_the_model_cannot_talk_the_notice_away_by_naming_a_kit(monkeypatch):
+    """A model that still emits a kit id (even a real one) decides nothing:
+    with no vertical chosen, the factory says the no-kit notice."""
     state = _fresh_state()
     _capture_draft(monkeypatch)
-    _kits(monkeypatch, ["private_estate_operations"])
-    _script(monkeypatch, [{"action": "draft_platform", "brief": "b", "kit_match": "falconry_pro_kit"}])
+    _kits(monkeypatch, ["zorblat_yards"])
+    _script(monkeypatch, [{"action": "draft_platform", "brief": "b", "kit_match": "zorblat_yards"}])
 
     result = _say(state, "falconry school, just build it")
 
@@ -537,11 +554,14 @@ def test_an_unreadable_shelf_neither_claims_nor_denies_a_kit(monkeypatch):
     state = _fresh_state()
     _capture_draft(monkeypatch)
     from app.factory import store_catalog as sc
+    from app.factory import store_kits
 
     def boom(*a, **k):
         raise RuntimeError("shelf unreadable")
 
     monkeypatch.setattr(sc, "store_catalog", boom)
+    monkeypatch.setattr(store_kits, "domain_kits", boom)
+    state.product_design.vertical = "zorblat_yards"
     _script(monkeypatch, [{"action": "ask_user", "message": "q"}])
 
     result = _say(state, "falconry school")
