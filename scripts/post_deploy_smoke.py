@@ -329,12 +329,12 @@ def chat(sid, tok, msg, retries=4, action=None, value=None):
     return f"event: error\ndata: {last_err}\n\n"
 
 
-def info_events(raw):
-    """The decoded ``info`` payloads of an SSE reply (their data is a JSON
-    string carrying a JSON object)."""
+def sse_events(raw, name):
+    """The decoded payloads of every ``name`` event in an SSE reply (their data
+    is a JSON object, or a JSON string carrying one)."""
     out, lines = [], raw.splitlines()
     for i, line in enumerate(lines):
-        if line != "event: info" or i + 1 >= len(lines) or not lines[i + 1].startswith("data: "):
+        if line != f"event: {name}" or i + 1 >= len(lines) or not lines[i + 1].startswith("data: "):
             continue
         try:
             payload = json.loads(lines[i + 1][6:])
@@ -346,6 +346,11 @@ def info_events(raw):
             out.append(payload)
     return out
 
+
+
+def info_events(raw):
+    """The decoded ``info`` payloads of an SSE reply."""
+    return sse_events(raw, "info")
 
 #: Seconds the smoke waits for a build to reach a terminal state before the
 #: export check reads DEAD. Covers the Factory's writer budget plus the gate.
@@ -579,11 +584,15 @@ def main():
     # Change proposes the level; only the typed Confirm stores it.
     chat(sid, tok, "", action="set_build_level", value=SMOKE_BUILD_LEVEL)
     raw_level = chat(sid, tok, "", action="confirm_intake")
-    # The intake event echoes the session's declared fields back.
+    # The intake event echoes the session's declared fields back. Its data
+    # is JSON-encoded, so decode it: a substring test on the raw stream
+    # (escaped quotes) could never match and read DEAD on a correct confirm.
+    intake = (sse_events(raw_level, "intake") or [{}])[-1]
+    declared = intake.get("declared") or {}
     check(
         "build level confirmed",
-        f'"build_level": "{SMOKE_BUILD_LEVEL}"' in raw_level and '"proposal": null' in raw_level,
-        raw_level[:160].replace("\n", " "),
+        declared.get("build_level") == SMOKE_BUILD_LEVEL and intake.get("proposal") is None,
+        f"declared={declared} proposal={intake.get('proposal')}",
     )
 
     raw2 = chat(sid, tok, "", action="approve")
