@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, FrozenSet, Iterable, List, Optional, Sequence, Tuple
 
 from app.factory.build.schema_accept import (
     CHANNEL_SAMPLE,
@@ -21,6 +21,7 @@ from app.factory.build.schema_accept import (
     GENERIC_STR_SAMPLE,
     TIME_SAMPLE,
 )
+from app.factory.store_kits import EVENTS, ORCHESTRATION, blocks_of_class, capability_classes
 
 PRODUCT_ACCEPT_TEST = "test_every_capability_route_accepts_payload"
 PRODUCT_ACCEPT_CHECK = "event_bus_workflow"
@@ -60,24 +61,51 @@ PRODUCT_EVENT_BUS_STEP_2_HALT = "workflow: step_2 (event_bus): error"
 #: MCP notify target on the prepared input (notification requires block/tool).
 #: Use ``tool`` — ``input.block`` is also the workflow child discriminator,
 #: so AST would treat the inner dict as a second unprepared event_bus step.
-EVENT_BUS_MCP_BLOCK = "event_bus"
+#: The target is the events block itself; which block that is, is what the
+#: Store's manifests declare (``capability_class: events``), never an id
+#: spelled here. The prompt examples below show the Store's current one.
 EVENT_BUS_MCP_TARGET_KEY = "tool"
+
+
+def events_block_ids() -> FrozenSet[str]:
+    """Every Store block that declares ``capability_class: events``."""
+    return blocks_of_class(EVENTS)
+
+
+def orchestrator_block_ids() -> FrozenSet[str]:
+    """Every Store block that declares ``capability_class: orchestration``."""
+    return blocks_of_class(ORCHESTRATION)
+
+
+def _example_id(ids: FrozenSet[str], what: str) -> str:
+    return sorted(ids)[0] if ids else f"<the {what} block>"
+
+
+def events_block_example() -> str:
+    """The events block's id as the prompts show it (read when asked, never
+    at import)."""
+    return _example_id(events_block_ids(), "events")
+
+
 FACTORY_GROUNDED_EVENT_BUS_SOURCE = "factory-grounded event_bus workflow"
 
-#: Exact step FACTORY_CODE_CLI must emit (or let prepare_block_input shape).
-PREPARED_EVENT_BUS_STEP_EXAMPLE = (
-    "{\n"
-    '  "block": "event_bus",\n'
-    f'  "action": "{EVENT_BUS_STEP_ACTION}",\n'
-    '  "input": {\n'
-    '    "topic": "<non-empty str from event / reminder_type / record summary>",\n'
-    '    "payload": {"reference": "<domain scalar — not the raw schema sample>"},\n'
-    '    "message": "<non-empty str>",\n'
-    f'    "channel": "{EVENT_BUS_STEP_CHANNEL}",\n'
-    f'    "{EVENT_BUS_MCP_TARGET_KEY}": "{EVENT_BUS_MCP_BLOCK}"\n'
-    "  }\n"
-    "}"
-)
+
+def prepared_event_bus_step_example() -> str:
+    """Exact step FACTORY_CODE_CLI must emit (or let prepare_block_input shape)."""
+    target = events_block_example()
+    return (
+        "{\n"
+        f'  "block": "{target}",\n'
+        f'  "action": "{EVENT_BUS_STEP_ACTION}",\n'
+        '  "input": {\n'
+        '    "topic": "<non-empty str from event / reminder_type / record summary>",\n'
+        '    "payload": {"reference": "<domain scalar — not the raw schema sample>"},\n'
+        '    "message": "<non-empty str>",\n'
+        f'    "channel": "{EVENT_BUS_STEP_CHANNEL}",\n'
+        f'    "{EVENT_BUS_MCP_TARGET_KEY}": "{target}"\n'
+        "  }\n"
+        "}"
+    )
 
 
 class EventBusWorkflowHalt(ValueError):
@@ -105,9 +133,16 @@ def event_bus_workflow_capability_ids(compiled_or_inventory: Any) -> List[str]:
         cid = str(getattr(item, "capability_id", "") or "")
         if not cid:
             continue
-        if "workflow" in bids and "event_bus" in bids:
+        if _binds_orchestrated_events(bids):
             ids.append(cid)
     return ids
+
+
+def _binds_orchestrated_events(block_ids: Iterable[str]) -> bool:
+    """The bound blocks include one that declares orchestration and one that
+    declares events -- read from their manifests, whatever their ids."""
+    declared = set(capability_classes(block_ids).values())
+    return {ORCHESTRATION, EVENTS} <= declared
 
 
 def declares_event_bus_workflow(compiled_or_inventory: Any) -> bool:
@@ -150,12 +185,13 @@ def _source_tokens(text: str) -> set:
     return out
 
 
-def _names_block(text: str, block_id: str) -> bool:
-    """The source names ``block_id`` as a string constant (a block reference)."""
+def _names_block(text: str, block_ids: FrozenSet[str]) -> bool:
+    """The source names one of ``block_ids`` as a string constant (a block
+    reference)."""
     tree = _parse_handler(text)
     if tree is None:
-        return block_id in _source_tokens(text)
-    return any(_ast_str(n) == block_id for n in ast.walk(tree))
+        return bool(block_ids & _source_tokens(text))
+    return any(_ast_str(n) in block_ids for n in ast.walk(tree))
 
 
 def _call_name(node: ast.Call) -> str:
@@ -167,10 +203,11 @@ def _call_name(node: ast.Call) -> str:
     return ""
 
 
-def _executes(node: ast.AST, block_id: str) -> bool:
-    """``execute("<block_id>", ...)`` -- the dispatch call naming a block."""
+def _executes(node: ast.AST, block_ids: FrozenSet[str]) -> bool:
+    """``execute("<block_id>", ...)`` -- the dispatch call naming one of
+    ``block_ids``."""
     return (isinstance(node, ast.Call) and _call_name(node) == "execute" and bool(node.args)
-            and _ast_str(node.args[0]) == block_id)
+            and _ast_str(node.args[0]) in block_ids)
 
 
 def handler_constructs_event_bus_step(text: str) -> bool:
@@ -178,7 +215,8 @@ def handler_constructs_event_bus_step(text: str) -> bool:
     dispatch call to it. Read from the AST, never from spellings; source
     that does not parse is assumed to (fail closed)."""
     blob = text or ""
-    if not _names_block(blob, EVENT_BUS_MCP_BLOCK):
+    events = events_block_ids()
+    if not _names_block(blob, events):
         return False
     tree = _parse_handler(blob)
     if tree is None:
@@ -187,10 +225,10 @@ def handler_constructs_event_bus_step(text: str) -> bool:
         pairs = _ast_dict_map(node)
         if pairs and _ast_is_event_bus_block(pairs):
             return True
-        if _executes(node, "event_bus"):
+        if _executes(node, events):
             return True
-        # step["block"] = "event_bus": the same dict, built one key at a time.
-        if isinstance(node, ast.Assign) and _ast_str(node.value) == "event_bus":
+        # step["block"] = <events id>: the same dict, built one key at a time.
+        if isinstance(node, ast.Assign) and _ast_str(node.value) in events:
             for target in node.targets:
                 if (isinstance(target, ast.Subscript)
                         and _ast_is_event_bus_block({_ast_str(target.slice) or "": node.value})):
@@ -233,7 +271,7 @@ def handler_builds_workflow_children(text: str) -> bool:
     if tree is None:
         # Unparseable: decide on the source's identifier and string tokens.
         names = _source_tokens(text)
-        return "steps" in names or "workflow" in names
+        return "steps" in names or bool(names & orchestrator_block_ids())
     for node in ast.walk(tree):
         pairs = _ast_dict_map(node)
         if pairs and "steps" in pairs:
@@ -244,7 +282,7 @@ def handler_builds_workflow_children(text: str) -> bool:
                 return True
         if isinstance(node, ast.Call) and any(k.arg == "steps" for k in node.keywords):
             return True
-        if _executes(node, "workflow"):
+        if _executes(node, orchestrator_block_ids()):
             return True
     return False
 
@@ -296,8 +334,9 @@ def _ast_is_payload_get_without_fallback(node: Any) -> bool:
 
 
 def _ast_is_event_bus_block(pairs: dict) -> bool:
+    events = events_block_ids()
     return any(
-        _ast_str(pairs.get(key)) == "event_bus"
+        _ast_str(pairs.get(key)) in events
         for key in ("block", "block_id", "name")
     )
 
@@ -317,7 +356,7 @@ def _ast_inner_prepared(inner: dict) -> bool:
         and not _ast_is_payload_get_without_fallback(message)
     )
     has_channel = _ast_str(inner.get("channel")) == EVENT_BUS_STEP_CHANNEL
-    has_tool = _ast_str(inner.get(EVENT_BUS_MCP_TARGET_KEY)) == EVENT_BUS_MCP_BLOCK
+    has_tool = _ast_str(inner.get(EVENT_BUS_MCP_TARGET_KEY)) in events_block_ids()
     return bool(
         has_topic and has_payload and has_message and has_channel and has_tool
     )
@@ -416,7 +455,7 @@ def handler_has_prepared_event_bus_step(text: str) -> bool:
     action. Read from the syntax tree; source that does not parse names
     nothing it can be credited for."""
     blob = text or ""
-    if not _names_block(blob, EVENT_BUS_MCP_BLOCK):
+    if not _names_block(blob, events_block_ids()):
         return False
     tree = _parse_handler(blob)
     if tree is None:
@@ -436,7 +475,7 @@ def handler_builds_unparsed_event_bus_workflow(text: str) -> bool:
     the live appointment_scheduling class after #325.
     """
     blob = text or ""
-    if not _names_block(blob, EVENT_BUS_MCP_BLOCK):
+    if not _names_block(blob, events_block_ids()):
         return False
     if not handler_builds_workflow_children(blob):
         return False
@@ -490,7 +529,7 @@ def needs_grounded_event_bus_handler(
     child for a block that is not vendored is how a build went red.
     """
     bids = {str(b) for b in (block_ids or ()) if str(b).strip()}
-    return "event_bus" in bids and "workflow" in bids
+    return _binds_orchestrated_events(bids)
 
 
 def event_bus_step_is_store_ready(data: Any) -> bool:
@@ -542,12 +581,17 @@ def grounded_event_bus_handler_body(
     topic = grounded_event_bus_topic(capability_id)
     message = topic.replace(".", " ")
     bids = [str(b) for b in (block_ids or ()) if str(b).strip()]
-    others = [b for b in bids if b not in {"workflow", "event_bus"}]
+    # The orchestrator and the events block are whichever bound blocks
+    # DECLARE those classes; their ids only flow into the emitted source.
+    classes = capability_classes(bids)
+    wf = next((b for b in bids if classes.get(b) == ORCHESTRATION), "")
+    ev = next((b for b in bids if classes.get(b) == EVENTS), "")
+    others = [b for b in bids if b not in {wf, ev}]
     other_loop = ""
     if others:
         other_loop = (
             "    for block_id in BLOCK_IDS:\n"
-            "        if block_id in ('workflow', 'event_bus'):\n"
+            f"        if block_id in ({wf!r}, {ev!r}):\n"
             "            continue\n"
             "        result = execute(\n"
             "            block_id, payload, "
@@ -564,7 +608,7 @@ def grounded_event_bus_handler_body(
         "    results = {}\n"
         "    errors = {}\n"
         "    steps = [{\n"
-        '        "block": "event_bus",\n'
+        f'        "block": {ev!r},\n'
         f'        "action": "{EVENT_BUS_STEP_ACTION}",\n'
         "        \"input\": {\n"
         f'            "topic": {topic!r},\n'
@@ -572,33 +616,33 @@ def grounded_event_bus_handler_body(
         'or payload.get("pet_name") or "record"},\n'
         f'            "message": {message!r},\n'
         f'            "channel": "{EVENT_BUS_STEP_CHANNEL}",\n'
-        f'            "tool": "{EVENT_BUS_MCP_BLOCK}",\n'
+        f'            "tool": {ev!r},\n'
         "        },\n"
         "    }]\n"
         f"{other_loop}"
-        "    if 'workflow' in BLOCK_IDS:\n"
+        f"    if {wf!r} in BLOCK_IDS:\n"
         "        result = execute(\n"
-        "            'workflow', {'steps': steps, 'result': ("
+        f"            {wf!r}, {{'steps': steps, 'result': ("
         "steps[0].get('input') if steps else payload)}, "
-        "action=BLOCK_DEFAULT_ACTIONS.get('workflow') or 'run',\n"
+        f"action=BLOCK_DEFAULT_ACTIONS.get({wf!r}) or 'run',\n"
         "        )\n"
-        "        results['workflow'] = result\n"
+        f"        results[{wf!r}] = result\n"
         "        if isinstance(result, dict) and (\n"
         '            result.get("status") == "error" or "error" in result\n'
         "        ):\n"
-        "            errors['workflow'] = str("
+        f"            errors[{wf!r}] = str("
         "result.get(\"error\") or result)[:200]\n"
-        "    if 'event_bus' in BLOCK_IDS:\n"
+        f"    if {ev!r} in BLOCK_IDS:\n"
         "        result = execute(\n"
-        f"            'event_bus', steps[0]['input'], "
-        f"action=BLOCK_DEFAULT_ACTIONS.get('event_bus') or "
+        f"            {ev!r}, steps[0]['input'], "
+        f"action=BLOCK_DEFAULT_ACTIONS.get({ev!r}) or "
         f"'{EVENT_BUS_STEP_ACTION}',\n"
         "        )\n"
-        "        results['event_bus'] = result\n"
+        f"        results[{ev!r}] = result\n"
         "        if isinstance(result, dict) and (\n"
         '            result.get("status") == "error" or "error" in result\n'
         "        ):\n"
-        "            errors['event_bus'] = str("
+        f"            errors[{ev!r}] = str("
         "result.get(\"error\") or result)[:200]\n"
         "    if errors:\n"
         "        return {\n"
@@ -796,11 +840,11 @@ def workflow_accept_rules_text(
             "- input.message = non-empty str",
             f"- input.channel = {EVENT_BUS_STEP_CHANNEL!r} "
             f"(never {GENERIC_STR_SAMPLE!r}; {CHANNEL_SAMPLE!r} without `to` is not notify-ready)",
-            f"- input.{EVENT_BUS_MCP_TARGET_KEY} = {EVENT_BUS_MCP_BLOCK!r} "
+            f"- input.{EVENT_BUS_MCP_TARGET_KEY} = {events_block_example()!r} "
             "(MCP notify requires block/tool; the schema sample has neither)",
             "Exact prepared event_bus workflow step (copy this shape on",
             "EVERY event_bus child — step_0, step_1, step_2, and later):",
-            PREPARED_EVENT_BUS_STEP_EXAMPLE,
+            prepared_event_bus_step_example(),
             "Do not invent a second, unprepared event_bus child after a",
             "prepared step. Do not invent a stricter workflow the spec",
             "cannot express.",
@@ -878,7 +922,7 @@ def workflow_accept_brief_contract() -> str:
         f"step_2+ "
         f"(block=event_bus, action={EVENT_BUS_STEP_ACTION}, topic, "
         f"payload dict, message, channel={EVENT_BUS_STEP_CHANNEL}, "
-        f"{EVENT_BUS_MCP_TARGET_KEY}={EVENT_BUS_MCP_BLOCK}) — never "
+        f"{EVENT_BUS_MCP_TARGET_KEY}={events_block_example()}) — never "
         f"forward the raw sample as 'input': payload. Unprepared steps fail as "
         f"{PRODUCT_EVENT_BUS_STEP_HALT!r}. An event_bus-first child fails as "
         f"{PRODUCT_EVENT_BUS_STEP_0_HALT!r}. An unprepared first factory "
@@ -901,7 +945,7 @@ def workflow_accept_brief_contract() -> str:
         f'{{"block": "event_bus", "action": "{EVENT_BUS_STEP_ACTION}", '
         f'"input": {{"topic": "<str>", "payload": {{}}, "message": "<str>", '
         f'"channel": "{EVENT_BUS_STEP_CHANNEL}", '
-        f'"{EVENT_BUS_MCP_TARGET_KEY}": "{EVENT_BUS_MCP_BLOCK}"}}}}.'
+        f'"{EVENT_BUS_MCP_TARGET_KEY}": "{events_block_example()}"}}}}.'
     )
 
 

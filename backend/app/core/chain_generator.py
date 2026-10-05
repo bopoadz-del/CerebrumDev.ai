@@ -305,16 +305,34 @@ def _mock_response(user_message: str, domain: str, available_blocks: List[Dict[s
     it used to add OCR when the message said "image"/"scan" and a rule when it
     said "rule"/"always" -- a phrase check over user chat deciding the chain.
     Rules come only from a real model.
+
+    Which blocks, in what order, is what each block DECLARES: those that
+    read a caller document first, then those that declare themselves a
+    conversation. No block is named here.
     """
-    block_names = [b.get("name") for b in available_blocks]
-    chain_blocks = []
+    from app.factory.store_kits import CONVERSATION, block_manifest, capability_class
+
+    def _declared(entry: Dict[str, Any]) -> Dict[str, Any]:
+        own = {k: entry[k] for k in ("reads", "capability_class") if k in entry}
+        return own or block_manifest(entry.get("name"))
+
+    readers, talkers = [], []
+    for entry in available_blocks:
+        name = entry.get("name")
+        if not name:
+            continue
+        declared = _declared(entry)
+        reads = {
+            (r.get("kind"), r.get("scope"))
+            for r in declared.get("reads") or []
+            if isinstance(r, dict)
+        }
+        if ("file", "input_document") in reads:
+            readers.append(name)
+        elif capability_class(declared) == CONVERSATION:
+            talkers.append(name)
+    chain_blocks = [{"id": name, "params": {}} for name in sorted(readers) + sorted(talkers)]
     connections = []
-    if "pdf" in block_names:
-        chain_blocks.append({"id": "pdf", "params": {"extract_tables": True}})
-    if "ocr" in block_names:
-        chain_blocks.append({"id": "ocr", "params": {"preprocess": True}})
-    if "chat" in block_names:
-        chain_blocks.append({"id": "chat", "params": {"temperature": 0.7}})
 
     if len(chain_blocks) > 1:
         connections = [{"from": i, "to": i + 1} for i in range(len(chain_blocks) - 1)]
@@ -449,11 +467,17 @@ def check_chain_quality(
     if not pack:
         return None
 
+    from app.factory.store_kits import SHARED_REASONING, block_capability_class
+
     domain_v2_block = None
     for block_id in pack.get("blocks", []):
-        # formula_executor_v2 is a shared reasoning support block, not the
+        # A block that declares itself shared reasoning support is not the
         # primary domain-specific v2 block we want to enforce here.
-        if isinstance(block_id, str) and block_id.endswith("_v2") and block_id != "formula_executor_v2":
+        if (
+            isinstance(block_id, str)
+            and block_id.endswith("_v2")
+            and block_capability_class(block_id) != SHARED_REASONING
+        ):
             domain_v2_block = block_id
             break
 

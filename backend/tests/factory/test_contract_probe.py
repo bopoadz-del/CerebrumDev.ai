@@ -220,9 +220,9 @@ def fake_dispatch(monkeypatch):
 def classify(fake_dispatch):
     """The probe's classifier, lifted out of the script and given the
     contracts and obligations it is rendered with."""
-    from app.factory.build.block_obligations import RESOURCE_OBLIGATIONS
+    from app.factory.build.block_obligations import resource_obligations
 
-    ns: Dict[str, Any] = {"RESOURCE_OBLIGATIONS": dict(RESOURCE_OBLIGATIONS)}
+    ns: Dict[str, Any] = {"RESOURCE_OBLIGATIONS": dict(resource_obligations())}
     exec(_lift_from_probe({"_classify_refusal", "_default_action"}), ns)
     return ns["_classify_refusal"]
 
@@ -393,7 +393,7 @@ def _probe_flow(answers, cap="unit_registry_and_vacancy_tracking"):
     Returns ``(namespace, calls)``. ``answers`` maps block_id to the envelope
     the block returns. Requires the ``fake_dispatch`` fixture to be active.
     """
-    from app.factory.build.block_obligations import RESOURCE_OBLIGATIONS
+    from app.factory.build.block_obligations import resource_obligations
 
     calls = []
 
@@ -402,7 +402,7 @@ def _probe_flow(answers, cap="unit_registry_and_vacancy_tracking"):
         return answers.get(block_id, {"ok": True})
 
     ns: Dict[str, Any] = {
-        "RESOURCE_OBLIGATIONS": dict(RESOURCE_OBLIGATIONS),
+        "RESOURCE_OBLIGATIONS": dict(resource_obligations()),
         "_real_execute": _fake_real_execute,
     }
     exec(_lift_from_probe({"_classify_refusal", "_recording_execute",

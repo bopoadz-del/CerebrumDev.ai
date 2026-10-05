@@ -302,13 +302,21 @@ def apply_p1_capture_manifest(data: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def apply_p1_cloned_block(workspace: Any, bid: str) -> bool:
-    if bid != "capture":
-        return False
-    dest = Path("vendor") / "blocks" / "capture"
-    workspace.write_text(dest / "block.py", P1_CAPTURE_ADAPTER)
+    """Swap in the offline P1 adapter for a block that DECLARES itself a
+    vision capture (``capability_class``), whatever its id. A block that
+    declares no such class is left as vendored."""
+    from app.factory.store_kits import VISION_CAPTURE, block_manifest, capability_class
+
+    dest = Path("vendor") / "blocks" / bid
     meta = dest / "block.json"
+    data: Dict[str, Any] = {}
     if workspace.exists(meta):
-        data = json.loads(workspace.read_text(meta))
+        loaded = json.loads(workspace.read_text(meta))
+        data = loaded if isinstance(loaded, dict) else {}
+    if capability_class(data or block_manifest(bid)) != VISION_CAPTURE:
+        return False
+    workspace.write_text(dest / "block.py", P1_CAPTURE_ADAPTER)
+    if data:
         workspace.write_text(
             meta,
             json.dumps(apply_p1_capture_manifest(data), indent=2, sort_keys=True)

@@ -138,21 +138,18 @@ def store_shelf_file(blocks_root: Optional[Path] = None) -> Optional[Path]:
     return None
 
 
-#: The only thing the Factory asserts about clearance. Everything else the
-#: Store holds is attachable, because the Store is where blocks live and it
-#: changes constantly -- 25, then 148, then 198 in one day. A block here needs
-#: a reason and a test; a list of what IS cleared needs a commit every time
-#: the Store moves, and is therefore wrong by the time it lands.
-NOT_CLEARED_BLOCK_IDS: Dict[str, str] = {
-    "chat": (
-        "upstream: the generated platform serves its own chat surface; the "
-        "Store's chat block is not a part the Factory attaches"
-    ),
-    "formula_executor_v2": (
-        "a Store runtime alias, not a Factory kit -- shelving it revives a "
-        "dead kit expectation (see test_base_tier_definitions)"
-    ),
-}
+def not_cleared_block_ids() -> Dict[str, str]:
+    """block id -> reason, for every block whose signed manifest declares
+    ``factory_attach.cleared`` false.
+
+    Everything else the Store holds is attachable, because the Store is
+    where blocks live and it changes constantly -- 25, then 148, then 198 in
+    one day. A refusal is the block's own declaration with its reason, read
+    from the Store; the Factory names no block.
+    """
+    from app.factory.store_kits import not_attachable
+
+    return not_attachable()
 
 
 def _shelf_from_file(path: Path) -> Dict[str, BlockRef]:
@@ -187,9 +184,8 @@ def load_factory_shelf(path: Optional[Path] = None) -> Dict[str, BlockRef]:
     the Factory until someone opened a pull request to re-list it; the Store
     went 25 -> 148 -> 198 in a single day and the shelf was stale at each
     step. The Factory holds no blocks, so it should not hold a copy of their
-    names either. What it does hold is NOT_CLEARED_BLOCK_IDS: the short,
-    reasoned list of what it refuses, which is the only part that is genuinely
-    the Factory's own statement.
+    names either -- nor of what it refuses: a block that must not be
+    attached says so in its own manifest (``factory_attach``).
     """
     if path is not None:
         return _shelf_from_file(path)
@@ -198,8 +194,9 @@ def load_factory_shelf(path: Optional[Path] = None) -> Dict[str, BlockRef]:
         return _shelf_from_file(published)
     live = shelf_from_store()
     if live:
+        refused = not_cleared_block_ids()
         return {
-            bid: ref for bid, ref in live.items() if bid not in NOT_CLEARED_BLOCK_IDS
+            bid: ref for bid, ref in live.items() if bid not in refused
         }
     # Nothing but the committed copy left, and it is a floor, not an answer:
     # it carries 25 ids against a Store of 212, so a build that lands here is

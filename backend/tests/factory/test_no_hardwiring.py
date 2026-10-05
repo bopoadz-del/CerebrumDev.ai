@@ -457,3 +457,94 @@ def test_binding_and_comparing_the_file_name_is_not_a_load():
         "def shaped(r, text):\n    if r.match(text):\n        return 1\n    return 0\n"
     )
     assert gate.phrase_matches(src) == []
+
+
+# --- block_name_dispatch -------------------------------------------------------
+#
+# Owner ruling: a site branches on what a block DECLARES in its signed manifest,
+# never on its id. The ids come from the Store registry at run time, so the
+# test plants an invented id in a fixture Store and proves the gate reads it.
+
+
+def _fixture_store(root, ids):
+    import json
+
+    for bid in ids:
+        d = root / "block_registry" / bid
+        d.mkdir(parents=True)
+        (d / "block.json").write_text(json.dumps({"id": bid}), encoding="utf-8")
+    return root
+
+
+_DISPATCH_RED = [
+    'def shape(bid, data):\n    if bid == "zq_relay":\n        return {}\n    return data\n',
+    'def shape(block_ids):\n    return "zq_relay" in block_ids\n',
+    'def shape(roster):\n    return [b for b in roster if b != "zq_relay"]\n',
+    'def shape(vendored_blocks):\n    for mod in vendored_blocks:\n        if mod == "zq_relay":\n            return mod\n',
+    'RELAY_BLOCK = "zq_relay"\n',
+    'TABLE = {"zq_relay": {"ensure": "x"}}\n',
+    'def shape(bid):\n    match bid:\n        case "zq_relay":\n            return 1\n',
+]
+
+
+@pytest.mark.parametrize("src", _DISPATCH_RED)
+def test_an_invented_block_id_used_to_dispatch_is_red(tmp_path, src):
+    gate = _gate()
+    ids = gate.load_block_ids(str(_fixture_store(tmp_path, ["zq_relay", "zq_other"])))
+    planted = tmp_path / "planted.py"
+    planted.write_text(src, encoding="utf-8")
+    hits = gate.scan_file(planted, ("block_name_dispatch",), block_ids=ids)
+    assert [(form, tok) for _ln, form, tok in hits][:1] == [("block_name_dispatch", "zq_relay")]
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        # the same site, converted: it reads the declaration
+        'def shape(bid, data):\n    if block_capability_class(bid) == EVENTS:\n        return {}\n    return data\n',
+        # the id flows through as a value -- never compared
+        'def shape(bid):\n    return {"block": bid, "tool": bid}\n',
+        # a word that happens to be an id, compared with something that is not a block
+        'def shape(fmt):\n    return fmt == "zq_relay"\n',
+        # a one-key dict built inside a function is a payload, not a table
+        'def shape(x):\n    return {"zq_relay": x}\n',
+    ],
+)
+def test_reading_the_declaration_is_green(tmp_path, src):
+    gate = _gate()
+    ids = gate.load_block_ids(str(_fixture_store(tmp_path, ["zq_relay"])))
+    planted = tmp_path / "planted.py"
+    planted.write_text(src, encoding="utf-8")
+    assert gate.scan_file(planted, ("block_name_dispatch",), block_ids=ids) == []
+
+
+def test_the_ids_come_from_the_store_not_a_list(tmp_path):
+    """The same source is red against a Store that publishes the id and green
+    against one that does not: the gate holds no id of its own."""
+    gate = _gate()
+    planted = tmp_path / "planted.py"
+    planted.write_text(_DISPATCH_RED[0], encoding="utf-8")
+    with_it = gate.load_block_ids(str(_fixture_store(tmp_path / "a", ["zq_relay"])))
+    without = gate.load_block_ids(str(_fixture_store(tmp_path / "b", ["zq_other"])))
+    assert gate.scan_file(planted, ("block_name_dispatch",), block_ids=with_it)
+    assert gate.scan_file(planted, ("block_name_dispatch",), block_ids=without) == []
+
+
+def test_no_store_fails_the_gate_closed(monkeypatch):
+    gate = _gate()
+    monkeypatch.delenv("CEREBRUM_BLOCKS_ROOT", raising=False)
+    monkeypatch.delenv("CEREBRUM_BLOCKS_PATH", raising=False)
+    with pytest.raises(gate.NoStoreRegistry):
+        gate.load_block_ids()
+    assert gate.main(["--root", "scripts", "--form", "block_name_dispatch"]) == 1
+
+
+def test_block_name_dispatch_is_enforced_at_baseline_zero():
+    import json
+
+    gate = _gate()
+    assert "block_name_dispatch" in gate.DEFAULT_FORMS
+    baseline = json.loads(gate.BASELINE.read_text(encoding="utf-8"))
+    assert not any(
+        "block_name_dispatch" in forms for forms in (baseline.get("files") or {}).values()
+    )
