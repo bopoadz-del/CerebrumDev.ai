@@ -2178,6 +2178,41 @@ def _constraint_guard(spec: Dict[str, Any]) -> str:
     )
 
 
+def _declared_refusal_lines(
+    name: str, sample: Dict[str, Any], connectors: List[str]
+) -> List[str]:
+    """Route-suite lines for a capability calling a DECLARED placeholder
+    connector: the right answer is the typed unavailable refusal naming the
+    settings it needs -- never an accepted record, whose round trip is not
+    judgeable until the connector is built. Its list route still answers."""
+    from app.factory.build.placeholder_connectors import (
+        UNAVAILABLE_KIND,
+        UNAVAILABLE_STATUS,
+        setting_for,
+    )
+
+    settings = [setting_for(c) for c in connectors]
+    return [
+        f"    payload = {sample!r}",
+        f'    resp = client.post("/v1/{name}", json=payload, headers=AUTH)',
+        "    try:",
+        "        body = resp.json()",
+        "    except Exception:",
+        "        body = None",
+        f"    if not (resp.status_code == {UNAVAILABLE_STATUS}",
+        "            and isinstance(body, dict) and body.get('ok') is False",
+        f"            and body.get('error_kind') == {UNAVAILABLE_KIND!r}",
+        f"            and list(body.get('settings') or []) == {settings!r}):",
+        f"        failures.append('{name}: declares placeholder connector(s); want HTTP"
+        f" {UNAVAILABLE_STATUS} error_kind {UNAVAILABLE_KIND} naming {', '.join(settings)},"
+        " got HTTP ' + str(resp.status_code) + ': ' + resp.text[:200])",
+        f'    listed = client.get("/v1/{name}", headers=AUTH)',
+        "    if listed.status_code != 200:",
+        f"        failures.append('{name} list: HTTP ' + str(listed.status_code))",
+        "",
+    ]
+
+
 def _templated_route_body(spec: Dict[str, Any]) -> str:
     """Capability POST routed through ``execute_action``. Persist stays here.
 
@@ -2308,8 +2343,10 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
         "from typing import Any, Dict",
         "",
         "from fastapi import APIRouter, HTTPException, Request",
+        "from fastapi.responses import JSONResponse",
         "",
         "from app import jobs, store",
+        "from app.placeholders import UNAVAILABLE_STATUS, refusal_for",
         "from app.domain_ops import perform as perform_domain",
         "from app.kernel_bridge import run_capability",
         "",
@@ -2379,6 +2416,12 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
             "    tenant = require_platform_token(request)",
             f'    reject_invalid_payload("{e["capability_id"]}", payload)',
             f'    CAPABILITY_ID = "{e["capability_id"]}"',
+            # A capability that calls a DECLARED placeholder connector answers
+            # the typed unavailable refusal. After auth and payload checks, so
+            # 401/422 still hold; before the handler, so nothing is stored.
+            "    placeholder = refusal_for(CAPABILITY_ID)",
+            "    if placeholder is not None:",
+            "        return JSONResponse(status_code=UNAVAILABLE_STATUS, content=placeholder)",
             f"    handle = _{name}_handle",
             f'    save = lambda record: store.save("{entity}", record, tenant_id=tenant.tenant_id)',
             f'    list_all = lambda: store.list_all("{entity}", tenant_id=tenant.tenant_id)',
@@ -5969,12 +6012,20 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         '    """Code-phase: each capability POST answers HTTP 200 JSON.',
         "    Store ok: False is allowed here — acceptance is the pilot test.\"\"\"",
     ]
+    from app.factory.build.placeholder_connectors import placeholder_connectors
+
+    declared = placeholder_connectors(ctx.blueprint)
     if caps:
         route_lines.append("    failures = []")
         for cap in ctx.plan.capabilities:
             name = cap.capability_id.replace("-", "_")
             spec = specs.get(cap.capability_id, {})
             sample = _sample_payload(spec)
+            if cap.capability_id in declared:
+                route_lines += _declared_refusal_lines(
+                    name, sample, declared[cap.capability_id]
+                )
+                continue
             route_lines += [
                 f"    payload = {sample!r}",
                 f'    resp, _corr = _post_accepting("/v1/{name}", payload, AUTH)',
@@ -6024,6 +6075,11 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             name = cap.capability_id.replace("-", "_")
             spec = specs.get(cap.capability_id, {})
             sample = _sample_payload(spec)
+            if cap.capability_id in declared:
+                route_lines += _declared_refusal_lines(
+                    name, sample, declared[cap.capability_id]
+                )
+                continue
             route_lines += [
                 f"    payload = {sample!r}",
                 f'    resp, _corr = _post_accepting("/v1/{name}", payload, AUTH)',

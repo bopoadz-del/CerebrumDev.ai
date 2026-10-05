@@ -51,19 +51,29 @@ AUTH = {"Authorization": "Bearer " + os.environ["PLATFORM_TOKEN"]}
 OTHER_TENANT = {"Authorization": "Bearer " + os.environ["PLATFORM_TOKEN_B"]}
 
 REFUSED = (400, 403, 404, 409, 422)
+# The typed unavailable refusal of a declared placeholder connector
+# (app.factory.build.placeholder_connectors).
+UNAVAILABLE_STATUS = __UNAVAILABLE_STATUS__
+UNAVAILABLE_KIND = __UNAVAILABLE_KIND__
 
 
 def _refused(response):
-    """A refusal, by status or by the envelope's own ok:false."""
+    """A refusal, by status or by the envelope's own ok:false.
+
+    The typed unavailable refusal (HTTP 503, error_kind "unavailable") of a
+    capability whose connector is a declared placeholder is a refusal too:
+    the counter-case still holds, whatever kind of refusal answered it."""
     if response.status_code in REFUSED:
         return True
-    if response.status_code != 200:
+    if response.status_code not in (200, UNAVAILABLE_STATUS):
         return False
     try:
         body = response.json()
     except Exception:
         return False
-    return isinstance(body, dict) and body.get("ok") is False
+    if not isinstance(body, dict) or body.get("ok") is not False:
+        return False
+    return response.status_code == 200 or body.get("error_kind") == UNAVAILABLE_KIND
 '''
 
 
@@ -123,7 +133,16 @@ def render_negative_tests(
     samples: Mapping[str, Mapping[str, Any]],
 ) -> str:
     """The counter-case suite for every capability in ``specs``."""
-    lines: List[str] = [HEADER]
+    from app.factory.build.placeholder_connectors import (
+        UNAVAILABLE_KIND,
+        UNAVAILABLE_STATUS,
+    )
+
+    lines: List[str] = [
+        HEADER.replace("__UNAVAILABLE_STATUS__", repr(UNAVAILABLE_STATUS)).replace(
+            "__UNAVAILABLE_KIND__", repr(UNAVAILABLE_KIND)
+        )
+    ]
     caps = sorted(specs)
     if not caps:
         lines.append("\n\ndef test_no_capabilities():\n    pass\n")

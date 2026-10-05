@@ -1114,7 +1114,7 @@ def _client() -> Tuple[_Http, Any]:
     return _Http(client), cm
 
 
-def _first_cap() -> str:
+def _cap_order() -> List[str]:
     receipt = ROOT / "docs" / "coder_receipt.json"
     if receipt.is_file():
         try:
@@ -1123,28 +1123,51 @@ def _first_cap() -> str:
             data = {{}}
         caps = data.get("capabilities") or []
         if caps:
-            first = caps[0]
-            if isinstance(first, dict):
-                return str(first.get("id") or first.get("capability_id") or "")
-            return str(first)
+            out = []
+            for item in caps:
+                if isinstance(item, dict):
+                    item = item.get("id") or item.get("capability_id") or ""
+                if str(item).strip():
+                    out.append(str(item))
+            if out:
+                return out
     try:
         from app.jobs import CAPABILITIES
 
+        out = []
         for item in CAPABILITIES or []:
             if isinstance(item, dict) and item.get("id"):
-                return str(item["id"])
-            if isinstance(item, str) and item.strip():
-                return item
+                out.append(str(item["id"]))
+            elif isinstance(item, str) and item.strip():
+                out.append(item)
+        if out:
+            return out
     except Exception:
         pass
     try:
         from app.models import MODELS
 
-        if MODELS:
-            return sorted(MODELS)[0]
+        return sorted(MODELS or {{}})
     except Exception:
-        pass
-    return ""
+        return []
+
+
+def _first_cap() -> str:
+    """The capability the HTTP checks write through.
+
+    A capability whose connector is a DECLARED placeholder answers the typed
+    unavailable refusal and stores nothing (app/placeholders.py), so a check
+    that needs a stored record writes through the first one that works.
+    """
+    order = _cap_order()
+    try:
+        from app.placeholders import PLACEHOLDER_CONNECTORS
+    except Exception:
+        PLACEHOLDER_CONNECTORS = {{}}
+    for cap in order:
+        if not PLACEHOLDER_CONNECTORS.get(cap):
+            return cap
+    return order[0] if order else ""
 
 
 def _models():
@@ -2121,8 +2144,16 @@ def factory_renders(
     the same fact as "which files the Factory writes", by construction, and a
     file added here is owned here without a second list anywhere.
     """
+    from app.factory.build.placeholder_connectors import (
+        PRODUCT_MODULE,
+        render_product_module,
+    )
+
     return {
         ACCEPTANCE_SCRIPT_REL: render_acceptance_script(blueprint),
+        # Declared placeholder connectors, read by the routes, the generated
+        # suites and the probes alike.
+        Path(PRODUCT_MODULE): render_product_module(blueprint),
         AUTH_REL: render_auth_module(),
         Path(TENANCY_REL): render_tenancy_module(),
         GITHUB_CI_REL: render_github_ci(),
