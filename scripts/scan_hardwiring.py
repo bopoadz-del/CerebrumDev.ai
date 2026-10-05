@@ -69,7 +69,17 @@ from pathlib import Path
 from typing import Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_ROOTS = ("backend/app/factory",)
+#: Shipped Factory code, plus every module that receives the user's CHAT
+#: text: the chat router (and the other HTTP routers), the scope-refusal
+#: grounding and the configurator's chain generator. A regex over user chat
+#: deciding an action is forbidden wherever it lives, so these are scanned
+#: like the Factory itself. A root may be a directory or a single file.
+DEFAULT_ROOTS = (
+    "backend/app/factory",
+    "backend/app/routers",
+    "backend/app/core/grounding.py",
+    "backend/app/core/chain_generator.py",
+)
 BASELINE = ROOT / "scripts" / "hardwiring_baseline.json"
 
 #: form -> pattern over a single token's text (NAME or STRING, never COMMENT).
@@ -512,7 +522,8 @@ def scan(
         known = load_known_literals()
     for root in roots:
         base = ROOT / root
-        for path in sorted(base.rglob("*.py")):
+        paths = [base] if base.is_file() else sorted(base.rglob("*.py"))
+        for path in paths:
             if "tests" in path.parts or "__pycache__" in path.parts:
                 continue
             hits = scan_file(path, forms, known)

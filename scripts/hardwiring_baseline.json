@@ -11,7 +11,10 @@
     "probe_id"
   ],
   "roots": [
-    "backend/app/factory"
+    "backend/app/factory",
+    "backend/app/routers",
+    "backend/app/core/grounding.py",
+    "backend/app/core/chain_generator.py"
   ],
   "schema": "hardwiring_baseline.v1",
   "total": 0
