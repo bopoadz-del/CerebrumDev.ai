@@ -28,6 +28,7 @@ from app.factory.build.offline_adapters import (
     emit_instantiate_ready,
     emit_runtime_module,
     needs_document_engine_parsers_package,
+    package_imports_own_parsers,
 )
 from app.factory.build.block_inputs import (
     align_spec_to_handler_source,
@@ -1263,25 +1264,30 @@ def _vendor_runtime_slice(
         pkg_src = blocks_dir / mod
         py_file = blocks_dir / f"{mod}.py"
         if (pkg_src / "__init__.py").is_file():
+            package_sources: List[str] = []
             for py in sorted(pkg_src.rglob("*.py")):
                 if "__pycache__" in py.parts:
                     continue
                 rel_inner = py.relative_to(pkg_src)
                 source = py.read_text(encoding="utf-8", errors="replace")
-                _write(
-                    base / "blocks" / mod / rel_inner,
-                    _emit_store_module(mod, source),
-                )
+                emitted = _emit_store_module(mod, source)
+                package_sources.append(emitted)
+                _write(base / "blocks" / mod / rel_inner, emitted)
             parsers_init = (
                 ctx.workspace.workspace / base / "blocks" / mod / "parsers" / "__init__.py"
             )
-            if mod == "document_engine" and not parsers_init.is_file():
-                joined = "\n".join(shipped.get(p, "") for p in written)
-                if needs_document_engine_parsers_package(joined):
-                    _write(
-                        base / "blocks" / mod / "parsers" / "__init__.py",
-                        DOCUMENT_ENGINE_PARSERS_STUB,
-                    )
+            # Decided by what the package's own source imports: a package
+            # that reaches for a ``parsers`` subpackage it does not ship gets
+            # the stub, whatever the package is called.
+            if not parsers_init.is_file() and package_imports_own_parsers(
+                "\n".join(package_sources),
+                mod,
+                "\n".join(shipped.get(p, "") for p in written),
+            ):
+                _write(
+                    base / "blocks" / mod / "parsers" / "__init__.py",
+                    DOCUMENT_ENGINE_PARSERS_STUB,
+                )
             sibling = blocks_dir / f"{mod}.py"
             if sibling.is_file() and _package_declares_sibling_wrapper(pkg_src, mod):
                 # Keep ../{mod}.py next to the package so importlib load of
@@ -2998,6 +3004,35 @@ Schema is Alembic (`alembic upgrade head` at deploy). `app/store.py` does not
 """
 
 
+def _vendored_manifest(ctx: RoleContext, block_id: str) -> Dict[str, Any]:
+    """The block.json the CLONER vendored for ``block_id``; the Store's own
+    manifest when the workspace carries none."""
+    meta_rel = Path("vendor") / "blocks" / block_id / "block.json"
+    if ctx.workspace.exists(meta_rel):
+        try:
+            meta = json.loads(ctx.workspace.read_text(meta_rel))
+        except (ValueError, OSError):
+            meta = None
+        if isinstance(meta, dict):
+            return meta
+    from app.factory.store_kits import block_manifest
+
+    return block_manifest(block_id)
+
+
+def vendored_capability_classes(ctx: RoleContext, block_ids: Sequence[str]) -> Dict[str, str]:
+    """block id -> the ``capability_class`` its vendored manifest declares;
+    the pinned Store's manifest when the vendored copy predates the field."""
+    from app.factory.store_kits import block_capability_class, capability_class
+
+    out: Dict[str, str] = {}
+    for bid in block_ids or ():
+        cls = capability_class(_vendored_manifest(ctx, bid)) or block_capability_class(bid)
+        if cls:
+            out[bid] = cls
+    return out
+
+
 def _block_contract(ctx: RoleContext, block_id: str) -> Dict[str, Any]:
     """What this vendored block actually accepts, gathered at build time.
 
@@ -4269,7 +4304,8 @@ def run_writer(
     ctx.workspace.write_text(
         Path("app") / "block_inputs.py",
         render_block_inputs_module(
-            harvest_block_default_actions(vendored_ids, workspace=ctx.workspace)
+            harvest_block_default_actions(vendored_ids, workspace=ctx.workspace),
+            vendored_capability_classes(ctx, vendored_ids),
         ),
     )
 

@@ -9,7 +9,8 @@
     "product_literal",
     "word_list",
     "probe_id",
-    "phrase_match"
+    "phrase_match",
+    "block_name_dispatch"
   ],
   "roots": [
     "backend/app/factory",
