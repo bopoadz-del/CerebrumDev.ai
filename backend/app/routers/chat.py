@@ -465,6 +465,32 @@ async def _typed_action(session_id, state, user_message, action, value, _record)
             yield ev
         return
 
+    if action is FloorAction.START_OVER:
+        # The only door to a fresh workspace: the old head is tagged first.
+        if platform_chat_flow.has_pending_blueprint(state) or not state.product_design.blueprint:
+            result = {
+                "sse": "info",
+                "ok": False,
+                "summary": "There is no built platform to start over. Approve the feature list to build it.",
+            }
+            _record(result)
+            async for ev in _yield_platform_result(result):
+                yield ev
+            return
+        try:
+            require_remaining(getattr(state, "user_id", None), "generation")
+        except TrialLimitExceeded as exc:
+            yield _sse_event("error", exc.detail["message"])
+            yield _sse_event("done", "")
+            return
+        result = platform_chat_flow.start_over(state)
+        if result.get("ok") and not result.get("already_running"):
+            require_within_limit(getattr(state, "user_id", None), "generation")
+        _record(result)
+        async for ev in _yield_platform_result(result):
+            yield ev
+        return
+
     # CONTINUE / RUN_PILOT: a resume door, never a new draft.
     resumable = (
         platform_chat_flow.has_pending_blueprint(state)
@@ -509,6 +535,8 @@ def _chat_starts_generation(state: SessionState, action: Optional[FloorAction]) 
         return False  # refused before anything starts: no level chosen
     if action is FloorAction.APPROVE:
         return platform_chat_flow.has_pending_blueprint(state)
+    if action is FloorAction.START_OVER:
+        return bool(state.product_design.blueprint) and not platform_chat_flow.has_pending_blueprint(state)
     if action in RUN_ACTIONS:
         return (
             platform_chat_flow.has_pending_blueprint(state)

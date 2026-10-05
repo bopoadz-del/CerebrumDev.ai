@@ -1017,6 +1017,13 @@ def build_status(
                 if payload.get(key):
                     waiting[key] = payload[key]
             return _with_level_grade(waiting, output_dir)
+        from app.factory.build.failure_record import (
+            failed_label,
+            failure_triple,
+            next_continue_line,
+        )
+
+        triple = failure_triple(payload, progress.get("failure"))
         failed = {
             "state": "failed",
             "detail": terminal.detail,
@@ -1028,6 +1035,12 @@ def build_status(
             **progress,
             **_authorship(output_dir, blueprint=blueprint, plan=plan),
             "stale": False,
+            # A failed build is still a product: it exports as-is, and every
+            # surface names the same FAILED(gate, check, finding). Never green.
+            "certified": False,
+            "failed": triple,
+            "failed_label": failed_label(triple) if triple else None,
+            "next_continue": next_continue_line(triple),
         }
         if payload.get("repo_url"):
             failed["repo_url"] = payload.get("repo_url")
@@ -1378,6 +1391,37 @@ def _run(
     _clear_quota_marker(output_dir)
 
 
+def _record_platform(ledger: Any, platform_id: Optional[str], *, resumed_failed: bool) -> None:
+    """Record the platform's branch of record once, and -- on a Floor resume
+    of a failed run -- the rework-budget reset the runner rule counts from."""
+    from app.factory.build.ledger import (
+        PLATFORM_BRANCH_KEY,
+        PLATFORM_ID_KEY,
+        EventKind,
+    )
+    from app.factory.build.platform_identity import branch_of_record, is_platform_id
+
+    if is_platform_id(platform_id):
+        recorded = None
+        for event in reversed(list(ledger.events())):
+            recorded = (event.payload or {}).get(PLATFORM_ID_KEY)
+            if recorded:
+                break
+        if recorded != platform_id:
+            ledger.append(
+                EventKind.NOTE,
+                detail=f"PLATFORM {platform_id}: branch of record {branch_of_record(platform_id)}",
+                payload={
+                    PLATFORM_ID_KEY: platform_id,
+                    PLATFORM_BRANCH_KEY: branch_of_record(platform_id),
+                },
+            )
+    if resumed_failed:
+        from app.factory.build.rule_decision import reset_rework_budget
+
+        reset_rework_budget(ledger, reason="the platform was resumed from the Floor")
+
+
 def start_runner_build(
     blueprint: Any,
     output_dir: Path | str,
@@ -1390,8 +1434,18 @@ def start_runner_build(
     attach_branch: Optional[str] = None,
     attach_sha: Optional[str] = None,
     attach_passed: Optional[Sequence[str]] = None,
+    platform_id: Optional[str] = None,
+    start_over: bool = False,
 ) -> Dict[str, Any]:
     """Start a background runner build and return immediately.
+
+    ``platform_id``: the platform this build belongs to. Its branch of record,
+    ``build/<platform_id>``, is recorded in the ledger once; the runner pushes
+    every passed phase to it.
+
+    ``start_over``: the ONLY way a failed run moves to a fresh workspace -- the
+    typed Floor action "Start over", which has already tagged the old head.
+    Without it a failed run is re-entered in place, never replaced.
 
     ``attach_branch``/``attach_sha``: the workspace is a checkout of that
     cerebrum-builds branch (branch_attach.attach). A new ledger records
@@ -1435,6 +1489,7 @@ def start_runner_build(
     ledger = BuildLedger(_ledger_path(out))
     fresh_workspace = False
     fresh_reason = ""
+    resumed_failed = False
     had_ledger = ledger.exists()
     if ledger.exists():
         status = build_status(out)
@@ -1497,6 +1552,8 @@ def start_runner_build(
                 "(no live WRITER / FACTORY_CODE_CLI worker)",
                 out,
             )
+        if status.get("state") == "failed" and not start_over:
+            resumed_failed = True
         if status.get("state") == "failed":
             # G2: re-enter the SAME workspace when it is intact and its
             # ledger shows COLLECTOR/CLONER/WRITER passed; fresh only when it
@@ -1511,6 +1568,16 @@ def start_runner_build(
                     payload={"resumed": True, "workspace": out.name, "phase": phase},
                 )
                 logger.info("re-entering failed run at %s, phase %s", out, phase)
+            elif not start_over:
+                # One platform = one workspace of record: a failed run is
+                # resumed where it stopped, never silently replaced. A fresh
+                # workspace exists only on the typed "Start over".
+                ledger.append(
+                    EventKind.NOTE,
+                    detail=f"RESUMED workspace={out.name} phase=resume_point ({why})",
+                    payload={"resumed": True, "workspace": out.name, "phase": None, "why": why},
+                )
+                logger.info("re-entering failed run at %s in place (%s)", out, why)
             else:
                 prior = out.name
                 fresh = next_fresh_output(out)
@@ -1541,6 +1608,8 @@ def start_runner_build(
             from app.factory.build.ledger import EventKind
 
             ledger.append(EventKind.NOTE, detail=fresh_reason, payload={"fresh": True})
+
+    _record_platform(ledger, platform_id, resumed_failed=resumed_failed)
 
     if attach_branch:
         from app.factory.build.authority import BuildRole

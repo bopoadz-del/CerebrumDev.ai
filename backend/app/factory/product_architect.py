@@ -647,6 +647,8 @@ def generate_product(
     quota_account_id: Optional[str] = None,
     tenant_identity: Optional[str] = None,
     brief: str = "",
+    platform_id: Optional[str] = None,
+    start_over: bool = False,
 ) -> Dict[str, Any]:
     """Build a product. The role runner is the default engine.
 
@@ -701,6 +703,8 @@ def generate_product(
             quota_account_id=quota_account_id,
             tenant_identity=tenant_identity,
             brief=str(brief or "").strip(),
+            platform_id=platform_id,
+            start_over=start_over,
         )
 
     factory_root = _repo_root()

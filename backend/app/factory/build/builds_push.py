@@ -206,7 +206,12 @@ def _id_part(text: str) -> bool:
 
 
 def is_build_branch(name: str) -> bool:
-    """``build/sess_<id>[-<tag>...]`` -- the shape make_branch_name emits."""
+    """``build/<platform_id>`` -- a platform's branch of record -- or the
+    legacy per-run ``build/sess_<id>[-<tag>...]`` that make_branch_name emits."""
+    from app.factory.build.platform_identity import platform_id_from_branch
+
+    if platform_id_from_branch(name):
+        return True
     head = BRANCH_PREFIX + SESSION_ID_PREFIX
     if not isinstance(name, str) or not name.startswith(head):
         return False
@@ -366,8 +371,13 @@ def push_workspace(
     session_id: str,
     run_git: Optional[Callable[..., subprocess.CompletedProcess]] = None,
     suffix: Optional[str] = None,
+    branch: Optional[str] = None,
 ) -> BuildsRef:
-    """Commit ``workspace`` onto a ``build/**`` branch cut from ``main``."""
+    """Commit ``workspace`` onto a ``build/**`` branch cut from ``main``.
+
+    ``branch``: the platform's branch of record (``build/<platform_id>``),
+    created here the first time it is pushed. Without it a legacy per-run
+    ``build/sess_<id>-<tag>`` is named."""
     token = builds_token(env)
     if not token:
         raise BuildsPushError(
@@ -375,7 +385,9 @@ def push_workspace(
             unreachable=True,
         )
     owner, name, repo_url = parse_builds_repo(env)
-    branch = make_branch_name(session_id, suffix=suffix)
+    if branch is not None and not is_build_branch(branch):
+        raise BuildsPushError(f"not a build branch: {branch!r}")
+    branch = branch or make_branch_name(session_id, suffix=suffix)
     git = run_git or _default_run_git
     tmp = Path(tempfile.mkdtemp(prefix="cerebrum-builds-"))
     try:

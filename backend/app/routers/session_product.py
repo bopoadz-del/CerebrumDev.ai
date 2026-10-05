@@ -372,6 +372,26 @@ def _provenance_from_tree(out) -> dict:
     return {k: str(doc.get(k) or "") for k in keys if doc.get(k)}
 
 
+def _tag_certified_release(state: Any, status: Dict[str, Any]) -> Optional[tuple]:
+    """``(tag, sha)`` for a certified export's release tag, or None when the
+    platform has no branch of record (cerebrum-builds not armed)."""
+    import os
+
+    from app.factory.build.builds_push import builds_token
+    from app.factory.build.platform_identity import platform_id_of
+
+    pid = platform_id_of(state.product_design)
+    if not pid or not builds_token(os.environ) or status.get("certified") is False:
+        return None
+    from app.factory.build.platform_branch import builds_remote, release_certified
+
+    try:
+        return release_certified(builds_remote(), pid)
+    except Exception:  # noqa: BLE001 -- the zip still ships; the tag is retried next export
+        logger.exception("release tag for %s failed", pid)
+        return None
+
+
 @router.get("/{session_id}/product/package")
 def download_product_package(
     session_id: str,
@@ -442,6 +462,22 @@ def download_product_package(
             "says. Use it as source material, not as a product.\n"
         )
         (out / "EXPORTED-AS-IS.md").write_text(note, encoding="utf-8")
+        # Rule 1: a failed build is still a product. Its MANIFEST names the
+        # failing gate/check/finding, k/N, the build level and certified:false
+        # -- replacing any certified manifest a refused export left behind.
+        from app.factory.build.export_manifest import (
+            failed_export_manifest,
+            write_export_manifest,
+        )
+
+        write_export_manifest(
+            out,
+            failed_export_manifest(
+                status,
+                product_id=str(product_id),
+                platform_id=getattr(state.product_design, "platform_id", None),
+            ),
+        )
         archive = zip_generated_product(out, out.parent / f"{out.name}-as-is-export")
         return FileResponse(
             archive,
@@ -563,6 +599,15 @@ def download_product_package(
     accept = acceptance_export_blocker(status, out)
     if accept:
         raise HTTPException(status_code=409, detail=accept)
+
+    # Every gate held: this export is CERTIFIED. Tag the platform's head
+    # release/<platform_id>/<n>; the manifest (and the Store registry entry)
+    # point at the tag. A failed build never reaches this line.
+    manifest["certified"] = True
+    release = _tag_certified_release(state, status)
+    if release:
+        manifest["release_tag"], manifest["release_sha"] = release
+    write_export_manifest(out, manifest)
 
     archive_base = out.parent / f"{out.name}-export"
     archive = zip_generated_product(out, archive_base)
@@ -963,10 +1008,18 @@ def generate_approved_product(
         # A caller-supplied output_dir is a recursive-delete target inside the
         # generator, so it must stay inside factory_outputs/. None keeps the
         # per-session default.
+        # One platform = one workspace of record: a re-run resumes the
+        # session's existing workspace, never a sibling (Start over is the
+        # only fresh door, and it is a typed Floor action).
+        prior = (state.product_design.generation or {}).get("output_dir")
         if body.output_dir:
             out = safe_output_dir(body.output_dir, bp.product_id)
+        elif prior and Path(prior).is_dir():
+            out = Path(prior)
         else:
             out = _session_output(session_id, bp.product_id)
+        from app.factory.build.platform_identity import ensure_platform_id
+
         result = generate_product(
             bp,
             out,
@@ -975,6 +1028,7 @@ def generate_approved_product(
             quota_account_id=principal.account_id,
             tenant_identity=principal.account_id,
             brief=str(state.product_design.brief or "").strip(),
+            platform_id=ensure_platform_id(state.product_design),
         )
         if result.get("already_running"):
             raise HTTPException(

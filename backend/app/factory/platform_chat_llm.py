@@ -130,8 +130,10 @@ This drafts a blueprint; it does NOT start the coding agent yet. Never draft_pla
 good, build it, ship it, yes), OR (2) a coding run is in-flight, stalled, \
 or interrupted (no RUN_FAILED) and the user says continue / resume / keep \
 going, OR (3) the last run FAILED (rework exhausted / TESTER still red) \
-and the user asks to continue or try again — that starts a FRESH workspace, \
-not a resume of the dead ledger. Do not require a pending unapproved \
+and the user asks to continue or try again — that RESUMES the platform \
+on its own branch at the failing phase with a fresh rework budget (only \
+the user's Start over control makes a fresh workspace). Do not require a \
+pending unapproved \
 blueprint to resume. If the last run already succeeded AND the product is \
 pilot-ready, do NOT call start_coder — reply that it finished. If \
 code-phase 5/5 succeeded but it is NOT pilot-ready, continue/resume MUST \
@@ -269,10 +271,12 @@ def _session_facts(state: Any) -> str:
     elif platform_chat_flow.is_generation_terminal_failure(state):
         lines.append(
             "Last coding run FAILED (rework exhausted or TESTER still red). "
-            "That workspace is dead — do NOT resume it and do NOT say "
-            "'same blueprint hash — not starting over'. A new platform brief "
-            "MUST call draft_platform. continue / try again / start_coder "
-            "starts a FRESH workspace with a reset rework budget."
+            "Do NOT say 'same blueprint hash — not starting over'. A new "
+            "platform brief MUST call draft_platform. continue / try again / "
+            "start_coder RESUMES this platform on its own branch at the "
+            "failing phase with a reset rework budget; only the user's Start "
+            "over control makes a FRESH workspace (the old head is kept as an "
+            "archive tag)."
         )
     elif platform_chat_flow.is_generation_resumable(state):
         point = platform_chat_flow._ledger_resume_point(state) or "the last phase"

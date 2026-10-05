@@ -619,6 +619,17 @@ class RoleRunner:
                 if branch:
                     self.state["attached_branch"] = str(branch)
                     break
+        # The platform's branch of record (build/<platform_id>), recorded once
+        # by start_runner_build. Every passed phase is pushed to it when
+        # cerebrum-builds is armed.
+        if self.ledger.exists() and "platform_id" not in self.state:
+            from app.factory.build.ledger import PLATFORM_ID_KEY
+
+            for event in reversed(list(self.ledger.events())):
+                pid = (event.payload or {}).get(PLATFORM_ID_KEY)
+                if pid:
+                    self.state["platform_id"] = str(pid)
+                    break
         # Specs are in-memory state and die with the process. A re-entered run
         # reads them back off the product's own models, so TESTER samples the
         # contract WRITER actually shipped rather than an empty spec.
@@ -680,6 +691,30 @@ class RoleRunner:
             if events[index].kind is EventKind.PILOT_OPENED:
                 return events[index + 1 :]
         return events
+
+    def _branch_of_record(self) -> str:
+        """The branch this run writes to: the platform's build/<id> when
+        cerebrum-builds is armed, else an attached legacy branch, else empty."""
+        from app.factory.build.builds_push import builds_token
+        from app.factory.build.platform_identity import branch_of_record, is_platform_id
+
+        pid = str(self.state.get("platform_id") or "")
+        if is_platform_id(pid) and builds_token(os.environ):
+            return branch_of_record(pid)
+        return str(self.state.get("attached_branch") or "")
+
+    def _push_branch_of_record(self, message: str) -> str:
+        from app.factory.build.platform_identity import branch_of_record, is_platform_id
+
+        pid = str(self.state.get("platform_id") or "")
+        branch = self._branch_of_record()
+        if is_platform_id(pid) and branch == branch_of_record(pid):
+            from app.factory.build.platform_branch import push_to_branch_of_record
+
+            return push_to_branch_of_record(self.workspace, pid, message)
+        from app.factory.build.branch_attach import checkpoint
+
+        return checkpoint(self.workspace, branch, message)
 
     def _rework_rounds_this_cycle(self) -> int:
         return sum(1 for e in self._cycle_events() if e.kind is EventKind.REWORK)
@@ -2087,20 +2122,17 @@ class RoleRunner:
                     )
 
                 if verdict.ok:
-                    # R3: an attached branch is checkpointed after every
+                    # R3: the branch of record is checkpointed after every
                     # passed phase -- phase-forward commits only -- so the
-                    # branch never lags the run it belongs to.
-                    attached = str(self.state.get("attached_branch") or "")
+                    # branch never lags the run it belongs to. A platform's
+                    # build/<platform_id> when cerebrum-builds is armed; else
+                    # an attached legacy branch.
+                    attached = self._branch_of_record()
                     if attached:
-                        from app.factory.build.branch_attach import (
-                            checkpoint,
-                            checkpoint_message,
-                        )
+                        from app.factory.build.branch_attach import checkpoint_message
 
                         try:
-                            sha = checkpoint(
-                                self.workspace, attached, checkpoint_message(role.value)
-                            )
+                            sha = self._push_branch_of_record(checkpoint_message(role.value))
                         except Exception as exc:  # noqa: BLE001 -- named, never silent
                             return self._finish(
                                 Outcome.FAILED_GATE,
@@ -2166,13 +2198,11 @@ class RoleRunner:
                             dispatch_store_gate,
                         )
 
-                        attached = str(self.state.get("attached_branch") or "")
+                        attached = self._branch_of_record()
                         if attached:
-                            # R3: an attached build's Docker gate runs on its
-                            # OWN branch, never a new sibling.
-                            from app.factory.build.branch_attach import checkpoint
-
-                            checkpoint(self.workspace, attached, "factory: hand off to store-gate")
+                            # R3: a platform's Docker gate runs on its OWN
+                            # branch of record, never a new sibling.
+                            self._push_branch_of_record("factory: hand off to store-gate")
                             gate_branch = attached
                         else:
                             gate_branch = push_workspace(

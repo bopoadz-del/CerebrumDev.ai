@@ -581,6 +581,13 @@ export type BuildStatus = {
   phase_trail?: PhaseTrailEntry[]
   /** F3: exact location + named reason of the failure, if any. */
   failure?: BuildFailure | null
+  /** A FAILED build is still a product: never certified, never green. */
+  certified?: boolean
+  /** FAILED(gate, check, finding), read once from the run's terminal event. */
+  failed?: { gate: string; check: string; finding: string } | null
+  failed_label?: string | null
+  /** One line: what the next Continue will try to fix. */
+  next_continue?: string
   /** The runner rule's decisions, in order: gate, class (REWORK / ADVISORY /
    *  REGENERATE_TEST / STOP), this gate's round of its budget, the build's
    *  round of its ceiling, check, finding. */

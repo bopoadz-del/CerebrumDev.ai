@@ -106,7 +106,9 @@ def test_next_fresh_output_skips_a_failed_ledger(tmp_path):
     assert not (fresh / "build_ledger.jsonl").is_file()
 
 
-def test_start_or_resume_coder_after_terminal_starts_fresh_workspace(tmp_path, monkeypatch):
+def test_start_or_resume_coder_after_terminal_resumes_the_same_workspace(tmp_path, monkeypatch):
+    # Owner rule (2026-10-05): one platform = one branch. Continue on a FAILED
+    # run resumes it in place (fresh rework budget); only Start over is fresh.
     state = _failed_lettings_state(tmp_path)
     prior = Path(state.product_design.generation["output_dir"])
     captured = {}
@@ -115,8 +117,8 @@ def test_start_or_resume_coder_after_terminal_starts_fresh_workspace(tmp_path, m
         captured["output_dir"] = str(output_dir)
         captured["cycle"] = cycle
         captured["product_id"] = bp.product_id
-        assert Path(output_dir) != prior
-        assert Path(output_dir).name.startswith("residential-lettings")
+        captured["start_over"] = _kwargs.get("start_over", False)
+        assert Path(output_dir) == prior
         return {
             "engine": "runner",
             "output_dir": str(output_dir),
@@ -129,17 +131,17 @@ def test_start_or_resume_coder_after_terminal_starts_fresh_workspace(tmp_path, m
 
     monkeypatch.setattr(platform_chat_flow, "generate_product", fake_generate)
     result = platform_chat_flow.start_or_resume_coder(state)
-    assert result.get("fresh") is True
-    assert result.get("resumed") is not True
+    assert result.get("fresh") is False
+    assert result.get("resumed") is True
     assert "same blueprint hash" not in (result.get("summary") or "").lower()
     assert "not starting over" not in (result.get("summary") or "").lower()
-    assert "fresh" in (result.get("summary") or "").lower()
-    assert captured["cycle"] == "code"
-    assert captured["output_dir"] != str(prior)
+    assert "resum" in (result.get("summary") or "").lower()
+    assert captured["start_over"] is False
+    assert captured["output_dir"] == str(prior)
     assert state.product_design.generation["output_dir"] == captured["output_dir"]
 
 
-def test_resume_generation_after_terminal_does_not_reuse_dead_dir(tmp_path, monkeypatch):
+def test_resume_generation_after_terminal_resumes_in_place(tmp_path, monkeypatch):
     state = _failed_lettings_state(tmp_path)
     prior = Path(state.product_design.generation["output_dir"])
     captured = {}
@@ -156,8 +158,8 @@ def test_resume_generation_after_terminal_does_not_reuse_dead_dir(tmp_path, monk
 
     monkeypatch.setattr(platform_chat_flow, "generate_product", fake_generate)
     result = platform_chat_flow.resume_generation(state)
-    assert result.get("fresh") is True
-    assert captured["out"] != str(prior)
+    assert result.get("fresh") is False and result.get("resumed") is True
+    assert captured["out"] == str(prior)
     assert "same blueprint hash" not in result["summary"].lower()
 
 
@@ -166,11 +168,11 @@ def test_session_facts_after_terminal_failure_allow_draft(tmp_path):
     facts = platform_chat_llm._session_facts(state)
     assert "FAILED" in facts
     assert "draft_platform" in facts
-    assert "FRESH workspace" in facts
+    assert "RESUMES this platform" in facts and "Start over" in facts
     assert "do not draft a new platform" not in facts.lower()
 
 
-def test_start_runner_build_rotates_off_a_failed_ledger(tmp_path, monkeypatch):
+def test_start_runner_build_rotates_off_a_failed_ledger_only_on_start_over(tmp_path, monkeypatch):
     from app.factory.blueprint import CapabilitySpec, ProductBlueprint
 
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
@@ -201,7 +203,17 @@ def test_start_runner_build_rotates_off_a_failed_ledger(tmp_path, monkeypatch):
             )
         ],
     )
-    result = start_runner_build(bp, dead)
+    # Without Start over a failed run is re-entered in place, never replaced,
+    # and the resume resets the rework budget in the ledger.
+    resumed = start_runner_build(bp, dead)
+    assert resumed["fresh_workspace"] is False
+    assert Path(resumed["output_dir"]) == dead
+    from app.factory.build.rule_decision import BUDGET_RESET_KEY as REWORK_BUDGET_RESET
+
+    assert any((e.payload or {}).get(REWORK_BUDGET_RESET) for e in BuildLedger(dead / "build_ledger.jsonl").events())
+    ledger.append(EventKind.RUN_FAILED, detail="failed again")
+    # Start over -- the only fresh door -- rotates to a new workspace.
+    result = start_runner_build(bp, dead, start_over=True)
     assert result["already_running"] is False
     assert result["fresh_workspace"] is True
     assert Path(result["output_dir"]) != dead
@@ -255,7 +267,7 @@ async def test_chat_new_brief_after_failed_run_drafts_not_resumes(tmp_path, monk
 
 
 @pytest.mark.asyncio
-async def test_chat_continue_after_failed_run_starts_fresh(tmp_path, monkeypatch):
+async def test_chat_continue_after_failed_run_resumes_it(tmp_path, monkeypatch):
     from app.core import session_store
 
     state = _failed_lettings_state(tmp_path)
@@ -284,8 +296,7 @@ async def test_chat_continue_after_failed_run_starts_fresh(tmp_path, monkeypatch
     text = " ".join(
         str(e["data"]) for e in events if e["event"] in {"delta", "generation", "info"}
     ).lower()
-    assert captured.get("out") != prior
-    assert captured.get("cycle") == "code"
+    assert captured.get("out") == prior
     assert "same blueprint hash" not in text
-    assert "fresh" in text
+    assert "resum" in text
     assert "generation" in [e["event"] for e in events]

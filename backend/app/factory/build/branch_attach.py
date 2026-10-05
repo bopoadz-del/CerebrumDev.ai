@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 from app.factory.build.builds_push import (
+    BRANCH_PREFIX,
     STORE_GATE_PATH,
     BuildsPushError,
     builds_token,
@@ -90,7 +91,14 @@ def parse_build_link(text: str, env: Mapping[str, str] | None = None) -> Tuple[O
         if not is_build_branch(branch):
             return None, NOT_A_BUILD_LINK
         return branch, None
+    from app.factory.build.platform_identity import branch_of_record, is_platform_id
+
     for word in message.split():
+        bare = word.strip("\"'`()[]{}<>.,;:!?").lower()
+        if bare.startswith(BRANCH_PREFIX):
+            bare = bare[len(BRANCH_PREFIX):]
+        if is_platform_id(bare):
+            return branch_of_record(bare), None
         found = session_token(word)
         if found:
             session, suffix = found
