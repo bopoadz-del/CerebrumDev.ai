@@ -101,151 +101,6 @@ _SKIP_REQUIRED_NAMES = _ENVELOPE_NAMES | _BLOCK_CONTRACT_NAMES | {"status"}
 #: ``status`` and ``channel`` stay eligible — they are common domain columns.
 _ALIGN_SKIP_NAMES = _ENVELOPE_NAMES | frozenset({"steps", "team_id"})
 
-_FIELD_NAME = r"[A-Za-z_][\w]*"
-
-#: Error / guard patterns that name a domain field the handler requires.
-_HANDLER_REQUIRED_PATTERNS = (
-    re.compile(
-        r"Missing required field[:\s]+['\"]?(" + _FIELD_NAME + r")",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"""if\s+['\"](""" + _FIELD_NAME + r""")['\"]\s+not in\s+payload""",
-    ),
-    re.compile(
-        r"""['\"](""" + _FIELD_NAME + r""")['\"]\s+is required""",
-        re.IGNORECASE,
-    ),
-    # Live VetConnect: "pet_id is missing and must be a non-empty string"
-    re.compile(
-        r"""\b(""" + _FIELD_NAME + r""")\s+is missing\b""",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"""if\s+not\s+payload\.get\(\s*['\"](""" + _FIELD_NAME + r""")['\"]""",
-    ),
-    re.compile(
-        r"""payload\.get\(\s*['\"](""" + _FIELD_NAME + r""")['\"]\s*\)\s+in\s+\(None""",
-    ),
-)
-
-#: "Missing required fields: pet_name, owner_name, appointment_date"
-_MISSING_FIELDS_LIST = re.compile(
-    r"Missing required fields?\s*:\s*(.+?)(?:\"|'|$)",
-    re.IGNORECASE,
-)
-
-#: required / needed = ["pet_name", "owner_name"]
-_REQUIRED_ASSIGNMENT = re.compile(
-    r"""(?:required(?:_fields)?|needed)\s*=\s*(\[[^\]]+\]|\([^)]+\))""",
-    re.IGNORECASE,
-)
-
-_IDENT_IN_LIST = re.compile(r"""['\"](""" + _FIELD_NAME + r""")['\"]""")
-
-#: Signs the captured text is code the message interpolates, not a listing of
-#: field names: an f-string slot, a call, a subscript, or concatenation.
-_EXPRESSION_MARKERS = re.compile(r"[{}()\[\]+]")
-
-#: ANY name bound to a list/tuple of string literals. The patterns above only
-#: recognise a roster called ``required``/``required_fields``/``needed``, and
-#: only a message that names its field as a literal. A handler that writes
-#:
-#:     REQUIRED_KEYS = ["reference", "site_id"]
-#:     for field in REQUIRED_KEYS:
-#:         if field not in payload:
-#:             raise HTTPException(422, f"missing required field: {field}")
-#:
-#: defeats both: the constant is named something else, and the message names
-#: ``{field}`` rather than a field. Live sess (job_and_site_tracking,
-#: commercials_and_valuations): both capabilities demanded ``reference``, the
-#: spec never learned it, ``_sample_payload`` omitted it, and every retry
-#: handed the writer the same 422 to "fix".
-_LIST_LITERAL_BINDING = re.compile(
-    r"^[ \t]*([A-Za-z_]\w*)\s*(?::[^=\n]*)?=\s*([\[(][^\]\)]*[\]\)])",
-    re.MULTILINE,
-)
-
-#: The two shapes that make a roster a ROSTER rather than a vocabulary: it is
-#: iterated, or it is differenced against the payload's keys. Deliberately NOT
-#: a bare ``x not in CONST`` -- that is ``payload.get("status") not in
-#: ALLOWED_STATUSES``, where the list holds values, not field names, and
-#: mining it would declare "open" and "closed" required fields.
-_ROSTER_DIFFERENCED = r"(?:set\(\s*{const}\s*\)|\b{const}\b)\s*(?:-\s*set\(|\.difference\()"
-
-#: payload.get("role") not in ("veterinarian", "technician")
-_GET_NOT_IN = re.compile(
-    r"""payload(?:\.get\(\s*|\s*\[\s*)['\"]("""
-    + _FIELD_NAME
-    + r""")['\"]\s*\)?\s+not in\s*(\[[^\]]+\]|\([^)]+\)|\{[^}]+\})""",
-    re.IGNORECASE,
-)
-
-
-def _must_be_field_pattern(predicate: str) -> re.Pattern[str]:
-    """Match ``field must be …`` without taking English ``and`` / ``or``.
-
-    Live veterinary-care (sess_e04e9cd8f4904d19): LLM handlers emit
-    ``clinic_id is missing and must be a non-empty string``. The previous
-    optional-quote pattern treated the conjunction ``and`` as the field
-    name, so WRITER wrote ``and: str = ""`` and ``workspace_compiles``
-    failed. Prefer a quoted name, then ``X is missing and must be``, then
-    a bare ``X must be``.
-    """
-    return re.compile(
-        r"""(?:['\"](?P<quoted>"""
-        + _FIELD_NAME
-        + r""")['\"]"""
-        + r"""|\b(?P<missing>"""
-        + _FIELD_NAME
-        + r""")\s+is missing(?:\s+and)?"""
-        + r"""|\b(?P<bare>"""
-        + _FIELD_NAME
-        + r"""))"""
-        + r"""\s+"""
-        + predicate,
-        re.IGNORECASE,
-    )
-
-
-_MUST_BE_BOOL = _must_be_field_pattern(r"must be a boolean")
-_MUST_BE_INT = _must_be_field_pattern(
-    r"must be an integer(?:\s*>=\s*(?P<bound>-?\d+))?"
-)
-_MUST_BE_NONEMPTY = _must_be_field_pattern(r"must be a non-empty string")
-_MUST_BE_ONE_OF = re.compile(
-    r"""(?:['\"](?P<quoted>"""
-    + _FIELD_NAME
-    + r""")['\"]"""
-    + r"""|\b(?P<missing>"""
-    + _FIELD_NAME
-    + r""")\s+is missing(?:\s+and)?"""
-    + r"""|\b(?P<bare>"""
-    + _FIELD_NAME
-    + r"""))"""
-    + r"""\s+must be one of\s*[:\{{]\s*(?P<values>[^}}\n'\"]+)""",
-    re.IGNORECASE,
-)
-_ISINSTANCE_BOOL = re.compile(
-    r"""isinstance\(\s*payload(?:\.get\(\s*|\s*\[\s*)['\"]("""
-    + _FIELD_NAME
-    + r""")['\"][^,]*,\s*bool""",
-)
-_ISINSTANCE_INT = re.compile(
-    r"""isinstance\(\s*payload(?:\.get\(\s*|\s*\[\s*)['\"]("""
-    + _FIELD_NAME
-    + r""")['\"][^,]*,\s*int""",
-)
-_VALUE_TOKEN = re.compile(r"""['\"]([^'\"]+)['\"]|([A-Za-z][\w-]*)""")
-
-#: ``_constraint_guard`` bakes ``constraints = {'status': {'allowed_values': [...]}}``.
-#: #311 mined ``payload.get('status') not in (...)`` on the handler; the live
-#: refuse (sess_1fd1d54c) was this literal on the route.
-_CONSTRAINTS_ASSIGN = re.compile(
-    r"constraints\s*=\s*(\{(?:[^{}]|\{[^{}]*\})*\})",
-)
-
-
 def split_execute_action(
     payload: Any,
     *,
@@ -1006,16 +861,6 @@ def sanitize_python_identifier(
     return candidate
 
 
-def _match_field_name(match: re.Match[str]) -> Optional[str]:
-    """Field name captured by a named or positional group."""
-    for key in ("quoted", "missing", "bare"):
-        if key in match.re.groupindex:
-            value = match.group(key)
-            if value:
-                return value
-    return next((g for g in match.groups() if g), None)
-
-
 def _usable_align_name(name: Optional[str]) -> Optional[str]:
     """Accept only real domain identifiers — never keywords or junk tokens."""
     name = str(name or "").strip()
@@ -1040,48 +885,6 @@ def _usable_align_name(name: Optional[str]) -> Optional[str]:
     if name.isupper():
         return None
     return name
-
-
-def _names_from_list_text(raw: str) -> List[str]:
-    found: List[str] = []
-    for match in _IDENT_IN_LIST.finditer(raw or ""):
-        name = _usable_align_name(match.group(1))
-        if name:
-            found.append(name)
-    if found:
-        return found
-    # Unquoted: pet_name, owner_name, appointment_date.
-    #
-    # Only for a plain listing. When the text is an EXPRESSION the message
-    # interpolates, stripping its punctuation invents a field that does not
-    # exist: ``f"missing required field: {field}"`` yielded ``field``, and
-    # ``"... " + sorted(missing)[0]`` yielded ``sortedmissing0``. Those went
-    # into the spec, so ``_sample_payload`` sent a junk column -- the miner
-    # fabricating the very thing it exists to discover.
-    if _EXPRESSION_MARKERS.search(raw or ""):
-        return found
-    for part in re.split(r"[,;]", raw or ""):
-        token = re.sub(r"[^A-Za-z0-9_]+", "", part)
-        name = _usable_align_name(token)
-        if name:
-            found.append(name)
-    return found
-
-
-def _parse_value_list(raw: str) -> List[str]:
-    """Split a handler enum listing into distinct string values."""
-    values, seen = [], set()
-    for match in _VALUE_TOKEN.finditer(raw or ""):
-        token = next((g for g in match.groups() if g), None)
-        if not token:
-            continue
-        token = token.strip().strip("{}[]()\"'")
-        if not token or token.lower() in _ALIGN_SKIP_NAMES:
-            continue
-        if token not in seen:
-            seen.add(token)
-            values.append(token)
-    return values
 
 
 def _assign_allowed_values(slot: Dict[str, Any], values: Sequence[str]) -> None:
@@ -1122,38 +925,6 @@ def extract_capability_route_source(routes_text: str, capability_id: str) -> str
     if nxt:
         return rest[: nxt.start() + 4]
     return rest
-
-
-def _mine_constraints_literal(
-    text: str,
-    touch,
-) -> None:
-    """Read baked ``constraints = {...}`` from a route / handler body."""
-    for match in _CONSTRAINTS_ASSIGN.finditer(text or ""):
-        try:
-            parsed = ast.literal_eval(match.group(1))
-        except (ValueError, SyntaxError):
-            continue
-        if not isinstance(parsed, dict):
-            continue
-        for name, rules in parsed.items():
-            if not isinstance(rules, dict):
-                continue
-            slot = touch(name)
-            if not slot:
-                continue
-            allowed = rules.get("allowed_values")
-            if isinstance(allowed, (list, tuple)) and allowed:
-                _assign_allowed_values(slot, [str(v) for v in allowed])
-            if rules.get("min") is not None:
-                slot.setdefault("min", rules["min"])
-            if rules.get("max") is not None:
-                slot.setdefault("max", rules["max"])
-            # F4: a block contract may mark a field as an APPROVAL -- the
-            # negative floor then demands a free-text approver is refused.
-            # Only the explicit marker arms it; never a name heuristic.
-            if rules.get("approval") is True:
-                slot["approval"] = True
 
 
 def _inferred_field_shape(name: str) -> Dict[str, Any]:
@@ -1269,37 +1040,6 @@ def _iterations_over(tree: ast.AST, const: str):
                     yield gen.target.id, heads + list(gen.ifs)
 
 
-def _roster_drives_a_required_check(text: str, const: str) -> bool:
-    """True when ``const`` is read as a roster of required field names.
-
-    An iteration over it -- a loop or a comprehension -- must consult the
-    payload with its own variable (read from the syntax tree); a
-    set-difference against the payload's keys counts on its own.
-    """
-    escaped = re.escape(const)
-    if re.search(_ROSTER_DIFFERENCED.format(const=escaped), text):
-        return True
-    try:
-        tree = ast.parse(text)
-    except SyntaxError:
-        return False
-    return any(_consults_payload(var, nodes) for var, nodes in _iterations_over(tree, const))
-
-
-def required_fields_from_rosters(handler_source: str) -> List[str]:
-    """Field names from a required-roster constant, whatever it is named."""
-    text = handler_source or ""
-    found: List[str] = []
-    for match in _LIST_LITERAL_BINDING.finditer(text):
-        const, literal = match.group(1), match.group(2)
-        names = _names_from_list_text(literal)
-        if not names:
-            continue
-        if _roster_drives_a_required_check(text, const):
-            found.extend(names)
-    return found
-
-
 def settings_names(source: str) -> set:
     """Names this source reads from the ENVIRONMENT -- settings, not fields.
 
@@ -1384,184 +1124,312 @@ def settings_names(source: str) -> set:
     return found
 
 
-def _key_refs_by_tokens(text: str) -> set:
-    """Key references in a fragment that does not parse as a whole module,
-    read from Python's own tokenizer: ``NAME . get ( STRING`` and
-    ``[ STRING ]``. The lexer, not a pattern over the text."""
-    import io
-    import tokenize
+def _parse_source(text: str) -> Optional[ast.Module]:
+    """Parse a module, a route slice, or an indented handler-body fragment."""
+    import textwrap
 
-    keys: set = set()
-    toks: list = []
-    try:
-        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
-            if tok.type in (tokenize.NL, tokenize.NEWLINE, tokenize.COMMENT,
-                            tokenize.INDENT, tokenize.DEDENT):
-                continue
-            toks.append(tok)
-    except (tokenize.TokenError, IndentationError, SyntaxError):
-        pass
-
-    def _literal(tok):
+    source = text or ""
+    dedented = textwrap.dedent(source)
+    for candidate in (
+        source,
+        dedented,
+        "def _fragment():\n" + textwrap.indent(dedented, "    "),
+    ):
         try:
-            value = ast.literal_eval(tok.string)
-        except (ValueError, SyntaxError):
-            return None
-        return value if isinstance(value, str) and value.isidentifier() else None
-
-    for i, tok in enumerate(toks):
-        if tok.type != tokenize.STRING:
+            return ast.parse(candidate)
+        except (SyntaxError, ValueError):
             continue
-        prev = toks[i - 1].string if i >= 1 else ""
-        prev2 = toks[i - 2].string if i >= 2 else ""
-        nxt = toks[i + 1].string if i + 1 < len(toks) else ""
-        if (prev == "(" and prev2 == "get") or (prev == "[" and nxt == "]"):
-            value = _literal(tok)
-            if value:
-                keys.add(value)
-    return keys
+    return None
 
 
-def _confirmed_key_refs(text: str) -> set:
-    """String literals the source actually uses as a payload/record KEY.
+def _builtin_type_name(node: ast.AST) -> Optional[str]:
+    """``bool`` / ``int`` / ``float`` / ``str``: a name that IS a builtin type.
+    The spec's type vocabulary is Python's own, so the name is the type."""
+    import builtins
 
-    A key reference is ``d["x"]``, ``d.get("x")``, or ``"x" in d`` / ``not in``.
-    A word inside a message string (``raise ValueError("... is missing")``) is
-    NOT a key reference. That distinction is what tells a real field from prose:
-    the ``(name) is missing`` pattern fires on a refusal sentence
-    ("any of the four is missing") and yields "four", which the handler never
-    reads as a key -- so it is dropped. See test_miner_rejects_prose_fields.
-    """
-    keys: set = set()
-    try:
-        tree = ast.parse(text)
-    except SyntaxError:
-        # Un-parseable fragment: fall back to a literal-access regex so the
-        # filter degrades to permissive rather than dropping real fields.
-        keys.update(_key_refs_by_tokens(text))
-        return keys
+    if isinstance(node, ast.Name) and isinstance(getattr(builtins, node.id, None), type):
+        return node.id
+    return None
+
+
+def _read_key(node: ast.AST, aliases: Mapping[str, str]) -> Optional[str]:
+    """The record key an expression reads: ``m["k"]``, ``m.get("k", ...)``, a
+    name bound to one of those, or any of them passed through a builtin type
+    conversion or a no-argument method (``int(m["k"])``, ``m.get("k").strip()``)."""
+    while True:
+        if isinstance(node, ast.Call) and _builtin_type_name(node.func) and node.args:
+            node = node.args[0]
+            continue
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and not node.args
+            and not node.keywords
+            and not (node.func.attr == "get")
+        ):
+            node = node.func.value
+            continue
+        break
+    if isinstance(node, ast.Name):
+        return aliases.get(node.id)
+    if isinstance(node, ast.Subscript):
+        key = node.slice
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            return key.value
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    ):
+        return node.args[0].value
+    return None
+
+
+def _aliases(tree: ast.AST) -> Dict[str, str]:
+    """Names bound to a record read: ``value = payload.get("k")``."""
+    out: Dict[str, str] = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.Subscript):
-            s = node.slice
-            if isinstance(s, ast.Constant) and isinstance(s.value, str):
-                keys.add(s.value)
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                and node.func.attr == "get" and node.args \
-                and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-            keys.add(node.args[0].value)
-        elif isinstance(node, ast.Compare):
-            for op, operand in zip(node.ops, [node.left, *node.comparators]):
-                if isinstance(op, (ast.In, ast.NotIn)) and isinstance(node.left, ast.Constant) \
-                        and isinstance(node.left.value, str):
-                    keys.add(node.left.value)
-    return keys
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            key = _read_key(node.value, {})
+            if key:
+                out.setdefault(node.targets[0].id, key)
+    return out
 
 
-def handler_required_fields(handler_source: str) -> List[str]:
-    """Domain field names a handler body treats as required."""
+def _string_constants(node: ast.AST) -> Optional[List[str]]:
+    """The string elements of a list / tuple / set literal (None otherwise)."""
+    if not isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return None
+    values = [e.value for e in node.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+    return values
+
+
+def _is_empty_sentinel(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and node.value in (None, "")
+
+
+def _roster_bindings(tree: ast.AST) -> Dict[str, List[str]]:
+    """Names bound to a list/tuple literal of string constants."""
+    out: Dict[str, List[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            values = _string_constants(node.value) if node.value is not None else None
+            if not values:
+                continue
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    out.setdefault(target.id, values)
+    return out
+
+
+def _differenced_against_payload(tree: ast.AST, const: str) -> bool:
+    """``set(C) - set(payload)`` or ``C.difference(...)`` / ``set(C).difference(...)``."""
+
+    def _is_const(node: ast.AST) -> bool:
+        if isinstance(node, ast.Name) and node.id == const:
+            return True
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "set"
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == const
+        )
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Sub) and _is_const(node.left):
+            return True
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "difference"
+            and _is_const(node.func.value)
+        ):
+            return True
+    return False
+
+
+def required_fields_from_rosters(handler_source: str) -> List[str]:
+    """Field names from a required-roster constant, whatever it is named: a
+    list/tuple literal of names that is iterated with each name looked up in
+    the payload, or differenced against the payload's keys."""
+    tree = _parse_source(handler_source)
+    if tree is None:
+        return []
     found: List[str] = []
-    text = handler_source or ""
-    # The regex patterns read free text, including refusal messages, so a
-    # capture is trusted only when the handler also reads that name as a real
-    # payload key. List-literals and rosters below are explicit declarations
-    # in code, not prose, so they are kept without confirmation.
-    confirmed = _confirmed_key_refs(text)
-    for pattern in _HANDLER_REQUIRED_PATTERNS:
-        for match in pattern.finditer(text):
-            name = _usable_align_name(next((g for g in match.groups() if g), None))
-            if name and name in confirmed:
-                found.append(name)
-    for match in _MISSING_FIELDS_LIST.finditer(text):
-        found.extend(_names_from_list_text(match.group(1)))
-    for match in _REQUIRED_ASSIGNMENT.finditer(text):
-        found.extend(_names_from_list_text(match.group(1)))
-    found.extend(required_fields_from_rosters(text))
-    # What the handler reads from the environment is a setting, not a field.
-    settings = settings_names(text)
-    return sorted(n for n in set(found) if n not in settings)
+    for const, names in _roster_bindings(tree).items():
+        usable = [n for n in (_usable_align_name(v) for v in names) if n]
+        if not usable:
+            continue
+        driven = _differenced_against_payload(tree, const) or any(
+            _consults_payload(var, nodes) for var, nodes in _iterations_over(tree, const)
+        )
+        if driven:
+            found.extend(usable)
+    # The same roster written in place: ``for f in ("a", "b"): if f not in payload``.
+    for node in ast.walk(tree):
+        pairs = []
+        if isinstance(node, ast.For) and isinstance(node.target, ast.Name):
+            pairs.append((node.iter, node.target.id, list(node.body)))
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+            heads = [node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]
+            for gen in node.generators:
+                if isinstance(gen.target, ast.Name):
+                    pairs.append((gen.iter, gen.target.id, heads + list(gen.ifs)))
+        for iterable, var, nodes in pairs:
+            names = _string_constants(iterable)
+            if names and _consults_payload(var, nodes):
+                found.extend(n for n in (_usable_align_name(v) for v in names) if n)
+    return found
 
 
-def handler_field_contracts(handler_source: str) -> Dict[str, Dict[str, Any]]:
-    """Required names plus type / vocabulary / bounds the handler enforces.
+def _mined_contracts(text: str) -> Tuple[Dict[str, Dict[str, Any]], set]:
+    """Every field the code checks, and how: required, type, vocabulary, bounds.
 
-    Live VetConnect (sess_73409fa): LLM handlers demanded ``role`` ∈
-    {veterinarian, …}, ``is_active`` bool, ``login_count`` int ≥ 0, and
-    non-empty ``*_id`` columns the model_specs never declared. Mining the
-    contracts lets ``align_spec_to_handler_fields`` and ``_sample_payload``
-    stay in lockstep without fabricating Store inputs.
+    Read only from the syntax tree -- the checks themselves, never the words of
+    the refusal they raise:
+
+    * ``"k" not in payload`` / ``not payload.get("k")`` / ``payload.get("k") in
+      (None, "")`` / ``... is None`` -> required;
+    * ``payload.get("k") not in (...)`` -> its vocabulary;
+    * ``isinstance(payload.get("k"), int)`` -> its type;
+    * ``payload.get("k") < n`` (refused) -> its lower bound, ``> n`` its upper;
+    * a roster of names iterated / differenced against the payload -> required;
+    * the Factory's own ``constraints = {...}`` literal -> as declared.
     """
-    text = handler_source or ""
+    tree = _parse_source(text)
     contracts: Dict[str, Dict[str, Any]] = {}
-    # The contract patterns read refusal MESSAGES, and a message is prose: a
-    # format placeholder ("%s must be an integer" % key) or a word in a
-    # sentence is captured as if it were a field. A name captured from a
-    # message becomes a field only when the code also reads it as a record
-    # key -- the same confirmation handler_required_fields applies. A name
-    # DECLARED in code (a key of a baked ``constraints = {...}`` literal) is
-    # structure, not prose, and needs no confirmation.
-    confirmed = _confirmed_key_refs(text)
+    required_names: set = set()
+    if tree is None:
+        return contracts, required_names
+    aliases = _aliases(tree)
+    rosters = _roster_bindings(tree)
 
-    def _declare(name: Optional[str]) -> Optional[Dict[str, Any]]:
+    def slot(name: Optional[str], *, required: bool = False) -> Optional[Dict[str, Any]]:
         usable = _usable_align_name(name)
         if not usable:
             return None
+        if required:
+            required_names.add(usable)
         return contracts.setdefault(usable, {"name": usable, "required": True})
 
-    def _touch(name: Optional[str]) -> Optional[Dict[str, Any]]:
-        usable = _usable_align_name(name)
-        if not usable or usable not in confirmed:
-            return None
-        return _declare(usable)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare):
+            sides = [node.left, *node.comparators]
+            for op, left, right in zip(node.ops, sides, sides[1:]):
+                if isinstance(op, ast.NotIn) and isinstance(left, ast.Constant) and isinstance(left.value, str):
+                    slot(left.value, required=True)
+                    continue
+                key = _read_key(left, aliases)
+                if key is None:
+                    continue
+                if isinstance(op, ast.NotIn):
+                    values = _string_constants(right)
+                    if values is None and isinstance(right, ast.Name):
+                        # A vocabulary bound to a name: its own literal.
+                        values = rosters.get(right.id)
+                    target = slot(key)
+                    if target is not None and values:
+                        _assign_allowed_values(target, values)
+                elif isinstance(op, ast.In) and isinstance(right, (ast.List, ast.Tuple, ast.Set)):
+                    if any(_is_empty_sentinel(e) for e in right.elts):
+                        slot(key, required=True)
+                elif isinstance(op, (ast.Is, ast.Eq)) and _is_empty_sentinel(right):
+                    slot(key, required=True)
+                elif isinstance(right, ast.Constant) and isinstance(right.value, (int, float)) \
+                        and not isinstance(right.value, bool):
+                    target = slot(key)
+                    if target is None:
+                        continue
+                    target.setdefault("type", "float" if isinstance(right.value, float) else "int")
+                    if isinstance(op, ast.Lt):
+                        target["min"] = right.value
+                    elif isinstance(op, ast.LtE):
+                        target["min"] = right.value + 1
+                    elif isinstance(op, ast.Gt):
+                        target["max"] = right.value
+                    elif isinstance(op, ast.GtE):
+                        target["max"] = right.value - 1
+        elif isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            key = _read_key(node.operand, aliases)
+            if key is not None:
+                slot(key, required=True)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "isinstance"
+            and len(node.args) == 2
+        ):
+            key = _read_key(node.args[0], aliases)
+            kind = _builtin_type_name(node.args[1])
+            if kind:
+                # Only a type the spec vocabulary can sample: isinstance(x, dict)
+                # is a structural guard, not a record column type.
+                from app.factory.build.roles_handlers import _resolve_known_field_type
 
-    for name in handler_required_fields(text):
-        _declare(name)  # already confirmed (or declared) by the required-fields miner
+                kind = _resolve_known_field_type(kind)
+            target = slot(key) if key is not None else None
+            if target is not None and kind:
+                target["type"] = kind
+        elif (
+            isinstance(node, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "constraints" for t in node.targets)
+        ):
+            # The Factory's own route guard bakes this literal (see
+            # roles_handlers._constraint_guard): a declaration, read as one.
+            try:
+                parsed = ast.literal_eval(node.value)
+            except (ValueError, SyntaxError, TypeError):
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            for name, rules in parsed.items():
+                if not isinstance(rules, dict):
+                    continue
+                target = slot(name)
+                if target is None:
+                    continue
+                allowed = rules.get("allowed_values")
+                if isinstance(allowed, (list, tuple)) and allowed:
+                    _assign_allowed_values(target, [str(v) for v in allowed])
+                if rules.get("min") is not None:
+                    target.setdefault("min", rules["min"])
+                if rules.get("max") is not None:
+                    target.setdefault("max", rules["max"])
+                # F4: only the explicit marker arms an approval field.
+                if rules.get("approval") is True:
+                    target["approval"] = True
 
-    for match in _MUST_BE_ONE_OF.finditer(text):
-        slot = _touch(_match_field_name(match))
-        values = _parse_value_list(match.group("values"))
-        if slot and values:
-            _assign_allowed_values(slot, values)
+    for name in required_fields_from_rosters(text):
+        slot(name, required=True)
+    for setting in settings_names(text):
+        contracts.pop(setting, None)
+        required_names.discard(setting)
+    return contracts, required_names
 
-    for match in _GET_NOT_IN.finditer(text):
-        slot = _touch(match.group(1))
-        values = _parse_value_list(match.group(2))
-        if slot and values:
-            _assign_allowed_values(slot, values)
 
-    _mine_constraints_literal(text, _declare)
+def handler_required_fields(handler_source: str) -> List[str]:
+    """Domain field names a handler body treats as required -- decided by the
+    checks in its code (see ``_mined_contracts``), never by its messages."""
+    return sorted(_mined_contracts(handler_source)[1])
 
-    for match in _MUST_BE_BOOL.finditer(text):
-        slot = _touch(_match_field_name(match))
-        if slot:
-            slot["type"] = "bool"
 
-    for match in _ISINSTANCE_BOOL.finditer(text):
-        slot = _touch(match.group(1))
-        if slot:
-            slot["type"] = "bool"
+def handler_field_contracts(handler_source: str) -> Dict[str, Dict[str, Any]]:
+    """Required names plus the type / vocabulary / bounds the handler enforces.
 
-    for match in _MUST_BE_INT.finditer(text):
-        slot = _touch(_match_field_name(match))
-        if not slot:
-            continue
-        slot["type"] = "int"
-        bound = match.group("bound") if "bound" in match.re.groupindex else None
-        if bound is not None:
-            slot["min"] = int(bound)
-
-    for match in _ISINSTANCE_INT.finditer(text):
-        slot = _touch(match.group(1))
-        if slot:
-            slot.setdefault("type", "int")
-
-    for match in _MUST_BE_NONEMPTY.finditer(text):
-        slot = _touch(_match_field_name(match))
-        if slot:
-            slot.setdefault("type", "str")
-
-    for _setting in settings_names(handler_source):
-        contracts.pop(_setting, None)
-    return contracts
+    Live VetConnect (sess_73409fa): LLM handlers demanded ``role`` in
+    {veterinarian, ...}, ``is_active`` bool, ``login_count`` int >= 0, and
+    non-empty ``*_id`` columns the model_specs never declared. Mining the checks
+    keeps ``align_spec_to_handler_fields`` and ``_sample_payload`` in lockstep
+    with what the handler enforces. A refusal MESSAGE contributes nothing: its
+    words, placeholders (``"%s must be an integer"``) and listings are prose.
+    """
+    return _mined_contracts(handler_source)[0]
 
 
 def align_spec_to_handler_fields(

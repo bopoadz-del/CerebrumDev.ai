@@ -516,74 +516,12 @@ def emit_storage_aiofiles(text: str) -> str:
 #: (~line 189) and ``formula_executor`` (~line 242). ``foo['result'] =``
 #: became ``foo.get("result", foo) =``. Reads stay rewritten; stores,
 #: augassigns, annotated assigns, unpacks, and ``del`` stay subscripts.
-_RESULT_KEY_SUB = re.compile(
-    r"""\b([A-Za-z_][\w]*)\s*\[\s*['\"]result['\"]\s*\]"""
-)
-_DEPENDENCIES_IMPORT = re.compile(
-    r"^([ \t]*)from app\.dependencies import _create_block_instance[^\n]*\n",
-    re.MULTILINE,
-)
-
-
 def _module_compiles(text: str) -> bool:
     try:
         ast.parse(text)
     except SyntaxError:
         return False
     return True
-
-
-def _preceded_by_del(text: str, start: int) -> bool:
-    """Is the subscript at ``start`` the target of a deletion statement?
-
-    Fallback for source that does not parse (the AST path marks Del ctx).
-    Asked of Python's grammar: the word before ``start`` is the deletion
-    keyword exactly when ``<word> x`` parses to a Delete statement."""
-    prefix = text[:start].rstrip()
-    m = re.search(r"(\w+)$", prefix)
-    if not m:
-        return False
-    try:
-        stmt = ast.parse(m.group(1) + " x").body[0]
-    except SyntaxError:
-        return False
-    return isinstance(stmt, ast.Delete)
-
-
-def _starts_with_augassign(text: str) -> bool:
-    """Does ``text`` open with an augmented-assignment operator?
-
-    Asked of Python's grammar, not of a list of operators: the longest run of
-    leading operator characters that makes ``x <op> 1`` an AugAssign.
-    """
-    m = re.match(r"[^\w\s'\"(\[{]+", text)
-    if not m:
-        return False
-    run = m.group(0)
-    for end in range(len(run), 1, -1):
-        try:
-            stmt = ast.parse("x " + run[:end] + " 1").body[0]
-        except SyntaxError:
-            continue
-        return isinstance(stmt, ast.AugAssign)
-    return False
-
-
-def _is_assignment_target_suffix(rest: str) -> bool:
-    """True when ``name['result']`` is a store / augassign / unpack target."""
-    stripped = rest.lstrip()
-    if not stripped:
-        return False
-    if stripped.startswith(":="):
-        return True
-    if _starts_with_augassign(stripped):
-        return True
-    if stripped.startswith("=") and not stripped.startswith("=="):
-        return True
-    if stripped.startswith(":") or stripped.startswith(","):
-        line = stripped.split("\n", 1)[0]
-        return bool(re.search(r"(?<![!<>=])=(?!=)", line))
-    return False
 
 
 def _line_starts(text: str) -> tuple:
@@ -606,40 +544,6 @@ def _is_result_key_slice(node: ast.AST) -> bool:
         if str_node is not None and isinstance(inner, str_node) and inner.s == "result":
             return True
     return False
-
-
-def _store_result_key_offsets(text: str) -> set:
-    """Byte offsets of ``name['result']`` that AST marks Store / Del.
-
-    Suffix heuristics miss ``for name['result'] in items:`` (Store ctx).
-    #352 then fail-closed the *whole* module, leaving workflow
-    ``envelope['result']`` reads as KeyError → RuntimeError: 'result'
-    (sess_aed3e6e288414fcf after #352, tip 0963a6b).
-    """
-    try:
-        tree = ast.parse(text)
-    except SyntaxError:
-        return set()
-    starts = _line_starts(text)
-    store_ctx = (ast.Store, ast.Del)
-    aug = getattr(ast, "AugStore", None)
-    if aug is not None:
-        store_ctx = store_ctx + (aug,)
-    offsets: set = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Subscript):
-            continue
-        if not isinstance(node.ctx, store_ctx):
-            continue
-        if not _is_result_key_slice(node.slice):
-            continue
-        lineno = getattr(node, "lineno", None)
-        col = getattr(node, "col_offset", None)
-        if not isinstance(lineno, int) or not isinstance(col, int):
-            continue
-        if 1 <= lineno <= len(starts):
-            offsets.add(starts[lineno - 1] + col)
-    return offsets
 
 
 def emit_result_key_access(text: str) -> str:
@@ -669,29 +573,31 @@ def emit_result_key_access(text: str) -> str:
     """
     if not text:
         return text
-
-    store_offsets = _store_result_key_offsets(text)
-    original_compiles = _module_compiles(text)
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        # Source Python cannot read is left as it is: no rewrite is safer
+        # than a textual one that cannot tell a read from a write.
+        return text
+    starts = _line_starts(text)
     replacements = []
-    for match in _RESULT_KEY_SUB.finditer(text):
-        if _preceded_by_del(text, match.start()):
-            continue
-        if match.start() in store_offsets:
-            continue
-        if _is_assignment_target_suffix(text[match.end() :]):
-            continue
-        name = match.group(1)
-        replacements.append(
-            (match.start(), match.end(), f'{name}.get("result", {name})')
-        )
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, ast.Load)
+            and isinstance(node.value, ast.Name)
+            and _is_result_key_slice(node.slice)
+        ):
+            start = starts[node.lineno - 1] + node.col_offset
+            end = starts[node.end_lineno - 1] + node.end_col_offset
+            name = node.value.id
+            replacements.append((start, end, f'{name}.get("result", {name})'))
 
     rewritten = text
-    for start, end, repl in reversed(replacements):
+    for start, end, repl in sorted(replacements, reverse=True):
         candidate = rewritten[:start] + repl + rewritten[end:]
-        # Per-match fail-closed: never ship
-        # SyntaxError: cannot assign to function call, and never discard
-        # every read rewrite because one Store-ctx miss slipped through.
-        if original_compiles and not _module_compiles(candidate):
+        # Per-match fail-closed: never ship a module that stops compiling.
+        if not _module_compiles(candidate):
             continue
         rewritten = candidate
     return rewritten
@@ -735,25 +641,36 @@ def insert_after_future_imports(text: str, block: str) -> str:
     return head + block + "".join(lines[last:])
 
 
-def _strip_unless_guarded(match: "re.Match[str]") -> str:
-    """Drop the host import -- unless the Store already guards it.
+def _strip_host_di_import(text: str) -> str:
+    """Drop ``from app.dependencies import _create_block_instance`` -- unless
+    the Store already guards it.
 
-    The Store now wraps this import in its own ``try: ... except
-    ImportError:`` and defines a plain-construction fallback in the except
-    branch, precisely for vendored runtimes. Deleting the line there left
-    ``try:`` with an empty body, so the vendored module did not parse:
-    notification.py shipped broken on build sess_065fc3eac75c4f62 (FinOps),
-    every notification silently fell back to a local outbox, and the build
-    still went 13/13 because nothing exercised the block. A guarded import
-    is left in place so the Store's own fallback runs.
+    The Store wraps this import in its own ``try: ... except ImportError:``
+    and defines a plain-construction fallback in the except branch, precisely
+    for vendored runtimes. Deleting the line there left ``try:`` with an empty
+    body, so the vendored module did not parse: notification.py shipped broken
+    on build sess_065fc3eac75c4f62 (FinOps). A guarded import is left in
+    place so the Store's own fallback runs. Found on the syntax tree; source
+    that does not parse is left as it is.
     """
-    text = match.string
     tree = _tree(text)
-    if tree is not None:
-        line = text.count("\n", 0, match.start()) + 1
-        if _import_is_guarded(tree, line):
-            return match.group(0)
-    return ""
+    if tree is None:
+        return text
+    drop = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module == "app.dependencies"
+            and any(alias.name == "_create_block_instance" for alias in node.names)
+            and not _import_is_guarded(tree, node.lineno)
+        ):
+            drop.append((node.lineno, node.end_lineno or node.lineno))
+    if not drop:
+        return text
+    lines = text.splitlines(keepends=True)
+    for first, last in sorted(drop, reverse=True):
+        del lines[first - 1 : last]
+    return "".join(lines)
 
 
 def emit_store_host_di(text: str) -> str:
@@ -767,7 +684,7 @@ def emit_store_host_di(text: str) -> str:
     """
     if not text or not _references_module(text, "app.dependencies"):
         return text
-    stripped = _DEPENDENCIES_IMPORT.sub(_strip_unless_guarded, text)
+    stripped = _strip_host_di_import(text)
     if _defines(stripped, "_create_block_instance"):
         return stripped
     from app.factory.build.roles_constants import _INSTANTIATE_HELPER

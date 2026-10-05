@@ -81,7 +81,6 @@ from app.factory.build.block_obligations import (
     render_dependency_lines,
 )
 from app.factory.build.roles_constants import (
-    _BLOCK_CLASS_RE,
     _BLOCK_DEF_RE,
     _CONFTEST,
     _DISPATCH_RUNTIME,
@@ -757,22 +756,50 @@ def _candidate_store_ids(block_id: str) -> tuple:
     return tuple(seen)
 
 
-#: A block class names itself ...Block or carries a version suffix (V2, V3...).
-_BLOCK_CLASS_SUFFIX_RE = re.compile(r"(?:Block|V\d+)$")
-
-
 def _class_name_from_block_module(path: Path) -> Optional[str]:
+    """The block class a Store module defines, read from its syntax tree.
+
+    A Store block declares its own id (``name = "<id>"`` in its class body),
+    so the class that declares this module's id is the block. Failing that,
+    the class implementing the Store block interface (``process``, the method
+    the Store calls), else the first class. Never chosen by how a class is
+    NAMED.
+    """
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+        tree = ast.parse(text)
+    except (OSError, SyntaxError, ValueError):
         return None
-    names = _BLOCK_CLASS_RE.findall(text)
-    if not names:
+    classes = [node for node in tree.body if isinstance(node, ast.ClassDef)]
+    if not classes:
         return None
-    for name in names:
-        if _BLOCK_CLASS_SUFFIX_RE.search(name):
-            return name
-    return names[0]
+    module_id = path.stem
+
+    def _declares_id(cls: ast.ClassDef) -> bool:
+        for stmt in cls.body:
+            targets = stmt.targets if isinstance(stmt, ast.Assign) else (
+                [stmt.target] if isinstance(stmt, ast.AnnAssign) else []
+            )
+            value = getattr(stmt, "value", None)
+            if (
+                any(isinstance(t, ast.Name) and t.id == "name" for t in targets)
+                and isinstance(value, ast.Constant)
+                and value.value == module_id
+            ):
+                return True
+        return False
+
+    def _implements_process(cls: ast.ClassDef) -> bool:
+        return any(
+            isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)) and stmt.name == "process"
+            for stmt in cls.body
+        )
+
+    for predicate in (_declares_id, _implements_process):
+        for cls in classes:
+            if predicate(cls):
+                return cls.name
+    return classes[0].name
 
 
 def _resolve_store_def(

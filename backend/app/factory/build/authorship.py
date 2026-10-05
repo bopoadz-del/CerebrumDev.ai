@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 __all__ = (
@@ -607,7 +607,6 @@ def is_action_artifact_id(artifact_id: str) -> bool:
 #: capability id, so every path-keyed handler was rejected: live build
 #: sess_617f60024df24a4e went 13/13 with 8 agent-written handlers on disk and
 #: graded action_py=0, which demoted it to a code-cycle prototype.
-_ACTION_HANDLER_PATH_RE = re.compile(r"^app/actions/([A-Za-z_][A-Za-z0-9_]*)\.py$")
 
 
 def action_artifact_id(key: Any) -> Optional[str]:
@@ -619,9 +618,15 @@ def action_artifact_id(key: Any) -> Optional[str]:
     ``app/actions/__init__.py`` is not a capability.
     """
     text = str(key or "").strip().replace("\\", "/")
-    match = _ACTION_HANDLER_PATH_RE.match(text)
-    if match:
-        text = match.group(1)
+    # The handler's path, read as a path: exactly app/actions/<identifier>.py.
+    path = PurePosixPath(text)
+    if (
+        len(path.parts) == 3
+        and path.parts[:2] == ("app", "actions")
+        and path.suffix == ".py"
+        and path.stem.isidentifier()
+    ):
+        text = path.stem
         if text.startswith("__"):
             return None
     return text if is_action_artifact_id(text) else None
