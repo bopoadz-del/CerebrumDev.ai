@@ -29,19 +29,46 @@ def _awaiting(tmp_path):
     return out
 
 
-@pytest.mark.parametrize(
-    "message",
-    [
-        "GitHub API down: matching-refs HTTP 401",
-        "GitHub API down: matching-refs HTTP 503",
-        f"{n3.BUILDS_TOKEN_ENV} missing — fail-closed; cannot poll store-gate",
-    ],
-)
-def test_an_unreachable_github_leaves_the_handoff_open(tmp_path, monkeypatch, message):
+def _github_answering(status, body=b"[]"):
+    """An opener that returns ``status`` -- the real HTTP path, no message."""
+    import io
+    from urllib.error import HTTPError
+
+    def opener(req, *a, **k):
+        if status >= 400:
+            raise HTTPError(req.full_url, status, "x", {}, io.BytesIO(b"{}"))
+        resp = io.BytesIO(body)
+        resp.status = status
+        return resp
+
+    return opener
+
+
+@pytest.mark.parametrize("status", [401, 503])
+def test_the_real_github_client_types_an_unreachable_answer(status):
+    """The raise site types it -- the reader never re-reads the message."""
+    from app.factory.build import builds_push
+
+    with pytest.raises(BuildsPushError) as err:
+        builds_push.fetch_commit_sha(
+            "o", "r", "main", token="t", opener=_github_answering(status)
+        )
+    assert err.value.unreachable is True
+    assert n3.is_infrastructure_error(err.value)
+
+
+def test_a_missing_token_is_unreachable():
+    with pytest.raises(BuildsPushError) as err:
+        n3.resolve_builds_target("unused", env={})
+    assert err.value.unreachable is True
+
+
+@pytest.mark.parametrize("unreachable", [True])
+def test_an_unreachable_github_leaves_the_handoff_open(tmp_path, monkeypatch, unreachable):
     out = _awaiting(tmp_path)
 
     def boom(*a, **k):
-        raise BuildsPushError(message)
+        raise BuildsPushError("zorblat transport failure", unreachable=unreachable)
 
     monkeypatch.setattr(n3, "resolve_builds_target", boom)
 
@@ -60,7 +87,7 @@ def test_a_401_on_the_status_read_is_not_a_verdict_either(tmp_path, monkeypatch)
     )
     monkeypatch.setattr(
         n3, "fetch_store_gate_status",
-        lambda *a, **k: n3.StoreGateSnapshot(missing=True, detail="GitHub statuses HTTP 401"),
+        lambda *a, **k: n3.StoreGateSnapshot(missing=True, unreachable=True, detail="statuses read refused"),
     )
 
     result = n3.ingest_n3_store_gate(out, wait=False)
@@ -74,7 +101,7 @@ def test_a_session_with_no_build_branch_is_still_a_real_missing(tmp_path, monkey
     out = _awaiting(tmp_path)
 
     def none_there(*a, **k):
-        raise BuildsPushError("N3 store-gate: no build/sess_x-* branch on o/r")
+        raise BuildsPushError("N3 store-gate: no build/sess_x-* branch on o/r")  # GitHub answered
 
     monkeypatch.setattr(n3, "resolve_builds_target", none_there)
 
@@ -93,8 +120,8 @@ def test_a_timeout_made_entirely_of_401s_is_not_a_verdict(tmp_path, monkeypatch)
     monkeypatch.setattr(
         n3, "wait_for_store_gate",
         lambda *a, **k: n3.StoreGateSnapshot(
-            timeout=True, missing=False,
-            detail="GitHub statuses HTTP 401; N3 store-gate poll timed out",
+            timeout=True, missing=False, unreachable=True,
+            detail="N3 store-gate poll timed out",
         ),
     )
 

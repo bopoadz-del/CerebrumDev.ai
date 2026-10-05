@@ -52,27 +52,19 @@ class BriefLintResult:
         return {"ok": self.ok, "errors": list(self.errors), "checks": dict(self.checks)}
 
 
-def _acceptance_section(text: str) -> str:
-    """Only the ACCEPTANCE cut, not the word inside CODING_AGENT_BRIEF."""
-    marker = "ACCEPTANCE (harness"
-    start = text.find(marker)
-    if start < 0:
-        start = text.rfind("\nACCEPTANCE\n")
-        if start < 0:
-            start = text.rfind("\nACCEPTANCE ")
-    if start < 0:
-        return ""
-    rest = text[start:]
-    end = rest.find("\nFORBIDDEN")
-    if end < 0:
-        end = rest.find("FORBIDDEN")
-    return rest if end < 0 else rest[:end]
+#: The compiler's slot key for the harness-run acceptance section.
+ACCEPTANCE_SLOT = "ACCEPTANCE"
 
 
-def _acceptance_bullets(text: str) -> List[str]:
+def _acceptance_bullets(compiled: Any) -> List[str]:
+    """The ACCEPTANCE section's bullets, taken from the compiled brief's own
+    ``slots`` record -- never by searching its text for a heading. A brief
+    that carries no slots was not compiled by the Factory and has none."""
+    slots = getattr(compiled, "slots", None) or {}
+    body = str(slots.get(ACCEPTANCE_SLOT) or "") if isinstance(slots, dict) else ""
     return [
         line.strip()
-        for line in _acceptance_section(text).splitlines()
+        for line in body.splitlines()
         if line.strip().startswith("-")
     ]
 
@@ -196,7 +188,7 @@ def lint_brief(
     kit_errors = _kit_manifest_errors(manifests)
     errors.extend(kit_errors)
 
-    bullets = _acceptance_bullets(text)
+    bullets = _acceptance_bullets(compiled)
     untagged = [b for b in bullets if not CHECK_TAG_RE.search(b)]
     if not bullets:
         errors.append("acceptance line without executable check: (none written)")

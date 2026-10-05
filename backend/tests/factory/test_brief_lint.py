@@ -49,9 +49,9 @@ def test_mutation_missing_budget_is_rejected():
 
 def test_mutation_acceptance_without_check_is_rejected():
     compiled = _compiled()
-    compiled.text = compiled.text.replace(
-        "ACCEPTANCE (harness, not the coder)",
-        "ACCEPTANCE (harness, not the coder)\n\n- feel good about the screens",
+    # The lint reads the compiled ACCEPTANCE section by key, not by heading.
+    compiled.slots["ACCEPTANCE"] = (
+        compiled.slots["ACCEPTANCE"] + "\n- feel good about the screens"
     )
     result = lint_brief(compiled)
     assert result.ok is False

@@ -13,6 +13,8 @@ from typing import Any, Iterator, MutableMapping, Optional
 
 #: The work ran out of wall clock: a watchdog, a deadline or a killed session.
 TIMEOUT = "timeout"
+#: A coder call that was never made: the build budget could not fit it.
+BUDGET_SKIPPED = "budget_skipped"
 
 
 def _chain(exc: Optional[BaseException]) -> Iterator[BaseException]:

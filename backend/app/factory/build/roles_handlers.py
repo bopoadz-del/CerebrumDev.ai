@@ -3076,6 +3076,9 @@ def _budget_too_low(ctx: RoleContext, what: str) -> bool:
         f"skipped: {int(max(left, 0))}s of build budget left, a {what} call "
         f"needs up to {int(needed)}s"
     )
+    from app.factory.build.failure_kinds import BUDGET_SKIPPED, record_failure_kind
+
+    record_failure_kind(ctx.state, what, BUDGET_SKIPPED)
     ctx.note(f"coder skipped for {what} — build budget nearly spent", stage="budget")
     return True
 

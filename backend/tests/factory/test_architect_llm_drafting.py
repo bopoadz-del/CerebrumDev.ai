@@ -74,9 +74,12 @@ def test_no_key_uses_keyword_path(monkeypatch):
     calls = []
     monkeypatch.setattr(product_architect, "dual_registered_ids", lambda: ["audit"])
     monkeypatch.setattr(product_architect, "_llm_json_call", lambda messages: calls.append(messages) or _LLM_PAYLOAD)
-    bp = product_architect.draft_blueprint_from_brief(_BRIEF)
+    # The keyword path takes the vertical from the structured hint, never
+    # from the brief's prose; without a hint it is generic.
+    bp = product_architect.draft_blueprint_from_brief(_BRIEF, vertical_hint="fleet_operations")
     assert calls == []
     assert bp.vertical == "fleet_operations"
+    assert product_architect.draft_blueprint_from_brief(_BRIEF).vertical == "product"
 
 
 @pytest.mark.parametrize(
