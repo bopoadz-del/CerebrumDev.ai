@@ -173,10 +173,33 @@ def test_a_closed_vocabulary_is_adopted_in_the_named_field_only(tmp_path, produc
 
 
 def test_a_missing_required_field_is_filled_from_the_product_model(tmp_path, product_models):
+    """Completed from the model BEFORE the first post: no refusal needed."""
     client = TestClient(_app())
     ns = _helpers(_emitted_routes(tmp_path), client)
     resp, corr = ns["_post_accepting"](f"/v1/{CAP}", {"phase": "bloom"}, {}, CAP)
     assert resp.status_code == 200, resp.text
+    assert corr == []
+
+
+def test_a_missing_required_rejection_is_corrected_from_the_model(tmp_path, product_models):
+    """A field the model does not mark required but the route refuses as
+    missing is filled from the model's own declaration and retried."""
+    headers = {REJECTED_FIELD_HEADER: '"reference"', REJECTION_REASON_HEADER: MISSING_REQUIRED}
+
+    def answer(payload):
+        if payload.get("reference") in (None, ""):
+            return _Resp(422, {"detail": "x"}, headers)
+        return _Resp(200, {"ok": True})
+
+    client = _ScriptedClient(answer)
+    ns = _helpers(_emitted_routes(tmp_path), client)
+    monkey = dict(_LumenLedger.CONSTRAINTS)
+    _LumenLedger.CONSTRAINTS = {"phase": monkey["phase"], "reference": {}}
+    try:
+        resp, corr = ns["_post_accepting"](f"/v1/{CAP}", {"phase": "bloom"}, {}, CAP)
+    finally:
+        _LumenLedger.CONSTRAINTS = monkey
+    assert resp.status_code == 200
     assert corr == ["reference=None->'R-1'"]
 
 
@@ -215,7 +238,11 @@ def test_json_keys_in_a_prose_only_rejection_never_reach_the_payload(tmp_path, p
     )
     assert resp.status_code == 422
     assert corr == []
-    assert client.posted == [{"reference": "sample", "status": "open"}]
+    # One post, and no value anywhere in it came out of the response body.
+    assert len(client.posted) == 1
+    assert all("_scopes" not in str(v) for v in client.posted[0].values())
+    assert client.posted[0]["reference"] == "sample"
+    assert client.posted[0]["status"] == "open"
 
 
 def test_the_handler_guard_body_is_read_the_same_way(tmp_path, product_models):

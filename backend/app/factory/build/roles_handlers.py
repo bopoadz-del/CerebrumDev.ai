@@ -97,14 +97,12 @@ from app.factory.build.roles_constants import (
     _STORE_RUNTIME_RE,
 )
 from app.factory.build.roles_models import RoleContext, RoleError, RoleResult
+from app.factory.build.payload_helpers import render_payload_helpers
 from app.factory.build.rejection_contract import (
-    ALLOWED_VALUES_HEADER,
     ALLOWED_VALUES_KEY,
     MISSING_REQUIRED,
     NOT_ALLOWED,
-    REJECTED_FIELD_HEADER,
     REJECTED_FIELD_KEY,
-    REJECTION_REASON_HEADER,
     REJECTION_REASON_KEY,
 )
 from app.factory.build.supply_chain import (
@@ -2200,7 +2198,10 @@ def _constraint_guard(spec: Dict[str, Any]) -> str:
 
 
 def _declared_refusal_lines(
-    name: str, sample: Dict[str, Any], connectors: List[str]
+    name: str,
+    sample: Dict[str, Any],
+    connectors: List[str],
+    capability_id: Optional[str] = None,
 ) -> List[str]:
     """Route-suite lines for a capability calling a DECLARED placeholder
     connector: the right answer is the typed unavailable refusal naming the
@@ -2213,9 +2214,12 @@ def _declared_refusal_lines(
     )
 
     settings = [setting_for(c) for c in connectors]
+    # The route validates the payload (422) before it refuses a declared
+    # placeholder (503): build and correct it with the shared helpers so
+    # the refusal is what this line reaches.
     return [
         f"    payload = {sample!r}",
-        f'    resp = client.post("/v1/{name}", json=payload, headers=AUTH)',
+        f'    resp, _corr = _post_accepting("/v1/{name}", payload, AUTH, {capability_id!r})',
         "    try:",
         "        body = resp.json()",
         "    except Exception:",
@@ -5982,107 +5986,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         "    return []",
         "",
         "",
-        "import dataclasses as _dataclasses",
-        "import json as _json",
-        "",
-        "",
-        "def _rejection(resp):",
-        '    """The rejection as data: (field, reason, allowed) or None.',
-        "",
-        "    Read from the response's structured rejection -- the headers the",
-        "    route guard sets, or the keys an ok:false handler body carries --",
-        "    never from the prose message, so a JSON body can never leak a token",
-        "    into a payload (live 2026-10-05: a vocabulary regex over the raw",
-        '    body read the key allowed_scopes as a value)."""',
-        f"    field = resp.headers.get({REJECTED_FIELD_HEADER!r})",
-        "    if field is not None:",
-        "        try:",
-        "            field = _json.loads(field)",
-        "        except ValueError:",
-        "            return None",
-        f"        reason = resp.headers.get({REJECTION_REASON_HEADER!r})",
-        f"        allowed = resp.headers.get({ALLOWED_VALUES_HEADER!r})",
-        "        try:",
-        "            allowed = _json.loads(allowed) if allowed is not None else None",
-        "        except ValueError:",
-        "            allowed = None",
-        "        return field, reason, allowed",
-        "    try:",
-        "        body = resp.json()",
-        "    except Exception:",
-        "        return None",
-        f"    if not isinstance(body, dict) or {REJECTED_FIELD_KEY!r} not in body:",
-        "        return None",
-        f"    return (body.get({REJECTED_FIELD_KEY!r}), body.get({REJECTION_REASON_KEY!r}),",
-        f"            body.get({ALLOWED_VALUES_KEY!r}))",
-        "",
-        "",
-        "def _declared_default(capability_id, field):",
-        '    """The value the product model declares for ``field``.',
-        "",
-        "    app.models renders each capability as a dataclass whose defaults are",
-        '    valid under its constraints; the tester repeats them back."""',
-        "    try:",
-        "        from app.models import MODELS",
-        "    except Exception:",
-        "        return None",
-        "    cls = MODELS.get(capability_id)",
-        "    if cls is None or not _dataclasses.is_dataclass(cls):",
-        "        return None",
-        "    for f in _dataclasses.fields(cls):",
-        "        if f.name != field:",
-        "            continue",
-        "        if f.default is not _dataclasses.MISSING:",
-        "            return f.default",
-        "        if f.default_factory is not _dataclasses.MISSING:",
-        "            return f.default_factory()",
-        "    return None",
-        "",
-        "",
-        "def _post_accepting(path, payload, headers, capability_id=None):",
-        '    """POST, and when the product refuses a field AS DATA -- naming the',
-        "    field, the reason and (for a closed vocabulary) the accepted values --",
-        "    adopt the value the product itself declares and retry. Returns",
-        "    (response, corrections). Each (field, value) is tried at most once,",
-        "    so the loop converges or stops; it never oscillates. A rejection the",
-        '    product did not state as data is left to fail honestly."""',
-        "    payload = dict(payload)",
-        "    corrections = []",
-        "    tried = set()",
-        "    resp = client.post(path, json=payload, headers=headers)",
-        "    for _ in range(len(payload) + 2):",
-        "        failed = resp.status_code != 200",
-        "        if not failed:",
-        "            try:",
-        '                failed = resp.json().get("ok") is False',
-        "            except Exception:",
-        "                failed = False",
-        "        if not failed:",
-        "            break",
-        "        rejection = _rejection(resp)",
-        "        if rejection is None:",
-        "            break",
-        "        field, reason, allowed = rejection",
-        "        if not isinstance(field, str) or not field:",
-        "            break",
-        f"        if reason == {NOT_ALLOWED!r} and isinstance(allowed, list) and allowed:",
-        "            value = allowed[0]",
-        f"        elif reason == {MISSING_REQUIRED!r}:",
-        "            value = _declared_default(capability_id, field)",
-        "            if value in (None, ''):",
-        "                break",
-        "        else:",
-        "            break",
-        "        key = (field, repr(value))",
-        "        if key in tried:",
-        "            break",
-        "        tried.add(key)",
-        "        corrections.append(",
-        "            str(field) + '=' + repr(payload.get(field)) + '->' + repr(value)",
-        "        )",
-        "        payload[field] = value",
-        "        resp = client.post(path, json=payload, headers=headers)",
-        "    return resp, corrections",
+        *render_payload_helpers(),
         "",
         "",
         "def test_health():",
@@ -6146,7 +6050,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             sample = _sample_payload(spec)
             if cap.capability_id in declared:
                 route_lines += _declared_refusal_lines(
-                    name, sample, declared[cap.capability_id]
+                    name, sample, declared[cap.capability_id], cap.capability_id
                 )
                 continue
             route_lines += [
@@ -6200,7 +6104,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             sample = _sample_payload(spec)
             if cap.capability_id in declared:
                 route_lines += _declared_refusal_lines(
-                    name, sample, declared[cap.capability_id]
+                    name, sample, declared[cap.capability_id], cap.capability_id
                 )
                 continue
             route_lines += [

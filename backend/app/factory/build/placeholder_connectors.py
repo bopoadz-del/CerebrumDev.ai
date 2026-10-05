@@ -31,6 +31,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from app.factory.blueprint import connector_slug
+from app.factory.build.payload_helpers import render_payload_helpers
 
 #: The Store's typed error kind for "a dependency is not configured", and the
 #: HTTP status it maps to (Cerebrum-Blocks app/core/http_errors.py).
@@ -218,6 +219,12 @@ def render_contract_tests(blueprint: Any, samples: Dict[str, Dict[str, Any]]) ->
         "",
         "client = TestClient(app)",
         'AUTH = {"Authorization": "Bearer " + os.environ["PLATFORM_TOKEN"]}',
+        "",
+        "",
+        # The route validates the payload (422) BEFORE it refuses a declared
+        # placeholder (503): the payload is built and corrected by the same
+        # helpers test_routes uses, so the refusal is what gets reached.
+        *render_payload_helpers(),
     ]
     for cap_id, connectors in sorted(mapping.items()):
         name = cap_id.replace("-", "_")
@@ -228,7 +235,7 @@ def render_contract_tests(blueprint: Any, samples: Dict[str, Dict[str, Any]]) ->
             "",
             f"def test_{name}_answers_the_declared_unavailable_refusal():",
             f'    before = client.get("/v1/{name}", headers=AUTH)',
-            f'    resp = client.post("/v1/{name}", json={sample!r}, headers=AUTH)',
+            f'    resp, _corr = _post_accepting("/v1/{name}", {sample!r}, AUTH, {cap_id!r})',
             f"    assert resp.status_code == {UNAVAILABLE_STATUS}, resp.text[:300]",
             "    body = resp.json()",
             '    assert body["ok"] is False',
