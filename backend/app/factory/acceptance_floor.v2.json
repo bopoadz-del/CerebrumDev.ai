@@ -140,8 +140,8 @@
     },
     {
       "id": "one_live_connector",
-      "requirement_text": "One connector performs a real outbound round-trip in every build -- SMTP or webhook delivery is the cheapest. Other connectors stay stubs and keep declaring blocks_unavailable. A platform where every integration is mocked has never been proven to leave the box.",
-      "brief_render": "- one_live_connector: One connector performs a real outbound round-trip in every build -- SMTP or webhook delivery is the cheapest. Other connectors stay stubs and keep declaring blocks_unavailable. A platform where every integration is mocked has never been proven to leave the box.",
+      "requirement_text": "One connector performs a real outbound round-trip in every build -- SMTP or webhook delivery is the cheapest. Other connectors stay stubs and keep declaring blocks_unavailable. A capability whose blueprint declares a placeholder connector answers HTTP 503 with error_kind \"unavailable\" naming the setting each connector needs (app/placeholders.py, Factory-shipped) and stores nothing; its tests assert that refusal, never a stored record. A platform where every integration is mocked has never been proven to leave the box.",
+      "brief_render": "- one_live_connector: One connector performs a real outbound round-trip in every build -- SMTP or webhook delivery is the cheapest. Other connectors stay stubs and keep declaring blocks_unavailable. A capability whose blueprint declares a placeholder connector answers HTTP 503 with error_kind \"unavailable\" naming the setting each connector needs (app/placeholders.py, Factory-shipped) and stores nothing; its tests assert that refusal, never a stored record. A platform where every integration is mocked has never been proven to leave the box.",
       "gate_fn": "check_one_live_connector",
       "check": "a real outbound delivery is observed, not mocked",
       "advisory": true,

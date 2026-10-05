@@ -15,6 +15,15 @@ class BlueprintError(ValueError):
     """Invalid product blueprint."""
 
 
+def connector_slug(text: Any) -> str:
+    """The one spelling of a connector id: lowercase snake. The Floor chat,
+    the architect draft and the capability declaration all go through it, so
+    a capability's connector and the blueprint's placeholder list compare."""
+    import re
+
+    return re.sub(r"[^a-z0-9_]+", "_", str(text or "").lower()).strip("_")
+
+
 class CapabilityStrategyHint(str, Enum):
     REUSE = "REUSE"
     ADAPT = "ADAPT"
@@ -41,6 +50,17 @@ class CapabilitySpec(BaseModel):
     block_ids: List[str] = Field(default_factory=list)
     strategy_hint: Optional[CapabilityStrategyHint] = None
     required: bool = True
+    #: External systems this capability calls, as connector slugs. One that
+    #: is also in ``ProductBlueprint.connectors`` is a DECLARED PLACEHOLDER
+    #: (shipped as a ``not_implemented`` stub), so the capability answers
+    #: the typed unavailable refusal until it is built -- and every generated
+    #: suite expects exactly that. See app.factory.build.placeholder_connectors.
+    connectors: List[str] = Field(default_factory=list)
+
+    @field_validator("connectors")
+    @classmethod
+    def _connector_slugs(cls, v: List[str]) -> List[str]:
+        return list(dict.fromkeys(s for s in (connector_slug(c) for c in v) if s))
 
 
 class ProductBlueprint(BaseModel):
