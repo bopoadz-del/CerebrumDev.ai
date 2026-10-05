@@ -575,6 +575,44 @@ def list_session_build_refs(
     return found
 
 
+def build_refs_of_record(
+    owner: str,
+    repo: str,
+    *,
+    platform_id: Optional[str],
+    session_id: str,
+    token: str,
+    opener: Callable[..., Any] = urlopen,
+) -> List[Tuple[str, str]]:
+    """THE resolver: ``(branch, sha)`` pairs for a build's branch of record.
+
+    A platform (``platform_id``, persisted on the session and recorded in the
+    run's ledger) has exactly one branch, ``build/<platform_id>``. A run with
+    no platform id -- a ledger from before platforms existed -- keeps its
+    legacy ``build/<session>-*`` branches. Every reader that needs "the
+    session's build branch" (N3 dispatch/collect, adopt-green, attach, the
+    collect fallback) asks here, never builds a name itself.
+    """
+    from app.factory.build.platform_identity import branch_of_record, is_platform_id
+
+    if is_platform_id(platform_id):
+        branch = branch_of_record(str(platform_id))
+        path = f"/repos/{owner}/{repo}/git/ref/{quote('heads/' + branch, safe='/')}"
+        status, body = github_request("GET", path, token=token, opener=opener)
+        if status < 400 and isinstance(body, Mapping):
+            obj = body.get("object") if isinstance(body.get("object"), Mapping) else {}
+            sha = str(obj.get("sha") or "").strip()
+            if sha:
+                return [(branch, sha)]
+        elif status != 404:
+            raise BuildsPushError(f"GitHub API down: ref {branch} HTTP {status}", unreachable=True)
+        # No platform branch yet: a session approved before platforms existed
+        # may still carry its legacy branch.
+    if not session_id:
+        return []
+    return list_session_build_refs(owner, repo, session_id, token=token, opener=opener)
+
+
 def fetch_receipt(
     ref: BuildsRef,
     *,
@@ -715,13 +753,17 @@ def collect_branch(
         candidates: List[str] = []
         if ref.branch and ref.branch != head:
             candidates.append(ref.branch)
-        sid = session_id_from_build_branch(head) or session_id_from_build_branch(
-            ref.branch
+        from app.factory.build.platform_identity import platform_id_from_branch
+
+        pid = platform_id_from_branch(head) or platform_id_from_branch(ref.branch)
+        sid = "" if pid else (
+            session_id_from_build_branch(head) or session_id_from_build_branch(ref.branch)
         )
-        if sid:
+        if pid or sid:
             try:
-                alts = list_session_build_refs(
-                    ref.owner, ref.repo, sid, token=token, opener=opener
+                alts = build_refs_of_record(
+                    ref.owner, ref.repo, platform_id=pid, session_id=sid,
+                    token=token, opener=opener,
                 )
             except BuildsPushError:
                 alts = []

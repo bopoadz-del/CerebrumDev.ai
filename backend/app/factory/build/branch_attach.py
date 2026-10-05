@@ -32,8 +32,8 @@ from app.factory.build.builds_push import (
     BuildsPushError,
     builds_token,
     github_request,
+    build_refs_of_record,
     is_build_branch,
-    list_session_build_refs,
     parse_builds_repo,
     session_token,
 )
@@ -135,7 +135,7 @@ def resolve_session_branch(session: str, env: Mapping[str, str]) -> str:
     """The newest ``build/<session>-*`` branch; the only one when there is one."""
     owner, repo, _ = parse_builds_repo(env)
     token = builds_token(env)
-    refs = list_session_build_refs(owner, repo, session, token=token)
+    refs = build_refs_of_record(owner, repo, platform_id=None, session_id=session, token=token)
     if not refs:
         raise AttachError(f"no cerebrum-builds branch for {session}")
     if len(refs) == 1:
