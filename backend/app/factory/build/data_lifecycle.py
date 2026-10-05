@@ -90,7 +90,7 @@ def sample_for_spec(
     """A deterministic row from one capability/table spec.
 
     S10 lifecycle tests insert the first *table*. S12 domain acceptance
-    must insert the DEFAULT capability's own columns â€” those two are not
+    must insert the DEFAULT capability's own columns — those two are not
     the same order (live sess_5dfb4a3: ``client_pet_records`` / pet_record
     vs alphabetically-first entity ``availability``).
     """
@@ -452,8 +452,8 @@ def render_backup() -> str:
         "\n"
         "Uses SQLite's online backup API (not a file copy) so a live WAL\n"
         "writer cannot produce a torn snapshot. A restore that has not been\n"
-        "drilled is not a restore â€” tests/test_data_lifecycle.py performs\n"
-        "backup â†’ wipe â†’ restore â†’ assert rows.\n"
+        "drilled is not a restore — tests/test_data_lifecycle.py performs\n"
+        "backup → wipe → restore → assert rows.\n"
         "\n"
         "Same-disk BACKUP_DIR (the default) protects against logical loss,\n"
         "not disk loss. The mounted Render disk is a SPOF.\n"
@@ -822,7 +822,7 @@ def lifecycle_declaration() -> Dict[str, Any]:
             "api": "sqlite3.Connection.backup",
             "default_dir": "$STORAGE_PATH/backups",
             "retention": BACKUP_KEEP,
-            "restore_drill": "tests/test_data_lifecycle.py performs backupâ†’wipeâ†’restore",
+            "restore_drill": "tests/test_data_lifecycle.py performs backup→wipe→restore",
         },
         "sqlite_on_mounted_disk": True,
         "spof": (
@@ -850,10 +850,10 @@ def render_lifecycle_doc() -> str:
 def render_product_tests(specs: Dict[str, Dict[str, Any]]) -> str:
     entity, sample = first_entity_sample(specs)
     entities = [spec["entity"] for spec in table_specs(specs)]
-    return f'''"""S10 data lifecycle â€” performed, not configured.
+    return f'''"""S10 data lifecycle — performed, not configured.
 
-Schema up/down on a populated v1 DB, a restore drill (backup â†’ wipe â†’
-restore â†’ assert rows), and parallel writes at the FastAPI sync threadpool
+Schema up/down on a populated v1 DB, a restore drill (backup → wipe →
+restore → assert rows), and parallel writes at the FastAPI sync threadpool
 size. connect() must not CREATE TABLE.
 """
 
