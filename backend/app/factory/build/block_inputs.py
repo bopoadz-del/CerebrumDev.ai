@@ -1378,7 +1378,19 @@ def render_block_inputs_module(
     ``default_actions`` and ``capability_classes`` are THIS build's maps,
     harvested from the manifests of the blocks it vendored. A product never
     carries another product's answers.
+
+    ``capability_classes=None`` means the caller holds no vendored manifests:
+    the classes are then what the pinned Store's manifests declare. ``{}``
+    means "no block declares one" and shapes nothing.
     """
+    if capability_classes is None:
+        from app.factory.store_kits import block_manifests, capability_class
+
+        capability_classes = {
+            bid: cls
+            for bid, manifest in block_manifests().items()
+            if (cls := capability_class(manifest))
+        }
     return (
         '''"""Block input construction for this platform.
 

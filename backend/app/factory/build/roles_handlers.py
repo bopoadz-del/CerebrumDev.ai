@@ -3021,12 +3021,13 @@ def _vendored_manifest(ctx: RoleContext, block_id: str) -> Dict[str, Any]:
 
 
 def vendored_capability_classes(ctx: RoleContext, block_ids: Sequence[str]) -> Dict[str, str]:
-    """block id -> the ``capability_class`` its vendored manifest declares."""
-    from app.factory.store_kits import capability_class
+    """block id -> the ``capability_class`` its vendored manifest declares;
+    the pinned Store's manifest when the vendored copy predates the field."""
+    from app.factory.store_kits import block_capability_class, capability_class
 
     out: Dict[str, str] = {}
     for bid in block_ids or ():
-        cls = capability_class(_vendored_manifest(ctx, bid))
+        cls = capability_class(_vendored_manifest(ctx, bid)) or block_capability_class(bid)
         if cls:
             out[bid] = cls
     return out

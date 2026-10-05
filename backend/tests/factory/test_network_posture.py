@@ -100,6 +100,9 @@ def test_cloner_emits_p1_capture_without_blocks_root(tmp_path):
         json.dumps(
             {
                 "id": "capture",
+                # The block DECLARES what it is; the P1 adapter follows
+                # the declaration, never the id.
+                "capability_class": "vision_capture",
                 "permissions": {"network": False},
                 "inputs": [
                     {"name": "llm_provider", "default": "deepseek"},

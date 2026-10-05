@@ -10,6 +10,7 @@ a capability is called.
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 from typing import Any, FrozenSet, Iterable, List, Optional, Sequence, Tuple
 
@@ -608,7 +609,7 @@ def grounded_event_bus_handler_body(
         "    results = {}\n"
         "    errors = {}\n"
         "    steps = [{\n"
-        f'        "block": {ev!r},\n'
+        f'        "block": {json.dumps(ev)},\n'
         f'        "action": "{EVENT_BUS_STEP_ACTION}",\n'
         "        \"input\": {\n"
         f'            "topic": {topic!r},\n'
@@ -616,7 +617,7 @@ def grounded_event_bus_handler_body(
         'or payload.get("pet_name") or "record"},\n'
         f'            "message": {message!r},\n'
         f'            "channel": "{EVENT_BUS_STEP_CHANNEL}",\n'
-        f'            "tool": {ev!r},\n'
+        f'            "tool": {json.dumps(ev)},\n'
         "        },\n"
         "    }]\n"
         f"{other_loop}"
