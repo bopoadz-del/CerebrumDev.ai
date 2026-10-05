@@ -730,10 +730,12 @@ def test_handler_required_fields_keeps_domain_status_and_channel():
     The envelope skip list used to drop them, so veterinarian availability
     ``status`` and reminder ``channel`` never reached the sample payload.
     """
+    # The requirement is the CHECK in the code; the refusal message is prose
+    # and contributes nothing (it used to be the only source here).
     body = (
-        "        return {'ok': False, 'error': 'Missing required fields: "
-        "service_date, service_type, capacity, status'}\n"
-        "        return {'ok': False, 'error': 'channel is invalid'}\n"
+        "        for name in ('service_date', 'service_type', 'capacity', 'status'):\n"
+        "            if name not in payload:\n"
+        "                return {'ok': False, 'error': 'Missing required fields'}\n"
         "        if payload.get('channel') not in ('email', 'sms', 'push'):\n"
         "            return {'ok': False, 'error': 'channel is invalid'}\n"
     )
@@ -1515,10 +1517,19 @@ def test_an_interpolated_message_does_not_invent_a_field():
     )
 
 
-def test_a_plain_unquoted_listing_still_mines():
-    body = 'raise ValueError("Missing required fields: pet_name, owner_name")'
+def test_a_refusal_message_alone_mines_nothing():
+    """A listing inside a message is prose. Only the check that raises it --
+    a key test against the payload -- makes a field required."""
+    body = 'raise ValueError("Missing required fields: zorblat_name, quux_name")'
 
-    assert handler_required_fields(body) == ["owner_name", "pet_name"]
+    assert handler_required_fields(body) == []
+    checked = (
+        "def handle(payload):\n"
+        "    for name in ('zorblat_name', 'quux_name'):\n"
+        "        if name not in payload:\n"
+        "            raise ValueError('Missing required fields: zorblat_name, quux_name')\n"
+    )
+    assert handler_required_fields(checked) == ["quux_name", "zorblat_name"]
 
 
 def test_a_format_placeholder_in_a_refusal_is_never_a_field():
