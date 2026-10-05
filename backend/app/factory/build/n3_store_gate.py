@@ -117,6 +117,10 @@ class StoreGateSnapshot:
     #: False when the gate reported failure without ever scoring -- the
     #: workflow died before the harness ran. That is the gate's defect.
     harness_ran: bool = True
+    #: True when GitHub could not be ASKED (no token, 401/403, 5xx): this
+    #: read is no answer about the build. Typed at the read, never re-derived
+    #: from ``detail``.
+    unreachable: bool = False
 
     @property
     def score(self) -> str:
@@ -316,7 +320,8 @@ def resolve_builds_target(
     token = builds_token(blob)
     if not token:
         raise BuildsPushError(
-            f"{BUILDS_TOKEN_ENV} missing — fail-closed; cannot poll store-gate"
+            f"{BUILDS_TOKEN_ENV} missing — fail-closed; cannot poll store-gate",
+            unreachable=True,
         )
     owner, repo, _url = parse_builds_repo(blob)
     recorded = builds_fields_from_ledger(output_dir)
@@ -499,6 +504,7 @@ def fetch_store_gate_status(
     if not token:
         return StoreGateSnapshot(
             missing=True,
+            unreachable=True,
             detail=f"{BUILDS_TOKEN_ENV} missing",
             sha=target.sha,
             branch=target.branch,
@@ -510,6 +516,7 @@ def fetch_store_gate_status(
     if status >= 400:
         return StoreGateSnapshot(
             missing=True,
+            unreachable=status in (401, 403) or status >= 500,
             detail=f"GitHub statuses HTTP {status}",
             sha=target.sha,
             branch=target.branch,
@@ -898,15 +905,7 @@ def _failure_honesty(snap: StoreGateSnapshot) -> str:
 def is_infrastructure_error(exc: BaseException) -> bool:
     """GitHub could not be asked (no token, 401/403, API down) -- as opposed to
     GitHub answering that there is nothing there."""
-    text = str(exc)
-    return (
-        "GitHub API down" in text
-        or "fail-closed; cannot poll store-gate" in text
-        or "HTTP 401" in text
-        or "HTTP 403" in text
-        or "HTTP 5" in text
-        or f"{BUILDS_TOKEN_ENV} missing" in text
-    )
+    return bool(getattr(exc, "unreachable", False))
 
 
 def ingest_n3_store_gate(
@@ -1022,9 +1021,7 @@ def ingest_n3_store_gate(
     # A poll that TIMED OUT while every read was a 401 is the same thing: the
     # waiter never once saw the gate. (Live: three handoffs were branded
     # N3_STORE_GATE_TIMEOUT by an hour of 401s from a revoked token.)
-    if (snap.missing or snap.timeout) and is_infrastructure_error(
-        RuntimeError(snap.detail or "")
-    ):
+    if (snap.missing or snap.timeout) and snap.unreachable:
         logger.warning("n3 store-gate unreadable for %s: %s", root, snap.detail)
         return IngestResult(
             honesty=HANDOFF_TO_N3,

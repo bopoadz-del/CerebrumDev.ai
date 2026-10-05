@@ -350,7 +350,8 @@ def test_factory_llm_fallthrough_blocks_founding_without_cli_name(tmp_path):
 def test_http_store_callback_blocks_founding(tmp_path):
     _full_repo(tmp_path)
     (tmp_path / "app" / "actions" / "viewing_management.py").write_text(
-        "import httpx\nurl = store_url + '/v1/execute'\n",
+        # A real Store callback reads the Store's location setting.
+        "import os\nimport httpx\nurl = os.environ['CEREBRUM_API_URL'] + '/v1/execute'\n",
         encoding="utf-8",
     )
     grade = grade_workspace(

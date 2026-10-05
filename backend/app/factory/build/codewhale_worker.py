@@ -64,6 +64,8 @@ WORKER_TIMED_OUT = "worker_timed_out"
 #: and 1800s after the CLI STARTED the Floor declared the build stopped --
 #: live 2026-09-28: "coder LLM timed out after 2595s (deadline 1800s)" over
 #: a run whose writer had finished and whose tester was still working.
+from app.factory.build.model_call import CLOSED, MODEL_CALL_STATE  # noqa: E402
+
 MODEL_CALL_CLOSED_DETAIL = (
     "FACTORY_CODE_CLI session finished — codewhale writer CLI exited"
 )
@@ -1014,6 +1016,7 @@ def run_worker_job(
                                 "ts": datetime.now(timezone.utc).isoformat(),
                                 "line": MODEL_CALL_CLOSED_DETAIL,
                                 "model_call": False,
+                                MODEL_CALL_STATE: CLOSED,
                             }
                         )
                         + "\n"
@@ -1025,7 +1028,11 @@ def run_worker_job(
                 try:
                     progress(
                         MODEL_CALL_CLOSED_DETAIL,
-                        {"model_call": False, "provider": worker_provider()},
+                        {
+                            "model_call": False,
+                            MODEL_CALL_STATE: CLOSED,
+                            "provider": worker_provider(),
+                        },
                     )
                 except Exception:  # noqa: BLE001 — telemetry never fails the build
                     pass

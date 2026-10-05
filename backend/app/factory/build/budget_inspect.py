@@ -21,11 +21,13 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-from app.factory.build.failure_kinds import TIMEOUT
+from app.factory.build.failure_kinds import BUDGET_SKIPPED, TIMEOUT
 
 from app.factory.build.authorship import (
     exclusive_authorship_caps,
     is_coding_agent_source,
+    is_factory_grounded_source,
+    is_templated_source,
     promote_cli_keep_ids,
     refuse_dual_listed_caps,
 )
@@ -90,7 +92,7 @@ def inspect_build(
 
         if cap and stage in {"handlers", "routes", "models", "coder"}:
             current_capability = cap
-            if "factory-grounded" in source.lower():
+            if is_factory_grounded_source(source):
                 if cap not in caps_written:
                     caps_written.append(cap)
                 if cap not in caps_factory_grounded:
@@ -104,9 +106,7 @@ def inspect_build(
                     caps_cli_or_llm.append(cap)
                 if cap in caps_templated:
                     caps_templated.remove(cap)
-            elif source and (
-                "template" in source.lower() or "deterministic" in source.lower()
-            ):
+            elif is_templated_source(source):
                 if cap not in caps_written and cap not in caps_templated:
                     caps_templated.append(cap)
 
@@ -133,9 +133,9 @@ def inspect_build(
     failures = dict((state or {}).get("coder_failures") or {})
     for key in _timed_out_keys((state or {}).get("coder_failure_kinds") or {}):
         timeouts.append(f"{key}: {str(failures.get(key, ''))[:200]}")
-    for key, reason in failures.items():
-        text = str(reason)
-        if "skipped" in text.lower() or "budget" in text.lower():
+    kinds = dict((state or {}).get("coder_failure_kinds") or {})
+    for key in failures:
+        if kinds.get(key) == BUDGET_SKIPPED:
             if key not in caps_templated and key not in caps_written:
                 caps_templated.append(str(key))
 
@@ -571,13 +571,11 @@ def _cli_attempted(
     dispatch = dict((state or {}).get("brief_dispatch") or {})
     if str(dispatch.get("via") or "") == "cli":
         return True
+    from app.factory.build.authorship import SOURCE_CODER_CLI
+
     for event in events:
-        detail = str(getattr(event, "detail", "") or "")
         payload = getattr(event, "payload", None) or {}
-        source = str(payload.get("source") or "")
-        if "dispatching compiled brief via FACTORY_CODE_CLI" in detail:
-            return True
-        if source == "coder CLI":
+        if str(payload.get("source") or "") == SOURCE_CODER_CLI:
             return True
     return False
 
@@ -594,16 +592,14 @@ def _cli_flight(
     dispatched = False
     finished = False
     deadline_s: Optional[float] = None
+    from app.factory.build.authorship import SOURCE_CODER_CLI
+    from app.factory.build.model_call import closes_model_call
+
     for event in events:
-        detail = str(getattr(event, "detail", "") or "")
         payload = getattr(event, "payload", None) or {}
-        if "dispatching compiled brief via FACTORY_CODE_CLI" in detail:
+        if payload.get("model_call") and str(payload.get("source") or "") == SOURCE_CODER_CLI:
             dispatched = True
-        if "FACTORY_CODE_CLI session finished" in detail:
-            finished = True
-        if "FACTORY_CODE_CLI_HUNG_KILLED_BY_WALL" in detail:
-            finished = True
-        if "budget wall — stopping CLI session" in detail:
+        if closes_model_call(payload):
             finished = True
         if payload.get("model_call"):
             raw = payload.get("deadline_s")
@@ -646,9 +642,7 @@ def _provenance(workspace: Any) -> Dict[str, Any]:
         return {}
     sources = prov.get("artifact_sources") or {}
     agent = sorted(k for k, v in sources.items() if is_coding_agent_source(v))
-    factory = sorted(
-        k for k, v in sources.items() if "factory-grounded" in str(v).lower()
-    )
+    factory = sorted(k for k, v in sources.items() if is_factory_grounded_source(v))
     from app.factory.build.authorship import writer_authorship_counts
 
     counts = writer_authorship_counts(sources)

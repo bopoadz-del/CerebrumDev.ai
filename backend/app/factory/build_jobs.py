@@ -184,14 +184,11 @@ def _open_model_call_note(activity_notes: Any) -> Any:
     A finished / hung-killed CLI NOTE closes the call so Floor does not
     keep 'inside watchdog' after harvest or HUNG_KILLED_BY_WALL.
     """
+    from app.factory.build.model_call import closes_model_call
+
     for note in reversed(list(activity_notes or ())):
-        detail = str(getattr(note, "detail", "") or "")
         payload = getattr(note, "payload", None) or {}
-        if "FACTORY_CODE_CLI session finished" in detail:
-            return None
-        if "FACTORY_CODE_CLI_HUNG_KILLED_BY_WALL" in detail:
-            return None
-        if "budget wall — stopping CLI session" in detail:
+        if closes_model_call(payload):
             return None
         if payload.get("model_call"):
             return note
@@ -494,8 +491,14 @@ def _authorship(
 
 
 def _thin_authorship_detail(detail: Any) -> bool:
-    text = str(detail or "")
-    return "FACTORY_CODE_CLI_THIN_AUTHORSHIP" in text
+    """The refusal's named blocker -- the ``<BLOCKER>: <why>`` token every
+    named refusal leads with -- is the thin-authorship blocker."""
+    from app.factory.build.coder_session import (
+        NAMED_BLOCKER_CLI_THIN_AUTHORSHIP,
+        named_blocker_of,
+    )
+
+    return named_blocker_of(detail) == NAMED_BLOCKER_CLI_THIN_AUTHORSHIP
 
 
 def _three_gate_success_detail(cycle: str) -> str:

@@ -124,7 +124,16 @@ def is_exported(rel: Path) -> bool:
 
 
 class BuildsPushError(RuntimeError):
-    """Token/repo missing or push/collect failed before a usable branch tip."""
+    """Token/repo missing or push/collect failed before a usable branch tip.
+
+    ``unreachable`` is the typed answer to "could GitHub be asked at all?":
+    True for a missing token, a transport failure or an API refusal (no
+    answer about the build); False when GitHub answered.
+    """
+
+    def __init__(self, message: str = "", *, unreachable: bool = False) -> None:
+        super().__init__(message)
+        self.unreachable = unreachable
 
 
 @dataclass(frozen=True)
@@ -289,7 +298,8 @@ def push_workspace(
     token = builds_token(env)
     if not token:
         raise BuildsPushError(
-            f"{BUILDS_TOKEN_ENV} missing — fail-closed; no agent start"
+            f"{BUILDS_TOKEN_ENV} missing — fail-closed; no agent start",
+            unreachable=True,
         )
     owner, name, repo_url = parse_builds_repo(env)
     branch = make_branch_name(session_id, suffix=suffix)
@@ -398,7 +408,7 @@ def github_request(
         raw = exc.read() if exc.fp else b""
         status = int(exc.code)
     except URLError as exc:
-        raise BuildsPushError(f"GitHub API down: {exc.reason}") from exc
+        raise BuildsPushError(f"GitHub API down: {exc.reason}", unreachable=True) from exc
     text = raw.decode("utf-8", errors="replace") if raw else ""
     if not text:
         return status, {}
@@ -443,7 +453,7 @@ def fetch_commit_sha(
     path = f"/repos/{owner}/{repo}/commits/{quote(ref, safe='')}"
     status, body = github_request("GET", path, token=token, opener=opener)
     if status >= 400 or not isinstance(body, Mapping):
-        raise BuildsPushError(f"GitHub API down: commit {ref} HTTP {status}")
+        raise BuildsPushError(f"GitHub API down: commit {ref} HTTP {status}", unreachable=True)
     sha = str(body.get("sha") or "").strip()
     if not sha:
         raise BuildsPushError(f"GitHub API: empty sha for {ref}")
@@ -466,7 +476,7 @@ def list_session_build_refs(
     if status == 404:
         return []
     if status >= 400 or not isinstance(body, list):
-        raise BuildsPushError(f"GitHub API down: matching-refs HTTP {status}")
+        raise BuildsPushError(f"GitHub API down: matching-refs HTTP {status}", unreachable=True)
     found: List[Tuple[str, str]] = []
     for item in body:
         if not isinstance(item, Mapping):
@@ -500,7 +510,7 @@ def fetch_receipt(
         if status == 404:
             continue
         if status >= 400:
-            raise BuildsPushError(f"GitHub API down: contents {name} HTTP {status}")
+            raise BuildsPushError(f"GitHub API down: contents {name} HTTP {status}", unreachable=True)
         decoded = _decode_receipt(body)
         if decoded is not None:
             return decoded
@@ -655,7 +665,7 @@ def collect_branch(
 
     if status >= 400 or not isinstance(body, Mapping):
         # Non-404 transport/API failures stay "API down".
-        raise BuildsPushError(f"GitHub API down: compare HTTP {status}")
+        raise BuildsPushError(f"GitHub API down: compare HTTP {status}", unreachable=True)
     files = [f for f in (body.get("files") or []) if isinstance(f, Mapping)]
     receipt = fetch_receipt(ref, env=env, branch=head, opener=opener)
     return receipt, _changed_paths(files), _unified_diff(files)

@@ -38,6 +38,10 @@ AUTH_REL = Path("app") / "auth.py"
 #: graded on thirteen checks nothing ever told it about -- see
 #: app/factory/build/acceptance_floor.py.
 from app.factory.build.acceptance_floor import advisory_ids as _floor_advisory_ids
+from app.factory.build.authorship import AGENT_SOURCE_EXACT as _AGENT_SOURCE_EXACT
+from app.factory.build.authorship import AGENT_SOURCE_PREFIXES as _AGENT_SOURCE_PREFIXES
+from app.factory.build.authorship import FULL_PILOT_MIN_AUTHORED_ACTIONS as _FULL_PILOT_MIN_AUTHORED
+from app.factory.build.authorship import _WRITER_ROLE_STAMP_RE as _AUTHOR_STAMP_RE
 from app.factory.build.acceptance_floor import check_ids as _floor_check_ids
 
 ACCEPTANCE_CHECK_NAMES: tuple[str, ...] = _floor_check_ids()
@@ -1810,13 +1814,17 @@ def check_cross_tenant_404(http: _Http) -> Tuple[str, str]:
 
 
 def check_authorship_floor() -> Tuple[str, str]:
-    from app.factory.build.authorship import (  # type: ignore
-        agent_written_handler_ids_in_workspace,
-        full_pilot_authorship_from,
-    )
-
-    # Prefer in-tree provenance so the product can judge itself without the
-    # factory. Fall back to counting action modules tagged agent-written.
+    # Judge the product by the product. The WRITER's docstring stamp is the
+    # one signal, and its vocabulary is the Factory's canonical one
+    # (the Factory's authorship module) RENDERED in here at stamp time: a
+    # delivered product never carries the Factory package, and importing it
+    # failed this line on every honest build (2026-10-04, ModuleNotFoundError;
+    # it only ever passed when a writer had copied Factory code into the
+    # product).
+    stamp_re = re.compile({_AUTHOR_STAMP_RE.pattern!r})
+    agent_prefixes = {tuple(_AGENT_SOURCE_PREFIXES)!r}
+    agent_exact = {sorted(_AGENT_SOURCE_EXACT)!r}
+    floor_min = {_FULL_PILOT_MIN_AUTHORED}
     receipt = {{}}
     for rel in ("docs/coder_receipt.json", "docs/build_provenance.json"):
         path = ROOT / rel
@@ -1825,41 +1833,25 @@ def check_authorship_floor() -> Tuple[str, str]:
                 receipt.update(json.loads(path.read_text(encoding="utf-8")))
             except (OSError, ValueError):
                 pass
-    # No receipt means no receipt -- not "authored nothing". The factory
-    # record (docs/coder_receipt.json, docs/build_provenance.json) is
-    # internal and does not ship, so asking it here would fail every
-    # delivered product. The stamp in each handler's own docstring is what
-    # this check is ABOUT, it is in the tree, and it is what the floor line
-    # asks the writer for. Judge the product by the product.
-    floor = None
-    if receipt:
+    actions = ROOT / "app" / "actions"
+    authored = 0
+    for path in (sorted(actions.glob("*.py")) if actions.is_dir() else []):
         try:
-            floor = full_pilot_authorship_from(receipt, ROOT)
-        except Exception:
-            floor = None
-    if floor is not None:
-        if floor.meets_floor:
-            return "PASS", "need≥%s action_py=%s cli=%s" % (
-                floor.need,
-                floor.action_py,
-                len(floor.cli_authored_ids),
-            )
-        return "FAIL", "below floor need≥%s action_py=%s" % (floor.need, floor.action_py)
-    # ONE source of truth for "the coding agent wrote this": the WRITER's own
-    # docstring stamp, read by the factory's canonical detector. A private
-    # substring list here drifted behind the writer -- it still looked for the
-    # pre-CodeWhale markers (CODER_MODEL / coding agent / coder CLI), so every
-    # CodeWhale-authored product counted authored=0 while shipping ten stamped
-    # handlers (live 2026-10-01, automotive_aiops: acceptance 20/21, and this
-    # line was the 1). No receipt ships with a delivered product, so this is
-    # the path every real product takes -- judge the product by its own stamp.
-    authored = len(agent_written_handler_ids_in_workspace(ROOT))
+            head = path.read_text(encoding="utf-8", errors="replace")[:4000]
+        except OSError:
+            continue
+        match = stamp_re.search(head)
+        if not match:
+            continue
+        source = match.group(1).strip()
+        if source.startswith(tuple(agent_prefixes)) or source.lower() in agent_exact:
+            authored += 1
     n_required = receipt.get("n_required") or receipt.get("n_required_capabilities")
     try:
         n_required = int(n_required) if n_required is not None else None
     except (TypeError, ValueError):
         n_required = None
-    need = 5 if n_required is None else min(5, max(1, int(n_required)))
+    need = floor_min if not n_required or n_required <= 0 else min(floor_min, max(1, n_required))
     if authored >= need:
         return "PASS", "authored=%s need≥%s" % (authored, need)
     return "FAIL", "authored=%s below need≥%s" % (authored, need)

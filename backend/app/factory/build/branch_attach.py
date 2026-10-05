@@ -85,9 +85,30 @@ def parse_build_link(text: str, env: Mapping[str, str] | None = None) -> Tuple[O
         if suffix:
             return f"build/{session}{suffix}", None
         return resolve_session_branch(session, env), None
-    if "cerebrum-builds" in message and "/tree/" in message:
+    if _links_into_builds_repo(message, env):
+        # A link into the builds repo that names no build branch.
         return None, NOT_A_BUILD_LINK
     return None, None
+
+
+def _links_into_builds_repo(message: str, env: Mapping[str, str]) -> bool:
+    """Any URL in the message whose path names the configured builds repo --
+    read from the URL's structure, not by searching the message for a name."""
+    from urllib.parse import urlsplit
+
+    _owner, want_repo, _url = parse_builds_repo(env)
+    want = want_repo.lower()
+    for token in message.split():
+        try:
+            parts = urlsplit(token.strip("<>()[],."))
+        except ValueError:
+            continue
+        if not parts.netloc:
+            continue
+        segments = [s.lower().removesuffix(".git") for s in parts.path.split("/") if s]
+        if want in segments:
+            return True
+    return False
 
 
 def resolve_session_branch(session: str, env: Mapping[str, str]) -> str:

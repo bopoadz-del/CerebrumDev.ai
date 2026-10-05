@@ -122,10 +122,13 @@ def attempt_wall_s() -> float:
 
 
 def is_timeout_error(exc: BaseException) -> bool:
+    """A timeout by TYPE, anywhere in the cause chain -- never by the words
+    of its message."""
+    from app.factory.build.failure_kinds import TIMEOUT, failure_kind
+
     if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
         return True
-    text = str(exc).lower()
-    return "timed out" in text or "watchdog" in text
+    return failure_kind(exc) == TIMEOUT
 
 
 def _is_real_httpx_post(fn: Callable[..., Any]) -> bool:

@@ -125,6 +125,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Regenerate blocks.lock.json from --blocks-root before building",
     )
 
+    p_bump = sub.add_parser(
+        "bump-store",
+        help="Move the Factory to a new Store commit: pin + re-lock + verify signatures, together",
+    )
+    p_bump.add_argument("sha", help="40-hex Store commit to pin")
+    p_bump.add_argument(
+        "--blocks-root",
+        default=None,
+        help="Store checkout AT that commit (default: CEREBRUM_BLOCKS_ROOT)",
+    )
+
     p_store = sub.add_parser("store", help="Block Store Manager tools")
     store_sub = p_store.add_subparsers(dest="store_cmd", required=True)
     p_registry = store_sub.add_parser(
@@ -181,6 +192,8 @@ def main(argv: list[str] | None = None) -> int:
         return _store_cmd(args)
     if args.cmd == "update-lock":
         return _update_lock_cmd(args)
+    if args.cmd == "bump-store":
+        return _bump_store_cmd(args)
 
     bp = load_blueprint(args.blueprint)
     blocks_root = _resolve_blocks_root(getattr(args, "blocks_root", None))
@@ -254,6 +267,69 @@ def _write_blocks_lock(blocks_root: Path | None, output: Path | None = None) -> 
             sort_keys=True,
         )
     )
+    return 0
+
+
+def bump_store(sha: str, blocks_root: Path, *, repo_root: Path | None = None) -> dict:
+    """Pin the Factory to Store ``sha``: one atomic step, never two.
+
+    Refuses unless ``blocks_root`` is checked out at exactly ``sha``; verifies
+    every block signature against the Store's own registry; regenerates
+    ``blocks.lock.json`` from that tree; and only then writes ``store.pin``.
+    The caller commits both files in one Factory PR.
+    """
+    import subprocess
+
+    from app.factory.blocks_lock import default_lock_path, generate_lock, write_lock
+    from app.factory.build.vendored_integrity import verify_signature
+    from app.factory.store_pin import StorePinError, pin_path, write_pin
+
+    sha = (sha or "").strip().lower()
+    root = Path(blocks_root)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True
+    ).stdout.strip().lower()
+    if head != sha:
+        raise StorePinError(f"Store checkout {root} is at {head or '?'}, not {sha}")
+    registry = root / "block_registry"
+    unverified = []
+    for block_dir in sorted(p for p in registry.iterdir() if (p / "block.json").is_file()):
+        verdict = verify_signature(block_dir)
+        if verdict["verified"] is not True:
+            unverified.append(f"{block_dir.name}: {verdict['reason']}")
+    if unverified:
+        raise StorePinError(
+            f"{len(unverified)} block(s) do not verify at {sha}: " + "; ".join(unverified[:5])
+        )
+    lock = generate_lock(root)
+    if (lock.get("store") or {}).get("sha") != sha:
+        raise StorePinError(f"lock names {(lock.get('store') or {}).get('sha')}, not {sha}")
+    lock_path = (Path(repo_root) / "blocks.lock.json") if repo_root else default_lock_path()
+    write_lock(lock_path, lock)
+    pin = write_pin(sha, pin_path(repo_root) if repo_root else None)
+    return {
+        "ok": True,
+        "store_sha": sha,
+        "pin": str(pin),
+        "lock": str(lock_path),
+        "blocks_locked": len(lock.get("blocks") or {}),
+        "signatures_verified": sum(1 for p in registry.iterdir() if (p / "block.json").is_file()),
+    }
+
+
+def _bump_store_cmd(args: argparse.Namespace) -> int:
+    from app.factory.store_pin import StorePinError
+
+    blocks_root = _resolve_blocks_root(getattr(args, "blocks_root", None))
+    if blocks_root is None:
+        print(json.dumps({"ok": False, "error": "bump-store requires --blocks-root or CEREBRUM_BLOCKS_ROOT"}))
+        return 2
+    try:
+        result = bump_store(args.sha, blocks_root)
+    except (StorePinError, OSError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
 

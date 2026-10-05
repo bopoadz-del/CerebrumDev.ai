@@ -138,6 +138,10 @@ class CompiledBrief:
     #: Every content line the compiler wrote. The lint refuses any line
     #: not in this record, so provenance is by construction, not by phrase.
     emitted_lines: FrozenSet[str] = field(default_factory=frozenset)
+    #: The rendered section bodies (TARGET, BUILD, ACCEPTANCE, ...), kept as
+    #: data so a reader takes a section by key -- never by searching ``text``
+    #: for its heading.
+    slots: Dict[str, str] = field(default_factory=dict)
     budget_s: float = 0.0
     template_revision: str = TEMPLATE_REVISION
 
@@ -941,6 +945,7 @@ def compile_brief(
         contracts=dict(contracts or {}),
         reuse_records={bid: rec.to_dict() for bid, rec in records.items()},
         line_sources=line_sources,
+        slots=dict(slots),
         budget_s=wall,
     )
 

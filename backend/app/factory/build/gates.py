@@ -526,12 +526,23 @@ def failing_tests_from_junit(workspace: Path, junit_path: Path) -> Optional[List
                 "name": case.get("name") or "",
                 "kind": kind,
                 "message": (message[0] if message else "")[:300],
+                # The exception CLASS pytest recorded -- typed, not read from
+                # the message text.
+                "exc_type": (problem.get("type") or "").rsplit(".", 1)[-1],
                 # The innermost frame of the traceback: where it actually broke.
                 "innermost": frames[-1].replace("\\", "/") if frames else "",
                 "text": (problem.text or "")[:4000],
             }
         )
     return out
+
+
+def _pytest_available() -> bool:
+    """The suite runs as ``sys.executable -m pytest``: is pytest importable
+    in that interpreter? Asked of the import system, not of pytest's output."""
+    import importlib.util
+
+    return importlib.util.find_spec("pytest") is not None
 
 
 def _verdict_from_junit(
@@ -544,7 +555,7 @@ def _verdict_from_junit(
     """
     if returncode == 0:
         return None  # the green path below reports the summary line
-    if "No module named pytest" in raw or "No module named 'pytest'" in raw:
+    if not _pytest_available():
         return GateResult(
             ok=False,
             gate=gate_name,
@@ -688,6 +699,7 @@ def gate_suite_green(ctx: GateContext) -> GateResult:
     raw = _strip_ansi((proc.stdout or "") + (proc.stderr or ""))
     output = raw.splitlines()
     verdict = _verdict_from_junit(ctx.workspace, proc.returncode, junit_path, raw, gate_name)
+    report_written = junit_path.is_file()
     shutil.rmtree(junit_dir, ignore_errors=True)
     if verdict is not None:
         return verdict
@@ -700,11 +712,9 @@ def gate_suite_green(ctx: GateContext) -> GateResult:
         # ZERO findings because the image had no pytest: a missing test
         # runner masquerading as bad generated code, which sent the agent
         # back to rewrite working handlers. Name the real cause instead.
-        cannot_run = (
-            "No module named pytest" in raw
-            or "No module named 'pytest'" in raw
-            or (not findings and "error" in raw.lower() and "collected" not in raw)
-        )
+        # Typed, not phrased: pytest absent from the interpreter, or pytest
+        # never wrote its report and named no failing test -- it did not run.
+        cannot_run = not _pytest_available() or (not findings and not report_written)
         if cannot_run:
             return GateResult(
                 ok=False,

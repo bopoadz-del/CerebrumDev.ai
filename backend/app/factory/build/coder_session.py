@@ -85,7 +85,21 @@ FACTORY_STAGING_DIRNAME = ".factory-staging"
 #: floor (need = min(5, max(1, n_required)); unknown n_required keeps
 #: need=5). Distinct from written=0 / stub_rate=1.0
 #: (``FACTORY_CODE_CLI_NO_AUTHORSHIP``).
+from app.factory.build.authorship import SOURCE_CODER_CLI  # noqa: E402
+from app.factory.build.model_call import CLOSED, MODEL_CALL_STATE  # noqa: E402
+
 NAMED_BLOCKER_CLI_THIN_AUTHORSHIP = "FACTORY_CODE_CLI_THIN_AUTHORSHIP"
+
+
+def named_blocker_of(detail: object) -> str:
+    """The named blocker a refusal leads with (``<BLOCKER>: <why>``), or ''.
+
+    Every named refusal is written ``f"{NAMED_BLOCKER_...}: ..."``; the token
+    before the first colon is the typed field, read by position -- not by
+    searching the sentence that follows it.
+    """
+    head, sep, _rest = str(detail or "").partition(":")
+    return head.strip() if sep else ""
 #: CLI wrote ``def handle(`` for a GENERATE gap but harvest dropped it
 #: only because event_bus keepability failed. Distinct from "never wrote".
 NAMED_BLOCKER_CLI_UNKEEPABLE_EVENT_BUS = "FACTORY_CODE_CLI_UNKEEPABLE_EVENT_BUS"
@@ -352,7 +366,9 @@ def cli_requires_kimi_credentials(command: Optional[str] = None) -> bool:
     resolved = resolve_code_cli(cli) if cli else resolve_code_cli()
     if resolved:
         names.append(Path(resolved).name.lower())
-    return any("kimi" in name for name in names)
+    from app.factory.code_cli import is_kimi_code_cli
+
+    return any(is_kimi_code_cli(name) for name in names)
 
 
 def cli_requires_deepseek_credentials(command: Optional[str] = None) -> bool:
@@ -457,7 +473,13 @@ def is_agent_written_source(source: str) -> bool:
 
 
 def _handler_text_is_factory_grounded(text: str) -> bool:
-    return "factory-grounded" in (text or "").lower()
+    """The handler's WRITER-role stamp names a Factory grounded emitter."""
+    from app.factory.build.authorship import (
+        is_factory_grounded_source,
+        stamped_writer_source,
+    )
+
+    return is_factory_grounded_source(stamped_writer_source(text))
 
 
 def _workspace_handler_is_factory_grounded(root: Path, capability_id: str) -> bool:
@@ -620,12 +642,8 @@ def cli_dispatch_attempted(
     if ledger is None:
         return False
     for event in getattr(ledger, "events", lambda: ())():
-        detail = str(getattr(event, "detail", "") or "")
         payload = getattr(event, "payload", None) or {}
-        source = str(payload.get("source") or "")
-        if "dispatching compiled brief via FACTORY_CODE_CLI" in detail:
-            return True
-        if source == "coder CLI":
+        if str(payload.get("source") or "") == SOURCE_CODER_CLI:
             return True
     return False
 
@@ -1185,12 +1203,28 @@ def config_default_model(text: str) -> str:
     return (match.group(1) or match.group(2) or match.group(3) or "").strip()
 
 
+def _config_providers(text: str) -> frozenset:
+    """Provider tables a Kimi Code config.toml declares, read as TOML."""
+    import tomllib
+
+    try:
+        data = tomllib.loads(text or "")
+    except tomllib.TOMLDecodeError:
+        return frozenset()
+    providers = data.get("providers")
+    return frozenset(providers) if isinstance(providers, dict) else frozenset()
+
+
 def config_has_kimi_provider(text: str) -> bool:
-    return "[providers.kimi]" in (text or "")
+    from app.factory.code_cli import DEFAULT_KIMI_CLI
+
+    return DEFAULT_KIMI_CLI in _config_providers(text)
 
 
 def config_has_deepseek_provider(text: str) -> bool:
-    return "[providers.deepseek]" in (text or "")
+    from app.factory.code_cli import PROVIDER_DEEPSEEK
+
+    return PROVIDER_DEEPSEEK in _config_providers(text)
 
 
 def _deepseek_provider_block(key: str, base_url: str) -> str:
@@ -1477,12 +1511,18 @@ def _extract_unrecognized_model_id(blob: str) -> str:
         mid = str(payload.get("model") or "").strip()
         if mid:
             return mid
-    quoted = re.search(r'"model"\s*:\s*"([^"]+)"', blob or "")
-    if quoted:
-        return quoted.group(1).strip()
-    selected = re.search(r"selected model \(([^)]+)\)", blob or "", re.IGNORECASE)
-    if selected:
-        return selected.group(1).strip()
+    # Any JSON object the CLI printed that names a model -- read as JSON,
+    # never by searching its prose.
+    for line in (blob or "").splitlines():
+        start = line.find("{")
+        if start < 0:
+            continue
+        try:
+            obj = json.loads(line[start:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and str(obj.get("model") or "").strip():
+            return str(obj["model"]).strip()
     return ""
 
 
@@ -2993,7 +3033,7 @@ def _run_cli_session(
     dispatch_payload: Dict[str, Any] = {
         "stage": "dispatch",
         "model_call": True,
-        "source": "coder CLI",
+        "source": SOURCE_CODER_CLI,
         "done": 0,
         "total": 1,
     }
@@ -3094,6 +3134,13 @@ def _run_cli_session(
             blocker=NAMED_BLOCKER_STOPPED,
         )
     if hung_killed:
+        ctx.note(
+            f"{NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL}: budget wall stopped the CLI session",
+            stage="dispatch",
+            source=SOURCE_CODER_CLI,
+            blocker=NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL,
+            **{MODEL_CALL_STATE: CLOSED},
+        )
         return DispatchResult(
             via="cli",
             ok=False,
@@ -3125,9 +3172,10 @@ def _run_cli_session(
     ctx.note(
         "FACTORY_CODE_CLI session finished",
         stage="dispatch",
-        source="coder CLI",
+        source=SOURCE_CODER_CLI,
         done=1,
         total=1,
+        **{MODEL_CALL_STATE: CLOSED},
     )
     return DispatchResult(
         via="cli",
@@ -3191,11 +3239,28 @@ def _http_oneshot(ctx: Any, compiled: Any) -> DispatchResult:
 
 
 
+def _module_level_names(text: str) -> frozenset:
+    """Names a module defines at top level (functions, classes, assignments),
+    read from its syntax tree -- not from substrings of its source."""
+    import ast
+
+    try:
+        tree = ast.parse(text or "")
+    except SyntaxError:
+        return frozenset()
+    names = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            names.update(x.id for x in targets if isinstance(x, ast.Name))
+    return frozenset(names)
+
+
 def _has_brief_workflow_steps(text: str) -> bool:
     """True when a handler constructs workflow / event_bus steps."""
     blob = text or ""
-    if "event_bus" not in blob and "workflow" not in blob:
-        return False
     from app.factory.build.workflow_accept import (
         handler_builds_workflow_children,
         handler_constructs_event_bus_step,
@@ -3218,13 +3283,14 @@ def _is_keepable_handler(text: str) -> bool:
     (sess_14e690829d1f4282).
     """
     blob = text or ""
-    if "def handle(" not in blob:
+    names = _module_level_names(blob)
+    if "handle" not in names:
         return False
     if not handler_satisfies_event_bus_contract(
         blob, require_prepared_step=_has_brief_workflow_steps(blob)
     ):
         return False
-    if "CAPABILITY_ID" in blob:
+    if "CAPABILITY_ID" in names:
         return True
     return handler_has_prepared_event_bus_step(blob) or _has_brief_workflow_steps(blob)
 
@@ -3232,11 +3298,9 @@ def _is_keepable_handler(text: str) -> bool:
 def _is_event_bus_unkeepable_handler(text: str) -> bool:
     """True when ``handle()`` exists but keepability fails only on event_bus."""
     blob = text or ""
-    if "def handle(" not in blob:
+    if "handle" not in _module_level_names(blob):
         return False
     if _is_keepable_handler(blob):
-        return False
-    if "event_bus" not in blob and "workflow" not in blob:
         return False
     return not handler_satisfies_event_bus_contract(
         blob, require_prepared_step=_has_brief_workflow_steps(blob)

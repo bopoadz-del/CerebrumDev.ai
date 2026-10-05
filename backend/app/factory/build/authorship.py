@@ -433,6 +433,44 @@ def is_coding_agent_source(source: Any) -> bool:
     return text.lower() in AGENT_SOURCE_EXACT
 
 
+#: Exact stamps the Factory writes for its OWN grounded emit and templates.
+#: A source is classified by membership in this closed vocabulary -- the
+#: strings the emitters write -- never by searching a stamp for a word.
+SOURCE_CODER_CLI = "coder CLI"
+TEMPLATED_SOURCE = "deterministic contract template"
+FACTORY_GROUNDED_KEEP_PATH_SOURCE = "factory-grounded reuse keep-path"
+
+
+def factory_grounded_sources() -> frozenset:
+    """Every stamp the Factory's grounded emitters write (exact strings)."""
+    from app.factory.build.persist_accept import FACTORY_GROUNDED_PERSIST_SOURCE
+    from app.factory.build.rag_surface import FACTORY_GROUNDED_RAG_SOURCE
+    from app.factory.build.workflow_accept import FACTORY_GROUNDED_EVENT_BUS_SOURCE
+
+    return frozenset(
+        {
+            FACTORY_GROUNDED_PERSIST_SOURCE,
+            FACTORY_GROUNDED_RAG_SOURCE,
+            FACTORY_GROUNDED_EVENT_BUS_SOURCE,
+            FACTORY_GROUNDED_KEEP_PATH_SOURCE,
+        }
+    )
+
+
+def is_factory_grounded_source(source: Any) -> bool:
+    return str(source or "").strip() in factory_grounded_sources()
+
+
+def is_templated_source(source: Any) -> bool:
+    return str(source or "").strip() == TEMPLATED_SOURCE
+
+
+def stamped_writer_source(text: str) -> str:
+    """The source a handler file's WRITER-role stamp names, or ''."""
+    match = _WRITER_ROLE_STAMP_RE.search((text or "")[:4000])
+    return match.group(1).strip() if match else ""
+
+
 def coding_agent_artifact_ids(sources: Optional[Mapping[str, Any]]) -> List[str]:
     return sorted(
         str(k) for k, v in (sources or {}).items() if is_coding_agent_source(v)
@@ -559,8 +597,6 @@ def is_action_artifact_id(artifact_id: str) -> bool:
     if text.endswith(".py") or text.endswith(".tsx") or text.endswith(".md"):
         return False
     if text in _NON_ACTION_ARTIFACT_IDS:
-        return False
-    if text.startswith("template_"):
         return False
     return True
 

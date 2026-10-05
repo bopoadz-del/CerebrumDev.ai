@@ -156,12 +156,10 @@ def test_system_brief_and_oneshot_name_the_persist_halt():
 def test_product_probe_and_writer_probe_both_isolate_storage():
     assert PERSIST_ISOLATE_NEEDLE in ROUND_TRIP_PROBE
     assert 'tempfile.mkdtemp(prefix="writer-gate-")' in BEHAVIOUR_PROBE
-    # A missing persist table is a typed halt the probe emits (kind
-    # "persist"), decided by the exception class -- not a phrase in stderr.
-    from app.factory.build.writer_behaviour import HALT_SENTENCES, KIND_PERSIST
-
+    # A missing persist table is a typed halt, decided by the exception's
+    # class (a database error), not by sentences in stderr.
     assert '_halt("persist"' in BEHAVIOUR_PROBE
-    assert HALT_SENTENCES[KIND_PERSIST]
+    assert "_db_error_types()" in BEHAVIOUR_PROBE
 
 
 def test_factory_generate_body_is_pure_dispatch_not_no_block_bound():

@@ -10,6 +10,128 @@ from __future__ import annotations
 import ast
 import re
 
+
+# -- structure of Python source (asked of the parser, never of spellings) ----
+
+
+def _tree(text: str):
+    """The module's syntax tree; an indented fragment is read dedented (line
+    numbers are unchanged)."""
+    import textwrap
+
+    for src in (text or "", textwrap.dedent(text or "")):
+        try:
+            return ast.parse(src)
+        except SyntaxError:
+            continue
+    return None
+
+
+def _dotted(node: ast.AST) -> str:
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+        return ".".join(reversed(parts))
+    return ""
+
+
+def _defines(text: str, name: str) -> bool:
+    """The module defines a function called ``name``."""
+    tree = _tree(text)
+    return tree is not None and any(
+        isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name
+        for n in ast.walk(tree)
+    )
+
+
+def _module_refs(text: str) -> set:
+    """Every module the source imports or references by dotted name, with
+    each dotted prefix (``a.b.c`` -> ``a``, ``a.b``, ``a.b.c``); a relative
+    import contributes its module as written (``from .x`` -> ``x``)."""
+    tree = _tree(text)
+    out: set = set()
+    if tree is None:
+        return out
+    names = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names.append(node.module)
+        elif isinstance(node, ast.Attribute):
+            dotted = _dotted(node)
+            if dotted:
+                names.append(dotted)
+    for name in names:
+        parts = name.split(".")
+        out.update(".".join(parts[: i + 1]) for i in range(len(parts)))
+        out.update(".".join(parts[i:]) for i in range(len(parts)))
+    return out
+
+
+def _references_module(text: str, module: str) -> bool:
+    return module in _module_refs(text)
+
+
+def _returns_wrapped_call(text: str, outer: str, inner: str) -> bool:
+    """``return outer(inner())`` appears in the source."""
+    tree = _tree(text)
+    if tree is None:
+        return False
+    for node in ast.walk(tree):
+        value = getattr(node, "value", None) if isinstance(node, ast.Return) else None
+        if (isinstance(value, ast.Call) and _dotted(value.func) == outer and value.args
+                and isinstance(value.args[0], ast.Call) and _dotted(value.args[0].func) == inner):
+            return True
+    return False
+
+
+
+def _serialises_name(text: str, name: str) -> bool:
+    """Some call ``<module>.dumps(<name>, ...)`` already serialises ``name``."""
+    tree = _tree(text)
+    if tree is None:
+        return False
+    return any(
+        isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "dumps" and n.args
+        and isinstance(n.args[0], ast.Name) and n.args[0].id == name
+        for n in ast.walk(tree)
+    )
+
+
+
+def _catches_import_error(handler: ast.ExceptHandler) -> bool:
+    """The handler catches ImportError or a subclass of it (resolved against
+    the builtins, so ``ModuleNotFoundError`` counts)."""
+    import builtins
+
+    kinds = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    for kind in kinds:
+        exc = getattr(builtins, _dotted(kind) if kind is not None else "", None)
+        if isinstance(exc, type) and issubclass(exc, ImportError):
+            return True
+    return False
+
+
+def _import_is_guarded(tree: ast.AST, line: int) -> bool:
+    """The import statement on ``line`` is the whole body of a ``try`` whose
+    handlers catch ImportError -- deleting it would leave ``try:`` empty, and
+    the Store's own except branch is the vendored fallback."""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try) or len(node.body) != 1:
+            continue
+        stmt = node.body[0]
+        if (isinstance(stmt, (ast.Import, ast.ImportFrom))
+                and stmt.lineno <= line <= (stmt.end_lineno or stmt.lineno)
+                and any(_catches_import_error(h) for h in node.handlers)):
+            return True
+    return False
+
+
 ENSURE_READY_MARKER = "def _ensure_store_block_ready"
 MCP_OFFLINE_MARKER = "Store-unwired MCP"
 QUERY_UNWIRED_MARKER = "Store-unwired query"
@@ -49,13 +171,16 @@ class Parser:
 
 
 def needs_document_engine_parsers_package(text: str) -> bool:
-    """True when vendored source imports document_engine.parsers."""
-    return bool(
-        re.search(
-            r"(document_engine\.parsers|from\s+\.parsers\s+import)",
-            text or "",
-        )
-    )
+    """True when vendored source imports a ``document_engine.parsers``
+    package (absolute, or relative ``from .parsers import``)."""
+    tree = _tree(text)
+    if tree is None:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level and node.module and node.module.split(".")[0] == "parsers":
+            return True
+    refs = _module_refs(text)
+    return any(ref.endswith("document_engine.parsers") for ref in refs)
 
 _ENSURE_READY_FN = '''
 def _ensure_store_block_ready(instance):
@@ -83,11 +208,12 @@ def _ensure_store_block_ready(instance):
 
 def emit_instantiate_ready(text: str) -> str:
     """Ensure Store shims initialize SQLite after construct."""
-    if "def _instantiate_store_block" not in text:
+    if not _defines(text, "_instantiate_store_block"):
         return text
-    if ENSURE_READY_MARKER in text and "return _ensure_store_block_ready(call())" in text:
+    ready_defined = _defines(text, "_ensure_store_block_ready")
+    if ready_defined and _returns_wrapped_call(text, "_ensure_store_block_ready", "call"):
         return text
-    if ENSURE_READY_MARKER not in text:
+    if not ready_defined:
         text = text.replace(
             "def _instantiate_store_block(block_cls):",
             _ENSURE_READY_FN.lstrip("\n") + "def _instantiate_store_block(block_cls):",
@@ -136,8 +262,6 @@ def emit_notification_mcp(text: str) -> str:
 
 
 def emit_database_insert(text: str) -> str:
-    if "no such table" in text and "CREATE TABLE IF NOT EXISTS" in text:
-        return text
     old = (
         "        except Exception as e:\n"
         '            return {"error": f"Insert failed: {str(e)}"}\n'
@@ -162,7 +286,9 @@ def emit_database_insert(text: str) -> str:
         '                    return {"error": f"Insert failed: {str(retry_exc)}"}\n'
         '            return {"error": f"Insert failed: {str(e)}"}\n'
     )
-    if old not in text:
+    # Idempotent by this transform's own output: once applied, the exact
+    # replacement is in place and the original fragment is gone.
+    if new in text or old not in text:
         return text
     return text.replace(old, new, 1)
 
@@ -285,7 +411,7 @@ def emit_vector_search_sklearn(text: str) -> str:
     """
     if SKLEARN_UNWIRED_MARKER in text:
         return text
-    if "sklearn" not in (text or ""):
+    if not _references_module(text, "sklearn"):
         return text
     preamble = (
         "# Store-unwired sklearn: delivered platforms / product pytest may\n"
@@ -335,7 +461,7 @@ def emit_vector_search_sklearn(text: str) -> str:
 
 
 def emit_storage_aiofiles(text: str) -> str:
-    if AIOFILES_MARKER not in text and "import aiofiles" in text:
+    if AIOFILES_MARKER not in text and _references_module(text, "aiofiles"):
         fallback = (
             "# Store-unwired aiofiles: delivered platforms do not ship aiofiles.\n"
             "try:\n"
@@ -366,7 +492,7 @@ def emit_storage_aiofiles(text: str) -> str:
         "        file_hash = hashlib.sha256(content if isinstance(content, bytes) "
         "else content.encode()).hexdigest()[:16]\n"
     )
-    if needle in text and "json.dumps(content" not in text:
+    if needle in text and not _serialises_name(text, "content"):
         text = text.replace(
             needle,
             "        if not isinstance(content, (bytes, str)):\n"
@@ -408,13 +534,20 @@ def _module_compiles(text: str) -> bool:
 
 
 def _preceded_by_del(text: str, start: int) -> bool:
+    """Is the subscript at ``start`` the target of a deletion statement?
+
+    Fallback for source that does not parse (the AST path marks Del ctx).
+    Asked of Python's grammar: the word before ``start`` is the deletion
+    keyword exactly when ``<word> x`` parses to a Delete statement."""
     prefix = text[:start].rstrip()
-    if not prefix.endswith("del"):
+    m = re.search(r"(\w+)$", prefix)
+    if not m:
         return False
-    if len(prefix) == 3:
-        return True
-    ch = prefix[-4]
-    return not (ch.isalnum() or ch == "_")
+    try:
+        stmt = ast.parse(m.group(1) + " x").body[0]
+    except SyntaxError:
+        return False
+    return isinstance(stmt, ast.Delete)
 
 
 def _starts_with_augassign(text: str) -> bool:
@@ -615,16 +748,11 @@ def _strip_unless_guarded(match: "re.Match[str]") -> str:
     is left in place so the Store's own fallback runs.
     """
     text = match.string
-    indent = match.group(1)
-    before = text[: match.start()].rstrip("\n").rsplit("\n", 1)[-1]
-    after = text[match.end():].lstrip("\n").split("\n", 1)[0]
-    if (
-        before.strip() == "try:"
-        and len(before) - len(before.lstrip()) < len(indent)
-        and after.strip().startswith(("except ImportError", "except (ImportError"))
-        and len(after) - len(after.lstrip()) == len(before) - len(before.lstrip())
-    ):
-        return match.group(0)
+    tree = _tree(text)
+    if tree is not None:
+        line = text.count("\n", 0, match.start()) + 1
+        if _import_is_guarded(tree, line):
+            return match.group(0)
     return ""
 
 
@@ -637,14 +765,14 @@ def emit_store_host_di(text: str) -> str:
     injected helper is used instead. Do not emit ``app/dependencies.py``:
     notification's offline MCP path is an ImportError fallback.
     """
-    if not text or "app.dependencies" not in text:
+    if not text or not _references_module(text, "app.dependencies"):
         return text
     stripped = _DEPENDENCIES_IMPORT.sub(_strip_unless_guarded, text)
-    if "def _create_block_instance" in stripped:
+    if _defines(stripped, "_create_block_instance"):
         return stripped
     from app.factory.build.roles_constants import _INSTANTIATE_HELPER
 
-    if "def _instantiate_store_block" not in stripped:
+    if not _defines(stripped, "_instantiate_store_block"):
         stripped = insert_after_future_imports(
             stripped, _INSTANTIATE_HELPER.lstrip("\n") + "\n"
         )
