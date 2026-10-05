@@ -528,6 +528,9 @@ def download_product_package(
         # grades and what the buyer opens, so the MANIFEST must agree with
         # it by construction rather than by coincidence.
         provenance=_provenance_from_tree(out),
+        # Gates this build moved to advisory (its brief never defined them),
+        # read from the build status -- shipped, never silenced.
+        advisory_checks=list(status.get("advisory_checks") or []),
     )
     write_export_manifest(out, manifest)
     tree_contents = {

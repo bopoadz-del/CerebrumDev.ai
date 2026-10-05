@@ -38,7 +38,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, FrozenSet, Mapping, Optional, Sequence
 
 logger = logging.getLogger("cerebrumdev.factory.runner")
 
@@ -574,6 +574,74 @@ class RoleRunner:
             if event.kind is EventKind.REWORK:
                 return list((event.payload or {}).get("failure_names") or [])
         return []
+
+    def _brief_defined_checks(self) -> Optional[FrozenSet[str]]:
+        """The checks THIS build's brief turns on (brief_gates): the WRITER's
+        compiled brief when this process compiled one, else the same brief
+        compiled here from the blueprint. ``None`` -- recorded -- when no
+        brief can be compiled; the round's failures then route as reported."""
+        from app.factory.build import brief_gates
+
+        recorded = (self.state.get("compiled_brief") or {}).get("acceptance_checks")
+        try:
+            accept = (
+                tuple(recorded)
+                if recorded
+                else brief_gates.compiled_acceptance_checks(
+                    self.blueprint, self.plan, blocks_root=self.blocks_root
+                )
+            )
+            return brief_gates.brief_defined_checks(self.blueprint, accept)
+        except Exception as exc:  # noqa: BLE001 -- named in the ledger
+            self.ledger.append(
+                EventKind.NOTE,
+                detail=(
+                    "brief checks unavailable "
+                    f"({type(exc).__name__}: {exc}); failures route as reported"
+                ),
+                payload={"brief_checks_unavailable": f"{type(exc).__name__}: {exc}"},
+            )
+            return None
+
+    def _split_by_brief(self, verdict: GateResult) -> Any:
+        from app.factory.build import brief_gates
+
+        defined = self._brief_defined_checks()
+        if defined is None:
+            return None
+        return brief_gates.split_failures(verdict, defined)
+
+    def _record_advisory(self, role: BuildRole, verdict: GateResult, split: Any) -> None:
+        """One ledger event per round: which checks went advisory, and why."""
+        from app.factory.build import brief_gates
+
+        writer = bool(split.defined)
+        self.ledger.append(
+            EventKind.NOTE,
+            role=role,
+            detail=(
+                f"GATE ADVISORY: {', '.join(split.invented_checks)} -- "
+                f"{brief_gates.REASON_NOT_DEFINED}; "
+                + (
+                    "only the brief-defined failures go to the writer"
+                    if writer
+                    else "no writer round"
+                )
+            ),
+            payload={
+                "gate_advisory": [
+                    {
+                        "check": check,
+                        "reason": brief_gates.REASON_NOT_DEFINED,
+                        "findings": [f for c, f in split.invented if c == check],
+                    }
+                    for check in split.invented_checks
+                ],
+                "gate": verdict.gate,
+                "brief_defined_failures": split.defined_checks,
+                "writer_dispatched": writer,
+            },
+        )
 
     def _refresh_factory_files(self) -> None:
         from app.factory.build.factory_refresh import refresh_factory_files
@@ -1672,6 +1740,38 @@ class RoleRunner:
                         rework=rework_used,
                         findings=verdict.findings,
                     )
+
+                # A gate exists only if a brief can turn it on (GATES.md).
+                # The round's failures are split BEFORE any writer dispatch:
+                # a failure on a check this build's brief never defined means
+                # the gate is wrong, not the product -- it goes advisory, with
+                # the reason in the ledger, and never reaches the writer.
+                split = self._split_by_brief(verdict)
+                if split is not None and split.invented:
+                    from app.factory.build import brief_gates
+
+                    self._record_advisory(role, verdict, split)
+                    if not split.defined:
+                        self.ledger.append(
+                            EventKind.GATE_PASSED,
+                            role=role,
+                            detail=(
+                                f"advisory: {', '.join(split.invented_checks)} "
+                                f"{brief_gates.REASON_NOT_DEFINED}"
+                            ),
+                            payload={
+                                "gate": verdict.gate,
+                                "advisory": True,
+                                "advisory_checks": split.invented_checks,
+                                "reason": brief_gates.REASON_NOT_DEFINED,
+                                "location": role.value,
+                            },
+                        )
+                        done.add(role)
+                        work_list = ()
+                        index += 1
+                        continue
+                    verdict = brief_gates.narrowed(verdict, split)
 
                 # G1: route by OWNER. Only a product-code failure can be fixed
                 # by a WRITER rework; the writer is forbidden to edit tests/.
