@@ -179,9 +179,12 @@ def test_start_runner_build_binds_tenant_from_session_identity_when_account_abse
     smoke = _Path(__file__).resolve().parents[2] / "blueprints" / "examples" / "runner_smoke.yaml"
     captured = {}
 
-    def fake_run(blueprint, output_dir, blocks_root, cycle="code", tenant_store=None, brief=""):
+    def fake_run(
+        blueprint, output_dir, blocks_root, cycle="code", tenant_store=None, brief="", inputs_hash=""
+    ):
         captured["tenant_store"] = tenant_store
         captured["brief"] = brief
+        captured["inputs_hash"] = inputs_hash
 
     class _InlineThread:
         def __init__(self, *args, **kwargs):
