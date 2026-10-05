@@ -692,9 +692,7 @@ def _attach_connectors(
     """
     if not chosen and not missing:
         return
-    import re
-
-    from app.factory.blueprint import ProductBlueprint
+    from app.factory.blueprint import ProductBlueprint, connector_slug
     from app.factory.store_catalog import offerable_connector_ids, store_catalog
 
     pd = state.product_design
@@ -707,16 +705,20 @@ def _attach_connectors(
         return
     attach = [c for c in dict.fromkeys(chosen) if c in offerable]
     placeholders = [*missing, *[c for c in chosen if c not in offerable]]
+    bp = dict(pd.blueprint)
+    caps = [dict(c) for c in (bp.get("capabilities") or []) if isinstance(c, dict)]
+    # A connector a drafted capability declared it calls, that the Store
+    # cannot supply, is a placeholder too -- so the capability's declaration
+    # and the blueprint's placeholder list name the same systems.
+    declared = [c for cap in caps for c in (cap.get("connectors") or [])]
     slugs = list(
         dict.fromkeys(
             s
-            for s in (re.sub(r"[^a-z0-9_]+", "_", m.lower()).strip("_") for m in placeholders)
+            for s in (connector_slug(m) for m in [*placeholders, *declared])
             if s and s not in offerable
         )
     )
 
-    bp = dict(pd.blueprint)
-    caps = [dict(c) for c in (bp.get("capabilities") or []) if isinstance(c, dict)]
     bound = {b for c in caps for b in (c.get("block_ids") or [])}
     added: List[str] = []
     for cid in attach:

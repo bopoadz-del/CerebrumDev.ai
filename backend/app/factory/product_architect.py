@@ -30,7 +30,12 @@ from app.core.llm_config import (
     _is_cursor_chat_host,
     _is_openrouter_base,
 )
-from app.factory.blueprint import FactoryScenario, ProductBlueprint, load_blueprint
+from app.factory.blueprint import (
+    FactoryScenario,
+    ProductBlueprint,
+    connector_slug,
+    load_blueprint,
+)
 from app.factory.dual_registry import DualRegistryError, dual_registered_ids
 from app.factory.dual_registry import certified_ids as _store_certified_ids
 from app.factory.generator import ProductGenerator, git_head
@@ -161,7 +166,8 @@ Return ONLY a JSON object with this shape:
       "id": "<snake_case capability id>",
       "description": "<what this capability does>",
       "block_ids": ["<ids from the AVAILABLE BLOCKS list only>"],
-      "strategy_hint": "REUSE"
+      "strategy_hint": "REUSE",
+      "connectors": ["<external systems this capability calls that no AVAILABLE BLOCK supplies>"]
     }
   ]
 }
@@ -175,6 +181,9 @@ Rules:
 - block_ids may ONLY contain ids from the AVAILABLE BLOCKS list. Never invent ids.
 - If no available block fits a capability, use "block_ids": [] and
   "strategy_hint": "GENERATE".
+- connectors names the outside systems (a CRM, a DMS, a bank) a capability
+  calls that no available block supplies. Each ships as a marked placeholder
+  until it is built, and the capability says so; use [] when it calls none.
 """
 
 
@@ -353,6 +362,12 @@ def _blueprint_from_llm_payload(
         block_ids = [
             b for b in item.get("block_ids", []) if isinstance(b, str) and b in dual
         ]
+        # A connector a block supplies is that block, not a placeholder.
+        connectors = [
+            s
+            for s in (connector_slug(c) for c in (item.get("connectors") or []) if isinstance(c, str))
+            if s and s not in dual
+        ]
         caps.append(
             {
                 "id": cap_id.replace("-", "_"),
@@ -360,6 +375,7 @@ def _blueprint_from_llm_payload(
                 or f"Capability {cap_id}",
                 "block_ids": block_ids,
                 "strategy_hint": "REUSE" if block_ids else "GENERATE",
+                "connectors": connectors,
             }
         )
     if not caps:
@@ -385,7 +401,9 @@ def _blueprint_from_llm_payload(
         "factory_scenario": FactoryScenario.CREATE_PRODUCT.value,
         "capabilities": caps,
         "ui_modules": ["command_center", "operational_chat", "resident_engineer"],
-        "connectors": [],
+        # Every connector a capability calls that no block supplies is a
+        # declared placeholder (an honest not_implemented stub).
+        "connectors": list(dict.fromkeys(c for cap in caps for c in cap["connectors"])),
         "edge_profile": "standard",
         "human_authority": True,
     }
@@ -555,12 +573,16 @@ def _draft_blueprint_from_brief_inner(
             fallback_note = f"LLM drafting failed ({type(exc).__name__}); deterministic fallback used"
 
     dual = sorted(dual_registered_ids())
-    # Blocks the brief actually mentions become REUSE capabilities; audit is
-    # always added (governance is cross-cutting) so the demo blueprint never
-    # ships governance-less.
+    # Blocks the brief actually mentions become REUSE capabilities; every
+    # block that DECLARES itself governance (capability_class) is always
+    # added -- governance is cross-cutting -- so the demo blueprint never
+    # ships governance-less. Which block that is, the Store says.
     mentioned = [b for b in dual if b.replace("_", " ") in text or b in text]
-    if "audit" in dual and "audit" not in mentioned:
-        mentioned.append("audit")
+    from app.factory.store_kits import GOVERNANCE, capability_classes
+
+    for bid, cls in sorted(capability_classes(dual).items()):
+        if cls == GOVERNANCE and bid not in mentioned:
+            mentioned.append(bid)
 
     # The vertical is a structured field (the Floor's vertical_hint), never
     # parsed out of the brief's prose. Without one the draft is generic and

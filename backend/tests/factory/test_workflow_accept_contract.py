@@ -37,7 +37,7 @@ from app.factory.build.workflow_accept import (
     PRODUCT_EVENT_BUS_STEP_0_HALT,
     EVENT_BUS_STEP_ACTION,
     EVENT_BUS_STEP_CHANNEL,
-    PREPARED_EVENT_BUS_STEP_EXAMPLE,
+    prepared_event_bus_step_example,
     PRODUCT_ACCEPT_CHECK,
     PRODUCT_ACCEPT_TEST,
     PRODUCT_EMAIL_SAMPLE,
@@ -323,7 +323,7 @@ def test_vetcare_compiled_brief_grounds_event_bus_workflow_accept():
     assert "every event_bus" in text
     assert "keep/done" in text
     assert "reminders_notifications" in text
-    assert PREPARED_EVENT_BUS_STEP_EXAMPLE in text
+    assert prepared_event_bus_step_example() in text
     assert "'input': payload" in text
     assert '"channel": "mcp"' in text
     assert '"action": "publish"' in text
@@ -335,7 +335,7 @@ def test_vetcare_compiled_brief_grounds_event_bus_workflow_accept():
     assert PRODUCT_ACCEPT_TEST in rules
     assert "appointment_scheduling" in rules
     assert "reminders_notifications" in rules
-    assert PREPARED_EVENT_BUS_STEP_EXAMPLE in rules
+    assert prepared_event_bus_step_example() in rules
     assert workflow_accept_forbidden_lines() in text
 
 
