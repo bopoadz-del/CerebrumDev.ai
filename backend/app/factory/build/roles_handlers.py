@@ -2328,6 +2328,35 @@ def _render_jobs_module(
     )
 
 
+def render_routes_files(
+    entries: List[Dict[str, Any]], blueprint: Any
+) -> Dict[Path, str]:
+    """``app/routes.py`` and every Factory module it imports, as one unit.
+
+    The routes import ``app.placeholders``. Rendering routes alone left that
+    import to a later, separate stamp, and a packaging path that wrote only
+    the routes shipped an unimportable product (ModuleNotFoundError). Every
+    path that emits routes writes them through here.
+    """
+    import ast
+
+    from app.factory.build.store_acceptance import factory_renders
+
+    routes = _render_routes(entries)
+    imported = {
+        node.module.replace(".", "/") + ".py"
+        for node in ast.walk(ast.parse(routes))
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+    files: Dict[Path, str] = {Path("app") / "routes.py": routes}
+    # Every module the routes import that the Factory stamps, rendered from
+    # the same table the stamp writes -- read from the imports, never listed.
+    for rel, text in factory_renders("platform", (), blueprint).items():
+        if str(rel).replace("\\", "/") in imported:
+            files[Path(rel)] = text
+    return files
+
+
 def _render_routes(entries: List[Dict[str, Any]]) -> str:
     """FastAPI router: kernel job routes, then one POST/GET/GET-id per capability."""
     out = [
@@ -4945,7 +4974,8 @@ def run_writer(
         ),
     )
     sources["jobs"] = fallback_source
-    ctx.workspace.write_text(Path("app") / "routes.py", _render_routes(entries))
+    for rel, text in render_routes_files(entries, ctx.blueprint).items():
+        ctx.workspace.write_text(rel, text)
     from app.factory.build.persist_accept import (
         PersistRoundTripHalt,
         assert_persist_round_trip_ready,

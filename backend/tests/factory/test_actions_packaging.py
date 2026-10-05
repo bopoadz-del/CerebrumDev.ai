@@ -30,6 +30,7 @@ from app.factory.build.roles_handlers import (
     _render_actions_init,
     _render_routes,
     actions_init_eager_reexports,
+    render_routes_files,
 )
 from app.factory.build.writer_behaviour import F1_HALT
 from app.factory.product_architect import plan_blueprint
@@ -169,9 +170,9 @@ def _write_factory_packaged_workspace(root: Path) -> list[str]:
         }
         for cap, entity, _b, _d in _VET_CAPS
     ]
-    (root / "app" / "routes.py").write_text(
-        _render_routes(entries), encoding="utf-8"
-    )
+    # Routes and the Factory modules they import are one unit.
+    for rel, text in render_routes_files(entries, None).items():
+        (root / rel).write_text(text, encoding="utf-8")
     _write_vetcare_circular_handlers(root)
     # Factory routes import jobs / kernel_bridge / domain_ops. Stub the
     # extras the probe does not need so packaging is the variable.

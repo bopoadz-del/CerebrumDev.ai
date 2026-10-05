@@ -152,6 +152,33 @@ def test_routes_refuse_after_auth_and_payload_checks_and_before_the_handler():
     compile(src, "routes.py", "exec")
 
 
+def test_routes_ship_with_every_factory_module_they_import():
+    """Structural: an emitted ``from app.<m> import`` naming a module the
+    Factory stamps must arrive in the same unit as the routes. Rendering the
+    routes alone once shipped ``import app.placeholders`` with no module."""
+    import ast
+
+    from app.factory.build.roles_handlers import render_routes_files
+    from app.factory.build.store_acceptance import factory_rendered_paths
+
+    files = render_routes_files(
+        [{"capability_id": WORKING, "name": WORKING, "entity": WORKING,
+          "body": "    return handle(payload)", "source": "test"}],
+        _blueprint(),
+    )
+    shipped = {str(p).replace("\\", "/") for p in files}
+    stamped = set(factory_rendered_paths())
+    routes = files[Path("app") / "routes.py"]
+    imported = {
+        node.module.replace(".", "/") + ".py"
+        for node in ast.walk(ast.parse(routes))
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("app.")
+    }
+    owed = imported & stamped
+    assert PRODUCT_MODULE in owed  # the control: the check sees the import
+    assert owed <= shipped, owed - shipped
+
+
 def test_the_negative_floor_counts_the_typed_refusal_and_nothing_looser():
     from app.factory.build.negative_floor import render_negative_tests
 
