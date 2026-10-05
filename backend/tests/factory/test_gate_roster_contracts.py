@@ -268,7 +268,15 @@ def test_probe_findings_are_marked_so_library_logging_cannot_bury_them():
     from app.factory.build import writer_behaviour
 
     probe = writer_behaviour.BEHAVIOUR_PROBE
-    writes = [ln for ln in probe.splitlines() if "stderr.write" in ln]
-    assert writes, "probe emits no findings at all"
-    marked = probe.count("GATE-FINDING")
-    assert marked >= len(writes), (marked, len(writes))
+    # Every write the probe makes is a typed record: one JSON object per line,
+    # written by _record and nowhere else.
+    writes = [ln.strip() for ln in probe.splitlines() if ".write(" in ln]
+    assert writes == ['stream.write(json.dumps({"gate_record": level, "kind": kind, "text": text}) + "\\n")'], writes
+    noise = (
+        "INFO  [alembic.runtime.migration] Running upgrade  -> 0001\n"
+        "INFO:     Started server process [42]\n"
+    )
+    record = '{"gate_record": "finding", "kind": "schema", "text": "cap: refused"}'
+    assert writer_behaviour.probe_records(noise + record + "\n" + noise) == [
+        {"gate_record": "finding", "kind": "schema", "text": "cap: refused"}
+    ]

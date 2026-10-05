@@ -122,7 +122,6 @@ CLI_GENERATE_LLM_FALLTHROUGH_BLOCKERS = frozenset(
     }
 )
 KEEP_PATH_FACTORY_GROUNDED_REUSE = "factory_grounded_reuse"
-NO_MODEL_CONFIGURED_HINT = "No model configured"
 UNRECOGNIZED_MODEL_HINT = "unrecognized_model"
 #: A coder CLI that tags its own error: ``[claude-code:unrecognized_model]``.
 _CLI_ERROR_TAG_RE = re.compile(r"\[[a-z][a-z0-9-]*:([a-z_]+)\]", re.IGNORECASE)
@@ -1487,12 +1486,17 @@ def _extract_unrecognized_model_id(blob: str) -> str:
     return ""
 
 
-def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
+def classify_cli_exit(
+    code: int, output: str, *, model_configured: bool = True
+) -> Tuple[str, str]:
     """Named fail-closed class for a non-zero FACTORY_CODE_CLI exit.
 
     ``FACTORY_CODE_CLI_FAILED`` stays the generic honesty class. A more
-    specific ``FACTORY_CODE_CLI_NO_MODEL`` fires when the CLI prints
-    ``No model configured`` (headless /login is not a Floor path).
+    specific ``FACTORY_CODE_CLI_NO_MODEL`` fires when the Factory's own
+    configuration has no usable model for the selected CLI
+    (``model_configured`` -- the caller passes ``cli_default_model_ok``),
+    read from the config the Factory writes, never from the CLI's words
+    (headless /login is not a Floor path).
     ``FACTORY_CODE_CLI_MODEL_DENIED`` fires on 404 / Permission denied
     for the configured model (live tip after #324: ``k3`` /
     ``kimi-code/k3`` on Moonshot) and on Claude Code
@@ -1512,8 +1516,7 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
 
     exit_bit = f"CLI exited {code}"
     blob = output or ""
-    lowered = blob.lower()
-    if NO_MODEL_CONFIGURED_HINT in blob:
+    if not model_configured:
         return (
             NAMED_BLOCKER_CLI_NO_MODEL,
             (
@@ -1557,19 +1560,6 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
                 "Moonshot api.moonshot.ai — not managed kimi-code/k3). Boot "
                 "rewrites ~/.kimi-code/config.toml. A templated pilot zip "
                 f"is not a ≥2h CLI session. {OWNER_GATED_CLI_LOG}."
-            ),
-        )
-    if "input must be provided" in lowered and (
-        "--print" in lowered or "stdin" in lowered or "prompt" in lowered
-    ):
-        return (
-            NAMED_BLOCKER_CLI_FAILED,
-            (
-                f"{NAMED_BLOCKER_CLI_FAILED}: {exit_bit} — coder CLI --prompt "
-                "/ --print received no prompt/stdin. Pass the "
-                "docs/coder_brief.md body as the --prompt argument and on "
-                "stdin (not a bare @docs/coder_brief.md mention). "
-                f"{OWNER_GATED_CLI_LOG}."
             ),
         )
     if billing:
@@ -3122,7 +3112,9 @@ def _run_cli_session(
             log_text = log_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             log_text = ""
-        blocker, detail = classify_cli_exit(int(code or 1), log_text)
+        blocker, detail = classify_cli_exit(
+            int(code or 1), log_text, model_configured=cli_default_model_ok(cli)
+        )
         return DispatchResult(
             via="cli",
             ok=False,

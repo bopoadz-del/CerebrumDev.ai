@@ -43,10 +43,18 @@ from app.factory.build.writer_behaviour import (
     GATE_NAME,
     SCHEMA_HALT,
     SCHEMA_SQL_HALT,
-    banner_detail,
+    HALT_SENTENCES,
+    _render_probe,
+    banner_from_records,
     classify_unmarked_probe_failure,
     findings_from_probe_stderr,
+    probe_records,
 )
+
+
+def _r(level, kind, text):
+    """A typed probe record, exactly as the probe writes one."""
+    return {"gate_record": level, "kind": kind, "text": text}
 
 # A route body that persists whatever arrived, regardless of the handler.
 # This is LotDesk's shape (app/routes.py:127-128 of the shipped artifact).
@@ -393,75 +401,69 @@ def test_kernel_route_does_not_report_success_over_a_failed_block(tmp_path):
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
-def test_probe_emits_canonical_schema_halt():
-    """The probe sentence and the host banner constant must stay one string."""
-    assert SCHEMA_HALT in BEHAVIOUR_PROBE
-    assert "GATE-FINDING: " + SCHEMA_HALT in BEHAVIOUR_PROBE
+def test_the_probe_and_the_host_share_one_set_of_halt_sentences():
+    """Each halt kind's sentence is the host constant, rendered INTO the probe:
+    the probe emits ``_halt(kind)`` and never spells the sentence itself."""
+    rendered = _render_probe()
+    for kind, sentence in (
+        ("schema", SCHEMA_HALT), ("f11", F11_HALT),
+        ("contract", CONTRACT_HALT), ("migration", SCHEMA_SQL_HALT),
+    ):
+        assert HALT_SENTENCES[kind] == sentence
+        assert sentence in rendered
+        assert '_halt("%s"' % kind in BEHAVIOUR_PROBE
 
 
-def test_probe_emits_canonical_f11_halt():
-    """The F11 sentence and the host banner constant must stay one string."""
-    assert F11_HALT in BEHAVIOUR_PROBE
-    assert "GATE-FINDING: " + F11_HALT in BEHAVIOUR_PROBE
-    # ``(F1)`` is a substring of ``(F11)`` — the probe must still name F11.
-    assert "(F11)" in BEHAVIOUR_PROBE
+def test_the_probe_writes_typed_records_and_no_marker_lines():
+    assert "GATE-FINDING" not in BEHAVIOUR_PROBE
+    assert "GATE-MISS" not in BEHAVIOUR_PROBE
+    line = '{"gate_record": "miss", "kind": "f11", "text": "x: declares block(s) (F11)"}'
+    assert probe_records("library noise\n" + line) == [_r("miss", "f11", "x: declares block(s) (F11)")]
 
 
-def test_probe_emits_canonical_contract_halt():
-    """Refuse-all payload/block mismatch must stay one named sentence."""
-    assert CONTRACT_HALT in BEHAVIOUR_PROBE
-    assert "GATE-FINDING: " + CONTRACT_HALT in BEHAVIOUR_PROBE
-
-
-def test_banner_detail_contract_does_not_masquerade_as_f1():
+def test_banner_contract_does_not_masquerade_as_f1():
     """Live makerspace Floor banner must name the contract halt, not F1."""
     line = (
         "dashboards_and_reports: dashboard: the action travelled inside "
         "the payload; Answered 'Unknown action: None' (CONTRACT: unknown action)"
     )
-    assert banner_detail([CONTRACT_HALT, line]) == CONTRACT_HALT
-    assert banner_detail([line]) == CONTRACT_HALT
-    assert F1_HALT not in banner_detail([CONTRACT_HALT, line])
-    assert "success over a failed block" not in banner_detail([line])
+    recs = [_r("halt", "contract", CONTRACT_HALT), _r("finding", "contract", line)]
+    assert banner_from_records(recs) == CONTRACT_HALT
+    assert F1_HALT not in banner_from_records(recs)
 
 
-def test_probe_emits_canonical_sql_halt():
-    """Import/migration crashes must be marked, never raw sqlite DDL."""
-    assert SCHEMA_SQL_HALT in BEHAVIOUR_PROBE
-    assert "GATE-FINDING: " + SCHEMA_SQL_HALT in BEHAVIOUR_PROBE
-
-
-def test_banner_detail_schema_does_not_masquerade_as_f1():
+def test_banner_schema_does_not_masquerade_as_f1():
     """Live construction: API findings were schema, Floor banner said F1."""
-    assert banner_detail([SCHEMA_HALT]) == SCHEMA_HALT
-    assert banner_detail(
-        [SCHEMA_HALT, "site_diary_capture: refused a payload built from its own declared constraints (x)"]
-    ) == SCHEMA_HALT
-    assert F1_HALT not in banner_detail([SCHEMA_HALT])
-    assert banner_detail(
-        ["widget_intake: did not fail closed — answered {} while every block call failed (F1)"]
-    ) == F1_HALT
-    assert banner_detail([]) == "behaviour probe failed with no output"
-    assert banner_detail(["workspace does not import: ModuleNotFoundError: x"]) == (
-        "workspace does not import: ModuleNotFoundError: x"
-    )
+    assert banner_from_records([_r("halt", "schema", SCHEMA_HALT)]) == SCHEMA_HALT
+    assert banner_from_records([
+        _r("halt", "schema", SCHEMA_HALT),
+        _r("finding", "schema", "site_diary_capture: refused a payload (x)"),
+    ]) == SCHEMA_HALT
+    assert banner_from_records([
+        _r("finding", "f1", "widget_intake: did not fail closed (F1)")
+    ]) == F1_HALT
+    assert banner_from_records([]) == "behaviour probe failed with no output"
+    assert banner_from_records([
+        _r("halt", "import", HALT_SENTENCES["import"]),
+        _r("finding", "import", "ModuleNotFoundError: x"),
+    ]) == HALT_SENTENCES["import"] + ": ModuleNotFoundError: x"
 
 
-def test_banner_detail_f11_does_not_masquerade_as_f1():
-    """Live construction: API findings were F11, Floor banner said F1.
+def test_banner_f11_does_not_masquerade_as_f1():
+    """Live construction: API findings were F11, Floor banner said F1. The
+    kind decides -- the text may contain any substring it likes."""
+    f11_line = "daily_site_diary: declares block(s) it never invokes: workflow (F11)"
+    recs = [_r("halt", "f11", F11_HALT), _r("finding", "f11", f11_line)]
+    assert banner_from_records(recs) == F11_HALT
+    assert F1_HALT not in banner_from_records(recs)
 
-    ``(F1)`` is a substring of ``(F11)``. The host used to map every
-    unused-block finding onto the LotDesk sentence.
-    """
-    f11_line = (
-        "daily_site_diary: declares block(s) it never invokes: workflow (F11)"
-    )
-    assert banner_detail([f11_line]) == F11_HALT
-    assert banner_detail([F11_HALT, f11_line]) == F11_HALT
-    assert F1_HALT not in banner_detail([f11_line])
-    assert F1_HALT not in banner_detail([F11_HALT, f11_line])
-    assert banner_detail([f11_line]) != F1_HALT
-    assert "success over a failed block" not in banner_detail([f11_line])
+
+def test_a_records_kind_decides_never_its_words():
+    """A finding whose TEXT carries another class's marker is still its own
+    kind: the host reads the record, not the sentence."""
+    misleading = "x: did not fail closed -- persisted (F1) (F11) (CONTRACT"
+    assert banner_from_records([_r("halt", "schema", SCHEMA_HALT),
+                                _r("finding", "schema", misleading)]) == SCHEMA_HALT
 
 
 def _add_schema_refuser(root: Path, cap_id: str = "broken_schema") -> None:
@@ -588,7 +590,7 @@ def test_gate_does_not_halt_when_baseline_ok_false_because_block_failed(tmp_path
     app = tmp_path / "app"
     (app / "dispatch.py").write_text(
         "def execute(block_id, payload=None, action=None, params=None):\n"
-        "    return {'status': 'error', 'block': block_id,\n"
+        "    return {'status': 'error', 'block': block_id, 'error_kind': 'unavailable',\n"
         "            'error': 'sample payload rejected by block'}\n",
         encoding="utf-8",
     )
@@ -616,7 +618,7 @@ def test_kernel_templated_route_with_failing_blocks_does_not_halt_as_schema(tmp_
     app = tmp_path / "app"
     (app / "dispatch.py").write_text(
         "def execute(block_id, payload=None, action=None, params=None):\n"
-        "    return {'status': 'error', 'block': block_id,\n"
+        "    return {'status': 'error', 'block': block_id, 'error_kind': 'unavailable',\n"
         "            'error': 'sample payload rejected by block'}\n",
         encoding="utf-8",
     )
@@ -841,22 +843,21 @@ def downgrade() -> None:
 
 
 def test_unmarked_sql_stderr_is_not_the_floor_banner():
-    """Live Floor banner was ``scheduled_time TEXT,`` from raw[-8:]."""
+    """Live Floor banner was ``scheduled_time TEXT,`` from raw[-8:]. Unmarked
+    stderr is classified by the traceback's exception CLASS."""
     findings = findings_from_probe_stderr(_LIVE_SQL_STDERR)
     assert findings
     joined = " ".join(findings)
     assert "scheduled_time TEXT" not in joined
     assert SCHEMA_SQL_HALT in joined
-    assert "OperationalError" in joined or "schema or migration" in joined
-    detail = banner_detail(findings)
-    assert detail != "scheduled_time TEXT,"
+    detail = banner_from_records(probe_records(_LIVE_SQL_STDERR), _LIVE_SQL_STDERR)
     assert "scheduled_time TEXT" not in detail
     assert SCHEMA_SQL_HALT in detail
     assert F1_HALT not in detail
     assert SCHEMA_HALT not in detail
 
 
-def test_banner_detail_skips_raw_sql_fragments():
+def test_a_raw_line_is_never_the_banner():
     sql_lines = [
         "scheduled_time TEXT,",
         "duration_minutes INTEGER,",
@@ -864,11 +865,10 @@ def test_banner_detail_skips_raw_sql_fragments():
         "service_type TEXT,",
         "PRIMARY KEY (id)",
     ]
-    assert banner_detail(sql_lines) != "scheduled_time TEXT,"
-    assert "scheduled_time TEXT" not in banner_detail(sql_lines)
-    assert SCHEMA_SQL_HALT in banner_detail(sql_lines)
-    classified = classify_unmarked_probe_failure(sql_lines)
-    assert classified.startswith(SCHEMA_SQL_HALT)
+    banner = banner_from_records([], "\n".join(sql_lines))
+    for line in sql_lines:
+        assert line not in banner
+    assert banner == classify_unmarked_probe_failure(sql_lines)
 
 
 def test_probe_value_samples_appointment_fields_not_the_word_sample():
