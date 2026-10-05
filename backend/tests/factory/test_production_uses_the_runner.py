@@ -99,17 +99,23 @@ def test_generate_product_routes_to_the_runner(tmp_path, monkeypatch):
             raise AssertionError("the template generator was used")
 
     monkeypatch.setattr(product_architect, "ProductGenerator", _Boom)
-    monkeypatch.setattr(
-        "app.factory.build_jobs.start_runner_build",
-        lambda bp, out, blocks_root=None, cycle=None, quota_account_id=None, tenant_identity=None, brief="": {
-            "engine": RUNNER,
-            "output_dir": str(out),
-        },
-    )
+    forwarded = {}
 
-    result = product_architect.generate_product(load_blueprint(SMOKE), tmp_path / "out")
+    def runner(bp, out, **kwargs):
+        forwarded.update(kwargs)
+        return {"engine": RUNNER, "output_dir": str(out)}
+
+    monkeypatch.setattr("app.factory.build_jobs.start_runner_build", runner)
+
+    result = product_architect.generate_product(
+        load_blueprint(SMOKE), tmp_path / "out", platform_id="plt_0123456789abcdef"
+    )
     assert result["engine"] == RUNNER
     assert "template" not in called
+    # The runner receives the platform it builds and is never told to start
+    # over unless the caller (only the typed Start over) asked.
+    assert forwarded["platform_id"] == "plt_0123456789abcdef"
+    assert forwarded["start_over"] is False
 
 
 def test_a_finished_build_carries_agent_manufactured_shape(tmp_path, stub_coder):
