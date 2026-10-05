@@ -12,6 +12,8 @@ pin the two halves of the fix:
 
 from __future__ import annotations
 
+from app.factory.build.runner import REWORK_BUDGET
+
 import zipfile
 from pathlib import Path
 
@@ -20,7 +22,6 @@ import pytest
 from app.factory.blueprint import load_blueprint
 from app.factory.build.auto_pilot import (
     AUTO_PILOT_CEILING_S,
-    AUTO_PILOT_MAX_REWORK,
     AUTO_PILOT_STAGE_2_S,
     AUTO_PILOT_WALL_CLOCK_S,
     factory_auto_pilot_enabled,
@@ -102,7 +103,8 @@ def test_floor_budget_stays_a_code_phase_without_auto_pilot(monkeypatch):
     monkeypatch.delenv("FACTORY_BUILD_MAX_REWORK", raising=False)
     monkeypatch.delenv("FACTORY_PHASE_WALL_CLOCK_S", raising=False)
     assert _wall_clock_s() == 1800.0
-    assert _max_rework() == 1
+    # Owner rule: 2 rework rounds per gate, at every cycle.
+    assert _max_rework() == REWORK_BUDGET == 2
     assert _phase_wall_clock_s() == 1500.0
 
 
@@ -115,10 +117,10 @@ def test_floor_budget_starts_stage_1_not_a_silent_2h(monkeypatch):
     assert AUTO_PILOT_CEILING_S == 7200.0
     assert _wall_clock_s(auto_pilot=True) == AUTO_PILOT_WALL_CLOCK_S
     assert _wall_clock_s(auto_pilot=True) != AUTO_PILOT_CEILING_S
-    assert _max_rework(auto_pilot=True) == AUTO_PILOT_MAX_REWORK
+    assert _max_rework(auto_pilot=True) == REWORK_BUDGET
     assert _phase_wall_clock_s(auto_pilot=True) == 5400.0
     assert _wall_clock_s(cycle="pilot") == AUTO_PILOT_WALL_CLOCK_S
-    assert _max_rework(cycle="pilot") == AUTO_PILOT_MAX_REWORK
+    assert _max_rework(cycle="pilot") == REWORK_BUDGET
     assert _phase_wall_clock_s(cycle="pilot") == 5400.0
 
 
@@ -260,7 +262,7 @@ def test_floor_run_stays_code_only_without_auto_pilot(monkeypatch, tmp_path):
     _run(load_blueprint(SMOKE), out, None, "code")
     assert captured["auto_pilot"] is False
     assert captured["budget"].wall_clock_s == 1800.0
-    assert captured["budget"].max_rework == 1
+    assert captured["budget"].max_rework == REWORK_BUDGET == 2
     assert captured["budget"].phase_wall_clock_s == 1500.0
 
 
@@ -292,7 +294,7 @@ def test_floor_run_opts_into_auto_pilot_when_enabled(monkeypatch, tmp_path):
     assert captured["auto_pilot"] is True
     assert captured["cycle"] == "code"
     assert captured["budget"].wall_clock_s == AUTO_PILOT_WALL_CLOCK_S
-    assert captured["budget"].max_rework == AUTO_PILOT_MAX_REWORK
+    assert captured["budget"].max_rework == REWORK_BUDGET
     assert captured["budget"].phase_wall_clock_s == 5400.0
 
 

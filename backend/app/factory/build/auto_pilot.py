@@ -25,7 +25,6 @@ AUTO_PILOT_WALL_CLOCK_S = 1800.0
 AUTO_PILOT_STAGE_2_S = 2700.0
 #: Last-resort ceiling. Never granted without an inspect that asked for it.
 AUTO_PILOT_CEILING_S = 7200.0
-AUTO_PILOT_MAX_REWORK = 3
 #: When a code cycle auto-opens pilot, do not jump remaining to 90 min.
 #: Stay on the current staged wall; inspect-and-ramp owns extra time.
 PILOT_MIN_REMAINING_S = 0.0

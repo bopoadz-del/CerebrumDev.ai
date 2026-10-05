@@ -459,7 +459,10 @@ def test_the_same_failure_twice_stops_before_the_budget_runs_out(blueprint, tmp_
     outcome = runner.run()
 
     assert not outcome.ok
-    assert outcome.detail.startswith("SAME_FAILURE_TWICE: ")
+    # The owner's stop status: FAILED(<gate>, <check>, <finding>): <reason>.
+    assert outcome.detail.startswith("FAILED(TESTER, "), outcome.detail
+    assert "SAME_FAILURE_TWICE: " in outcome.detail
+    assert outcome.outcome is Outcome.FAILED_GATE
     assert outcome.rework_used == 1
     assert _phase_starts(runner.ledger, BuildRole.WRITER) == 2
 
