@@ -543,6 +543,9 @@ def download_product_package(
         provenance=_provenance_from_tree(out),
         # The level this platform was BUILT to, read from its run's ledger.
         build_level=status.get("build_level"),
+        # Gates this build moved to advisory (its brief never defined them),
+        # read from the build status -- shipped, never silenced.
+        advisory_checks=list(status.get("advisory_checks") or []),
     )
     write_export_manifest(out, manifest)
     tree_contents = {

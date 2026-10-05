@@ -9,9 +9,12 @@ repos.
 
 - A platform build must pass gates G0–G7 before it is pushed.
 - A platform PR must map its acceptance criteria to GATES.md gates.
-- After every build: update GATES.md with any failure a gate missed, then
-  update the store block/pattern that would have prevented it, then
-  re-vendor the product at the new pinned commit.
+- A gate failure the brief never defined means the GATE is wrong, not the
+  product: the gate goes advisory immediately, with the reason in the
+  ledger, and no patch is written. A gate exists only if a brief can turn
+  it on. (The build runner enforces this: each round's failures are
+  classified brief-defined vs factory-invented before any writer dispatch,
+  and only brief-defined failures reach the writer.)
 - Verify any product repo with
   `python scripts/check_platform_gates.py --repo <path>`.
 

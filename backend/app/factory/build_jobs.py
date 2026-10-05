@@ -33,7 +33,7 @@ import re
 import shutil
 import threading
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 logger = logging.getLogger("cerebrumdev.factory.build_jobs")
 
@@ -692,6 +692,12 @@ def _crash_failure(trail: list) -> "Dict[str, Any] | None":
     return dict(running)
 
 
+def _advisory_checks(events: Any) -> List[Dict[str, Any]]:
+    from app.factory.build.brief_gates import advisory_checks
+
+    return advisory_checks(events)
+
+
 def build_status(
     output_dir: Path | str,
     *,
@@ -903,6 +909,9 @@ def build_status(
         "phase_trail": phase_trail,
         "failure": failure,
         "recovered_failure": recovered_failure,
+        # Every check this build moved to advisory -- a gate its brief never
+        # defined -- with the reason, so none is silenced out of sight.
+        "advisory_checks": _advisory_checks(events),
         **monitor,
         **_cycle_fields(ledger, terminal),
         **session_status(Path(output_dir)),
