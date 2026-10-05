@@ -240,10 +240,13 @@ def test_the_model_call_note_is_closed_when_the_wall_kills_the_cli(tmp_path):
 
 
 def test_the_close_detail_is_the_one_build_status_waits_for():
-    """Tie the two modules: the worker's close text must be the exact text
-    _open_model_call_note treats as a close, or the fix silently rots."""
+    """Tie the two modules: the worker's close NOTE must carry the typed
+    close state _open_model_call_note decides on (model_call.py), or the fix
+    silently rots. The detail text is display only; a close without the
+    typed state is not a close."""
     from types import SimpleNamespace
 
+    from app.factory.build.model_call import CLOSED, MODEL_CALL_STATE
     from app.factory.build_jobs import _open_model_call_note
 
     opened = SimpleNamespace(
@@ -253,11 +256,22 @@ def test_the_close_detail_is_the_one_build_status_waits_for():
     )
     closed = SimpleNamespace(
         detail=codewhale_worker.MODEL_CALL_CLOSED_DETAIL,
+        payload={"model_call": False, MODEL_CALL_STATE: CLOSED},
+        ts="2026-09-28T00:20:00+00:00",
+    )
+    text_only = SimpleNamespace(
+        detail=codewhale_worker.MODEL_CALL_CLOSED_DETAIL,
         payload={"model_call": False},
         ts="2026-09-28T00:20:00+00:00",
     )
     assert _open_model_call_note([opened]) is not None
     assert _open_model_call_note([opened, closed]) is None
+    # The sentence alone decides nothing any more.
+    assert _open_model_call_note([opened, text_only]) is not None
+    # And the worker really emits that state on close.
+    import inspect
+
+    assert "MODEL_CALL_STATE: CLOSED" in inspect.getsource(codewhale_worker)
 
 
 # -- surviving a server restart mid-WRITER -------------------------------------
