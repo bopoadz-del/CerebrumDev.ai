@@ -400,6 +400,38 @@ def _section_lines(*parts: str) -> str:
     return "\n".join(part for part in parts if part is not None)
 
 
+def writer_gate_acceptance_lines() -> Tuple[str, ...]:
+    """What the WRITER gate measures, as what to build -- one line per sub-check,
+    tagged with the id its verdict carries, so a WRITER-gate failure is
+    brief-defined (it goes back to the writer, never advisory) and the writer
+    is told the structure before the gate checks it."""
+    from app.factory.build.brief_gates import (
+        UI_END_TO_END_CHECK,
+        UI_SURFACE_CHECK,
+        WORKSPACE_COMPILES_CHECK,
+        WRITER_BEHAVIOUR_CHECK,
+        WRITER_CONTRACT_CHECK,
+    )
+    from app.factory.build.money_contract import MONEY_SETTINGS_MODULE
+    from app.factory.build.writer_behaviour import SELF_CHECK_COMMAND
+
+    return (
+        "- every module under app/ parses and the app imports  "
+        f"[check:{WORKSPACE_COMPILES_CHECK}]",
+        "- the capability handlers are agent-authored, and no currency code or "
+        f"tax rate is a literal in code: money is read from {MONEY_SETTINGS_MODULE}  "
+        f"[check:{WRITER_CONTRACT_CHECK}]",
+        "- every capability fails closed when a block it calls fails: it returns "
+        "the block's refusal (ok=false) and persists nothing -- never ok=true over "
+        "a failed block (F1) -- and it calls every block it declares (F11); run "
+        f"`{SELF_CHECK_COMMAND}` (the WRITER gate's own probe) and fix every "
+        f"record it prints before declaring done  [check:{WRITER_BEHAVIOUR_CHECK}]",
+        f"- the declared UI modules exist and are served  [check:{UI_SURFACE_CHECK}]",
+        "- the served UI drives the capabilities and every route it calls "
+        f"answers  [check:{UI_END_TO_END_CHECK}]",
+    )
+
+
 PREFLIP_SCOPE = (
     "READS/WRITES/NEVER/ACCEPTANCE not declared on block.json (pre-flip) "
     "— do not invent scopes"
@@ -751,6 +783,7 @@ def render_slot_bodies(
         f"instead and is not judged  [check:{PRODUCT_ROUND_TRIP_CHECK}]",
         persist_accept_acceptance_line(),
         schema_accept_acceptance_line(),
+        *writer_gate_acceptance_lines(),
         reuse_accept_acceptance_line(),
         workflow_accept_acceptance_line(
             capability_ids=event_bus_workflow_capability_ids(inventory)

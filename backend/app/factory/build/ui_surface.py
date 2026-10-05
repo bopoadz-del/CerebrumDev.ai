@@ -20,6 +20,8 @@ the thing being removed, not the choice.
 
 from __future__ import annotations
 
+from app.factory.build.brief_gates import UI_SURFACE_CHECK
+
 import json
 import re
 from pathlib import Path
@@ -28,7 +30,7 @@ from typing import TYPE_CHECKING, List
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.factory.build.gates import GateContext, GateResult
 
-GATE_NAME = "ui_surface"
+GATE_NAME = UI_SURFACE_CHECK
 
 #: A module shorter than this is a placeholder, not a surface.
 MIN_MODULE_CHARS = 200

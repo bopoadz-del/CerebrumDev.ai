@@ -70,8 +70,12 @@ RUNNER_FLAG_ENV = "FACTORY_RUNNER_ENABLED"
 LEDGER_FILENAME = "build_ledger.jsonl"
 
 #: Phases that participate in the rework loop. A failed TESTER gate sends the
-#: WRITER back round with the findings as its work list.
+#: WRITER back round with the findings as its work list -- and so does a
+#: failed WRITER gate: its typed findings (F1, F11, schema, compile, UI) are
+#: work only the writer can do. Both share the rework budget and the
+#: same-failure-twice rule.
 REWORK_SOURCE = BuildRole.TESTER
+REWORK_SOURCES = frozenset({BuildRole.TESTER, BuildRole.WRITER})
 REWORK_TARGET = BuildRole.WRITER
 
 
@@ -100,6 +104,24 @@ def _test_defect_items(defects: Sequence[Dict[str, Any]]) -> list:
         for d in defects
         if d.get("nodeid")
     ]
+
+
+def _writer_gate_items(verdict: Any) -> tuple:
+    """The WRITER's rework list after its OWN gate failed: one item per
+    finding, named by the check it measures (brief_gates), then the command
+    that runs the gate's probe so the writer can confirm the fix itself."""
+    from app.factory.build import brief_gates
+    from app.factory.build.writer_behaviour import SELF_CHECK_COMMAND
+
+    items = [
+        f"[{check}] {finding}" for check, finding in brief_gates.failure_checks(verdict)
+    ]
+    items.append(
+        f"[{brief_gates.WRITER_BEHAVIOUR_CHECK}] before declaring done, run "
+        f"`{SELF_CHECK_COMMAND}` (the WRITER gate's own probe) and fix every "
+        "record it prints"
+    )
+    return tuple(items)
 
 
 def landed_capability_ids(ledger: Any, inputs_hash: str) -> list:
@@ -1820,7 +1842,7 @@ class RoleRunner:
                             + [f"n3_handoff_failed: {exc}"],
                         )
 
-                if role is not REWORK_SOURCE:
+                if role not in REWORK_SOURCES:
                     return self._finish(
                         Outcome.FAILED_GATE,
                         f"{role.value} gate '{verdict.gate}' failed: {verdict.detail}",
@@ -1865,11 +1887,23 @@ class RoleRunner:
                 # by a WRITER rework; the writer is forbidden to edit tests/.
                 from app.factory.build import failure_owner
 
-                owned = failure_owner.classify(
-                    verdict,
-                    self._factory_test_files(),
-                    behavior_test_files=self._behavior_test_files(),
-                )
+                if role is BuildRole.WRITER:
+                    # The WRITER gate judges the writer's own tree -- no test
+                    # file is involved -- so every brief-defined failure it
+                    # reports is work for the writer.
+                    owned = {
+                        "owner": failure_owner.PRODUCT,
+                        "tests": [],
+                        "generator": "",
+                        "test_defects": [],
+                        "factory_owned": [],
+                    }
+                else:
+                    owned = failure_owner.classify(
+                        verdict,
+                        self._factory_test_files(),
+                        behavior_test_files=self._behavior_test_files(),
+                    )
                 defects = list(owned.get("test_defects") or [])
                 if owned["owner"] == failure_owner.TEST_DEFECT:
                     # Only writer tests that contradict the DECLARED
@@ -1965,19 +1999,27 @@ class RoleRunner:
                     return self._finish(
                         Outcome.FAILED_BUDGET_SPENT,
                         f"rework budget of {self.budget.max_rework} exhausted; "
-                        f"{REWORK_SOURCE.value} gate still failing: {verdict.detail}",
+                        f"{role.value} gate still failing: {verdict.detail}",
                         phase=role,
                         rework=rework_used,
                         findings=verdict.findings,
                     )
 
                 rework_used += 1
-                work_list = tuple(verdict.findings) + tuple(_test_defect_items(defects))
+                if role is BuildRole.WRITER:
+                    work_list = _writer_gate_items(verdict)
+                else:
+                    work_list = tuple(verdict.findings) + tuple(_test_defect_items(defects))
                 self.ledger.append(
                     EventKind.REWORK,
                     role=REWORK_TARGET,
-                    detail=f"round {rework_used}: {verdict.detail}",
-                    payload={"findings": list(verdict.findings), "failure_names": current},
+                    detail=f"round {rework_used} ({role.value} gate '{verdict.gate}'): {verdict.detail}",
+                    payload={
+                        "findings": list(verdict.findings),
+                        "failure_names": current,
+                        "source": role.value,
+                        "gate": verdict.gate,
+                    },
                 )
                 # Send the WRITER back round. Its earlier pass no longer counts.
                 done.discard(REWORK_TARGET)

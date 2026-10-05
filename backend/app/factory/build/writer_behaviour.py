@@ -42,6 +42,8 @@ module attributes are patched too.
 
 from __future__ import annotations
 
+from app.factory.build.brief_gates import WRITER_BEHAVIOUR_CHECK
+
 import json
 import re
 import sys
@@ -50,7 +52,7 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.factory.build.gates import GateContext, GateResult
 
-GATE_NAME = "writer_behaviour"
+GATE_NAME = WRITER_BEHAVIOUR_CHECK
 
 #: Probe / Floor text when no capability accepts a payload from its own model.
 SCHEMA_HALT = "no capability accepted its own schema"
@@ -753,6 +755,12 @@ def _database_error_types() -> tuple:
     return tuple(roots)
 
 
+#: The typed record levels the probe emits. One tuple: the gate's reader
+#: (probe_records) and the writer's self-check (render_self_check) both read
+#: it, so the two can never disagree about what a record is.
+RECORD_LEVELS = ("halt", "finding", "miss", "unjudged")
+
+
 def probe_records(text: str) -> list[dict]:
     """The typed records in probe output: one JSON object per line carrying
     ``gate_record`` (halt / finding / miss / unjudged), ``kind`` and ``text``. Anything
@@ -765,7 +773,7 @@ def probe_records(text: str) -> list[dict]:
             continue
         if (
             isinstance(rec, dict)
-            and rec.get("gate_record") in ("halt", "finding", "miss", "unjudged")
+            and rec.get("gate_record") in RECORD_LEVELS
             and isinstance(rec.get("kind"), str)
             and isinstance(rec.get("text"), str)
         ):
@@ -874,6 +882,93 @@ def _render_probe() -> str:
             1,
         ).replace("HALTS = {}", "HALTS = " + repr(dict(HALT_SENTENCES)), 1)
     )
+
+
+#: The writer's self-check: the WRITER gate's own probe, stamped into the
+#: workspace so the writer can see what the gate will see BEFORE it declares
+#: done. Its own suite cannot -- F1 needs every block call made to fail.
+SELF_CHECK_REL = "scripts/factory_checks.py"
+SELF_CHECK_COMMAND = f"python {SELF_CHECK_REL}"
+
+_SELF_CHECK_TEMPLATE = '''"""Factory self-check -- the WRITER gate's own behaviour probe.
+
+Factory-owned and re-stamped on every writer pass: editing it changes
+nothing, the gate runs its own copy of the same probe. Run it from the
+workspace root before declaring done:
+
+    {command}
+
+It forces every block call to fail and records what each capability does.
+Each line is one typed record: [halt] or [finding] fails the WRITER gate;
+[miss] is a capability that reported success over a failed block (F1),
+refused its own schema, or declared blocks it never calls (F11) -- fix
+every one. Exit 0 only when there is nothing to fix.
+"""
+
+import json
+import os
+import subprocess
+import sys
+
+PROBE = {probe}
+RECORD_LEVELS = {levels}
+TIMEOUT_S = 900
+
+
+def main():
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    env.pop("DATABASE_URL", None)
+    proc = subprocess.run(
+        [sys.executable, "-c", PROBE],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=TIMEOUT_S,
+    )
+    records = []
+    for line in ((proc.stdout or "") + "\\n" + (proc.stderr or "")).splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(rec, dict) and rec.get("gate_record") in RECORD_LEVELS:
+            records.append(rec)
+    for rec in records:
+        print("[{{}}] {{}}: {{}}".format(rec["gate_record"], rec.get("kind"), rec.get("text")))
+    halted = proc.returncode != 0
+    to_fix = [r for r in records if r["gate_record"] in ("halt", "finding", "miss")]
+    if halted and not records:
+        print("[halt] probe: the probe exited " + str(proc.returncode) + " with no typed record")
+        print((proc.stderr or "")[-2000:])
+    print(
+        "WRITER GATE WOULD FAIL" if halted
+        else str(len(to_fix)) + " capability record(s) to fix" if to_fix
+        else "every capability fails closed when its blocks fail"
+    )
+    return 1 if (halted or to_fix) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
+
+def render_self_check() -> str:
+    """The stamped self-check: the SAME rendered probe the gate runs."""
+    return _SELF_CHECK_TEMPLATE.format(
+        command=SELF_CHECK_COMMAND,
+        probe=repr(_render_probe()),
+        levels=repr(RECORD_LEVELS),
+    )
+
+
+def emit_self_check(workspace: object) -> None:
+    """Stamp the self-check (Factory-owned) before any writer path runs."""
+    from app.factory.build.workspace import write_workspace_text
+
+    write_workspace_text(workspace, SELF_CHECK_REL, render_self_check())
 
 
 def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
