@@ -407,4 +407,14 @@ class TestAuthorshipReadsTheWritersActualStamp:
 
         script = render_acceptance_script()
         assert 'if "CODER_MODEL" in text' not in script
-        assert "agent_written_handler_ids_in_workspace" in script
+        # One source, rendered: the harness carries the Factory's canonical
+        # stamp regex and agent vocabulary verbatim (a product never ships
+        # the Factory package to import them from).
+        from app.factory.build.authorship import (
+            AGENT_SOURCE_PREFIXES,
+            _WRITER_ROLE_STAMP_RE,
+        )
+
+        assert repr(_WRITER_ROLE_STAMP_RE.pattern) in script
+        assert repr(tuple(AGENT_SOURCE_PREFIXES)) in script
+        assert "app.factory" not in script
