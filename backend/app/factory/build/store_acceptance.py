@@ -37,6 +37,10 @@ AUTH_REL = Path("app") / "auth.py"
 #: graded on thirteen checks nothing ever told it about -- see
 #: app/factory/build/acceptance_floor.py.
 from app.factory.build.acceptance_floor import advisory_ids as _floor_advisory_ids
+from app.factory.build.authorship import AGENT_SOURCE_EXACT as _AGENT_SOURCE_EXACT
+from app.factory.build.authorship import AGENT_SOURCE_PREFIXES as _AGENT_SOURCE_PREFIXES
+from app.factory.build.authorship import FULL_PILOT_MIN_AUTHORED_ACTIONS as _FULL_PILOT_MIN_AUTHORED
+from app.factory.build.authorship import _WRITER_ROLE_STAMP_RE as _AUTHOR_STAMP_RE
 from app.factory.build.acceptance_floor import check_ids as _floor_check_ids
 
 ACCEPTANCE_CHECK_NAMES: tuple[str, ...] = _floor_check_ids()
@@ -1277,7 +1281,163 @@ def check_handler_bodies_distinct() -> Tuple[str, str]:
     return "PASS", "%d distinct handle() bodies" % len(bodies)
 
 
+#: The DB-API entry points a statement is handed to -- callable NAMES,
+#: compared exactly against the call's own target, never searched in text.
+_SQL_ENTRY_CALLS = frozenset(
+    ("execute", "executemany", "executescript", "exec_driver_sql", "text")
+)
+
+
+def _is_dynamic_string(node, built) -> bool:
+    """Built at run time: an f-string with fields, a + or % with a string
+    side, a .format() call, or a local name bound to one of those."""
+    if isinstance(node, ast.JoinedStr):
+        return any(isinstance(v, ast.FormattedValue) for v in node.values)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
+        for side in (node.left, node.right):
+            if isinstance(side, ast.Constant) and isinstance(side.value, str):
+                return True
+            if _is_dynamic_string(side, built):
+                return True
+        return False
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "format"
+    ):
+        return True
+    if isinstance(node, ast.Name):
+        return node.id in built
+    return False
+
+
+def _call_target(call) -> str:
+    func = call.func
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    if isinstance(func, ast.Name):
+        return func.id
+    return ""
+
+
+def _scope_nodes(scope):
+    """Every node of one scope, not descending into nested functions."""
+    out = []
+    stack = list(ast.iter_child_nodes(scope))
+    while stack:
+        node = stack.pop()
+        out.append(node)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+    return out
+
+
+def _dynamic_sql_sites() -> List[str]:
+    """file:line of every execute()-family call handed a dynamically built
+    string. Decided on the syntax tree: the call's target plus the shape of
+    its first argument. Core statements, compiled statements and constant
+    literals with bound parameters pass."""
+    sites = []
+    app_dir = ROOT / "app"
+    if not app_dir.is_dir():
+        return sites
+    for path in sorted(app_dir.rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError):
+            continue
+        functions = [
+            n for n in ast.walk(tree)
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+        # A function that hands one of its parameters to an execute call is
+        # itself an entry point for that argument position (a writer's own
+        # _exec(conn, sql, params) wrapper) -- followed structurally, not by name.
+        sinks = dict((name, 0) for name in _SQL_ENTRY_CALLS)
+        for _ in range(3):
+            for fn in functions:
+                params = [a.arg for a in fn.args.args]
+                for n in _scope_nodes(fn):
+                    if not isinstance(n, ast.Call):
+                        continue
+                    callee = _call_target(n)
+                    position = sinks.get(callee)
+                    if position is None or len(n.args) <= position:
+                        continue
+                    arg = n.args[position]
+                    if isinstance(arg, ast.Name) and arg.id in params:
+                        sinks.setdefault(fn.name, params.index(arg.id))
+        scopes = [tree] + functions
+        for scope in scopes:
+            nodes = _scope_nodes(scope)
+            built = set()
+            for _ in range(2):
+                for n in nodes:
+                    if isinstance(n, ast.Assign) and _is_dynamic_string(n.value, built):
+                        built.update(t.id for t in n.targets if isinstance(t, ast.Name))
+                    elif (
+                        isinstance(n, ast.AugAssign)
+                        and isinstance(n.target, ast.Name)
+                        and isinstance(n.op, ast.Add)
+                    ):
+                        built.add(n.target.id)
+            for n in nodes:
+                if not isinstance(n, ast.Call):
+                    continue
+                position = sinks.get(_call_target(n))
+                if position is None or len(n.args) <= position:
+                    continue
+                if _is_dynamic_string(n.args[position], built):
+                    sites.append("%s:%s" % (path.relative_to(ROOT).as_posix(), n.lineno))
+    return sorted(set(sites))
+
+
+def _health_probes_app_db() -> Tuple[bool, str]:
+    """app/health.py asks app.db for the live database and runs a probe on
+    it -- read from the syntax tree (imports, calls), never from its text."""
+    path = ROOT / "app" / "health.py"
+    if not path.is_file():
+        return False, "app/health.py missing"
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    except SyntaxError as exc:
+        return False, "app/health.py does not parse: %s" % exc
+    db_modules = set()
+    db_connect = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom) and n.module == "app":
+            for alias in n.names:
+                if alias.name == "db":
+                    db_modules.add(alias.asname or alias.name)
+        elif isinstance(n, ast.ImportFrom) and n.module == "app.db":
+            for alias in n.names:
+                if alias.name == "connect":
+                    db_connect.add(alias.asname or alias.name)
+    connects = False
+    executes = False
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Call):
+            continue
+        func = n.func
+        if isinstance(func, ast.Attribute) and func.attr == "connect":
+            if isinstance(func.value, ast.Name) and func.value.id in db_modules:
+                connects = True
+        if isinstance(func, ast.Name) and func.id in db_connect:
+            connects = True
+        if isinstance(func, ast.Attribute) and func.attr == "execute":
+            executes = True
+    if not connects:
+        return False, "app/health.py does not take its database connection from app.db"
+    if not executes:
+        return False, "app/health.py never runs a probe on the database"
+    return True, "health probes the database app.db selects"
+
+
 def check_health_fail_closed() -> Tuple[str, str]:
+    probes, why = _health_probes_app_db()
+    if not probes:
+        return "FAIL", why
     missing = ROOT / ".acceptance-missing-disk"
     previous = os.environ.get("STORAGE_PATH")
     os.environ["STORAGE_PATH"] = str(missing)
@@ -1519,6 +1679,9 @@ def check_audit_clean() -> Tuple[str, str]:
     missing = [t for t in ("pip-audit", "bandit") if t not in text]
     if missing:
         return "FAIL", "CI does not run " + ", ".join(missing)
+    dynamic = _dynamic_sql_sites()
+    if dynamic:
+        return "FAIL", "dynamically built SQL reaches an execute call: " + ", ".join(dynamic[:6])
     measured = (os.environ.get("STORE_AUDIT_CLEAN") or "").strip().lower()
     if measured in ("0", "false", "dirty"):
         return "FAIL", "bandit/pip-audit reported HIGH or SQL-construction findings"
@@ -1654,13 +1817,17 @@ def check_cross_tenant_404(http: _Http) -> Tuple[str, str]:
 
 
 def check_authorship_floor() -> Tuple[str, str]:
-    from app.factory.build.authorship import (  # type: ignore
-        agent_written_handler_ids_in_workspace,
-        full_pilot_authorship_from,
-    )
-
-    # Prefer in-tree provenance so the product can judge itself without the
-    # factory. Fall back to counting action modules tagged agent-written.
+    # Judge the product by the product. The WRITER's docstring stamp is the
+    # one signal, and its vocabulary is the Factory's canonical one
+    # (the Factory's authorship module) RENDERED in here at stamp time: a
+    # delivered product never carries the Factory package, and importing it
+    # failed this line on every honest build (2026-10-04, ModuleNotFoundError;
+    # it only ever passed when a writer had copied Factory code into the
+    # product).
+    stamp_re = re.compile({_AUTHOR_STAMP_RE.pattern!r})
+    agent_prefixes = {tuple(_AGENT_SOURCE_PREFIXES)!r}
+    agent_exact = {sorted(_AGENT_SOURCE_EXACT)!r}
+    floor_min = {_FULL_PILOT_MIN_AUTHORED}
     receipt = {{}}
     for rel in ("docs/coder_receipt.json", "docs/build_provenance.json"):
         path = ROOT / rel
@@ -1669,41 +1836,25 @@ def check_authorship_floor() -> Tuple[str, str]:
                 receipt.update(json.loads(path.read_text(encoding="utf-8")))
             except (OSError, ValueError):
                 pass
-    # No receipt means no receipt -- not "authored nothing". The factory
-    # record (docs/coder_receipt.json, docs/build_provenance.json) is
-    # internal and does not ship, so asking it here would fail every
-    # delivered product. The stamp in each handler's own docstring is what
-    # this check is ABOUT, it is in the tree, and it is what the floor line
-    # asks the writer for. Judge the product by the product.
-    floor = None
-    if receipt:
+    actions = ROOT / "app" / "actions"
+    authored = 0
+    for path in (sorted(actions.glob("*.py")) if actions.is_dir() else []):
         try:
-            floor = full_pilot_authorship_from(receipt, ROOT)
-        except Exception:
-            floor = None
-    if floor is not None:
-        if floor.meets_floor:
-            return "PASS", "need≥%s action_py=%s cli=%s" % (
-                floor.need,
-                floor.action_py,
-                len(floor.cli_authored_ids),
-            )
-        return "FAIL", "below floor need≥%s action_py=%s" % (floor.need, floor.action_py)
-    # ONE source of truth for "the coding agent wrote this": the WRITER's own
-    # docstring stamp, read by the factory's canonical detector. A private
-    # substring list here drifted behind the writer -- it still looked for the
-    # pre-CodeWhale markers (CODER_MODEL / coding agent / coder CLI), so every
-    # CodeWhale-authored product counted authored=0 while shipping ten stamped
-    # handlers (live 2026-10-01, automotive_aiops: acceptance 20/21, and this
-    # line was the 1). No receipt ships with a delivered product, so this is
-    # the path every real product takes -- judge the product by its own stamp.
-    authored = len(agent_written_handler_ids_in_workspace(ROOT))
+            head = path.read_text(encoding="utf-8", errors="replace")[:4000]
+        except OSError:
+            continue
+        match = stamp_re.search(head)
+        if not match:
+            continue
+        source = match.group(1).strip()
+        if source.startswith(tuple(agent_prefixes)) or source.lower() in agent_exact:
+            authored += 1
     n_required = receipt.get("n_required") or receipt.get("n_required_capabilities")
     try:
         n_required = int(n_required) if n_required is not None else None
     except (TypeError, ValueError):
         n_required = None
-    need = 5 if n_required is None else min(5, max(1, int(n_required)))
+    need = floor_min if not n_required or n_required <= 0 else min(floor_min, max(1, n_required))
     if authored >= need:
         return "PASS", "authored=%s need≥%s" % (authored, need)
     return "FAIL", "authored=%s below need≥%s" % (authored, need)

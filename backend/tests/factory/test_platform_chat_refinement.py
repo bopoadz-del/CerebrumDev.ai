@@ -19,8 +19,10 @@ def state():
 def _draft_retail(state):
     from app.factory.product_architect import draft_blueprint_from_brief
 
+    # The vertical is the Floor's structured hint, not parsed from the brief.
     bp = draft_blueprint_from_brief(
-        "build me secure multi users platform for my retail business"
+        "build me secure multi users platform for my retail business",
+        vertical_hint="retail",
     )
     state.product_design.blueprint = bp.model_dump(mode="json")
     return bp
