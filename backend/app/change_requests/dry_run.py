@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from app.resident_engineer.injection_guard import strip_instruction_patterns
+from app.resident_engineer.modes import AutonomyLevel
 
 
 def evaluate_dry_run(
@@ -35,7 +36,7 @@ def evaluate_dry_run(
                 "against_dna": "security_policy.json / architecture.json",
             }
         )
-        if autonomy in {"L4", "L5"}:
+        if autonomy in {AutonomyLevel.L4.value, AutonomyLevel.L5.value}:
             risk_flags.append(
                 {
                     "code": "high_autonomy_repair",

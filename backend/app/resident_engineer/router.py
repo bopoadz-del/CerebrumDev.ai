@@ -14,7 +14,7 @@ from app.resident_engineer.heal.approval import create_heal_approval
 from app.resident_engineer.heal.catalog import ALLOWLISTED_HEAL_ACTIONS
 from app.resident_engineer.heal.executor import HealRejected, execute_heal
 from app.resident_engineer.heal.validate import HealValidationError
-from app.resident_engineer.modes import draft_change_request
+from app.resident_engineer.modes import AutonomyLevel, draft_change_request
 from app.resident_engineer.observe import observe
 
 try:
@@ -59,8 +59,8 @@ async def resident_status() -> Dict[str, Any]:
         "allowlisted_heal_actions": list(ALLOWLISTED_HEAL_ACTIONS),
         "auth_required": _STEWARD_AUTH,
         "levels": {
-            "L1": "observe",
-            "L2": "allowlisted_heal",
+            AutonomyLevel.L1.value: "observe",
+            AutonomyLevel.L2.value: "allowlisted_heal",
             "L3_L5": "draft_change_request_only",
         },
     }
@@ -134,7 +134,7 @@ class HealBody(BaseModel):
 
 
 class DraftBody(BaseModel):
-    level: str = "L3"
+    level: str = AutonomyLevel.L3.value
     kind: str = "ExpansionRequest"
     summary: str = ""
     product_id: Optional[str] = None

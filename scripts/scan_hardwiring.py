@@ -32,13 +32,17 @@ identifier in the path is a fixed point):
                 on a mapping (``for k in KEYS: if k in d: d[k]``) are contract
                 checks, not word lists. Members loaded from data at run time
                 are not literals and are not this form.
-  probe_id      OPT-IN (``--form probe_id``): a probe / test-case id used as
-                an exact string literal (``"R18"``, ``"E1"``) -- the shape
-                of a photographed probe set. Off by default here because the
-                Factory's letter+digit literals are its OWN finding and stage
-                codes (``"closes": "F6"``, ``item.code in {"F1", "F24"}``):
-                keys in its ledger, contracts not answers. A repo whose probe
-                sets are named that way (the Fork's E1/A3/R18) turns it on.
+  probe_id      a probe / test-case id used as an exact string literal
+                (``"R18"``, ``"E1"``) -- the shape of a photographed probe set.
+                Ids live in app/factory/build/probe_set.json; code asks by
+                shape/class/name, and an ordinal scale is an enum referenced
+                by member, never a spelled id.
+  phrase_match  a single string literal used as a decision input against
+                text (``"x" in text``, ``text.startswith("x")``), or a
+                compiled module-scope regex whose pattern holds words, applied
+                to text. Deciding by a phrase is classification by vocabulary
+                exactly like word_list; structure (AST, typed fields, magic
+                bytes, enum members) is the replacement.
 
 What this cannot see: a per-case branch keyed on a field NAME (``if name ==
 "status"``) or an answer table (``{"database": "query"}``) has no lexical
@@ -73,13 +77,9 @@ ROOT = Path(__file__).resolve().parent.parent
 #: behaviour, scanned like the Factory itself: the HTTP routers (the user's
 #: chat), all of core (auth, grounding, LLM routing, deploy, RAG), and the
 #: kernel / compiler / DNA / workbench packages. A root may be a directory or
-#: a single file.
-#:
-#: Not yet enforced, and why (measured, not grandfathered):
-#: ``backend/app/change_requests`` and ``backend/app/resident_engineer`` --
-#: their hits are the autonomy scale's level ids (``L1``..``L5``) read as
-#: probe ids, and a record key equal to a Store capability id. Bringing those
-#: to 0 is a gate-rule decision for the owner, not a product change.
+#: a single file. ``change_requests`` / ``resident_engineer`` name autonomy
+#: levels by enum member (``AutonomyLevel.L3``) and record keys by typed
+#: field (``ItemField.audit_trail``), never by spelled literal.
 DEFAULT_ROOTS = (
     "backend/app/factory",
     "backend/app/routers",
@@ -90,6 +90,8 @@ DEFAULT_ROOTS = (
     "backend/app/models",
     "backend/app/product_dna",
     "backend/app/workbench",
+    "backend/app/change_requests",
+    "backend/app/resident_engineer",
     "backend/app/main.py",
 )
 BASELINE = ROOT / "scripts" / "hardwiring_baseline.json"
@@ -122,6 +124,7 @@ DEFAULT_FORMS = (
     "product_literal",
     "word_list",
     "probe_id",
+    "phrase_match",
 )
 #: Forms decided by a loaded set rather than a pattern.
 DATA_FORMS = ("product_literal",)
@@ -139,11 +142,8 @@ def load_known_literals() -> FrozenSet[str]:
     spec.loader.exec_module(mod)
     known = mod.load()
     return frozenset(k.strip().lower() for k in known if k.strip())
-#: Measured, not yet enforced. phrase_match = a single string literal used as
-#: a decision input against text (scan_hardwiring.phrase_matches). It becomes a
-#: DEFAULT (enforced) form at 0 once the burn-down lands -- never by admitting
-#: the hits that stand today into a baseline.
-OPT_IN_FORMS: tuple = ("phrase_match",)
+
+
 #: Forms computed by a function over the syntax tree rather than a token
 #: pattern (selectable with --form like any other).
 AST_FORMS = ("word_list", "phrase_match")
@@ -386,11 +386,34 @@ _MATCH_DECISION_METHODS = ("search", "match", "fullmatch", "findall", "finditer"
 
 
 def _loads_secret_patterns(tree: ast.AST) -> bool:
-    return any(
-        isinstance(n, ast.Constant) and isinstance(n.value, str)
-        and n.value.endswith(SECRET_PATTERNS_FILE)
-        for n in ast.walk(tree)
-    )
+    """The file's name is used to REACH it: an operand of a path join
+    (``root / "secret_patterns.json"``) or an argument of a call (``open(...)``,
+    ``Path(...)``), directly or through a name bound to it. A module that only
+    binds the name -- this gate defining its rule -- loads nothing."""
+
+    def names_file(n: ast.AST) -> bool:
+        return (isinstance(n, ast.Constant) and isinstance(n.value, str)
+                and n.value.endswith(SECRET_PATTERNS_FILE))
+
+    aliases = {
+        t.id
+        for n in ast.walk(tree) if isinstance(n, ast.Assign) and names_file(n.value)
+        for t in n.targets if isinstance(t, ast.Name)
+    }
+    for node in ast.walk(tree):
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            operands, alias_ok = (node.left, node.right), True
+        elif isinstance(node, ast.Call):
+            # An alias reaches the file through a constructor/opener call
+            # (open(F), Path(F)); a method on another value (s.endswith(F))
+            # only compares with it.
+            operands, alias_ok = node.args, isinstance(node.func, ast.Name)
+        else:
+            continue
+        for n in operands:
+            if names_file(n) or (alias_ok and isinstance(n, ast.Name) and n.id in aliases):
+                return True
+    return False
 
 
 def _match_decisions(tree: ast.AST) -> List[Tuple[int, str]]:

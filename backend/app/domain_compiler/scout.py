@@ -1,8 +1,16 @@
 """Domain Intelligence Compiler — scout a donor repository.
 
 Discovers candidate formulas, rules, workflows and approval policies with
-file/line evidence. Discovery is AST-based (real code, not docstrings or
-comments). The scout NEVER certifies: every discovered artifact is marked
+file/line evidence. Discovery is by code SHAPE read from the AST -- what a
+function returns and how a constant is built -- never by the words in a
+name, comment or docstring, so a donor is scouted the same whatever
+vocabulary it is written in:
+
+* formula  -- a public function that returns an arithmetic result;
+* approval -- a public function that returns a boolean decision;
+* workflow -- a public function that chooses its result among constant
+  state values by condition;
+* rule     -- an UPPER-case module constant that is a table of records. The scout NEVER certifies: every discovered artifact is marked
 ``candidate`` with its provenance, and the discovery report separates
 VERIFIED (test evidence found) from UNVERIFIED.
 
@@ -13,30 +21,83 @@ only through the STORE_MANAGER / domain-review gates.
 from __future__ import annotations
 
 import ast
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-_CALC_HINT = re.compile(
-    r"(calculate|compute|score|rate|formula|amount|variance|tolerance|ratio|quantize|duration|price|cost)",
-    re.IGNORECASE,
-)
-_DECIMAL_HINT = re.compile(r"Decimal\(")
-_ROUND_HINT = re.compile(r"round\(")
-_RULE_HINTS = re.compile(
-    r"rule_id|violation_message|procedure|PRC-|approval|require_approved|refus",
-    re.IGNORECASE,
-)
-_WORKFLOW_HINTS = re.compile(
-    r"next_.*status|VALID_.*STATUS|states\s*=|transition",
-    re.IGNORECASE,
-)
-_APPROVAL_HINTS = re.compile(
-    r"require_approved|approve_request|minimum_approvals|self_approval|approver",
-    re.IGNORECASE,
-)
-_WORKFLOW_NAME = re.compile(r"^(next_|transition|advance|activate)")
+#: Arithmetic operators: a function that returns one of these computes a value.
+_ARITHMETIC = (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow)
+
+
+def _returns(node: Any) -> List[ast.expr]:
+    """The expressions a function returns (nested defs excluded)."""
+    out: List[ast.expr] = []
+    stack = list(node.body)
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        if isinstance(cur, ast.Return) and cur.value is not None:
+            out.append(cur.value)
+        stack.extend(ast.iter_child_nodes(cur))
+    return out
+
+
+def _computes(expr: ast.expr) -> bool:
+    """The returned value is built by arithmetic."""
+    return any(
+        isinstance(n, ast.BinOp) and isinstance(n.op, _ARITHMETIC) for n in ast.walk(expr)
+    )
+
+
+def _decides(expr: ast.expr) -> bool:
+    """The returned value is a boolean decision (a comparison or its negation/combination)."""
+    if isinstance(expr, ast.UnaryOp) and isinstance(expr.op, ast.Not):
+        return True
+    if isinstance(expr, ast.BoolOp):
+        return all(_decides(v) for v in expr.values)
+    return isinstance(expr, ast.Compare)
+
+
+def _state_leaves(expr: ast.expr) -> List[ast.expr]:
+    """Leaves of a conditional choice (a if c else b), else the expression."""
+    if isinstance(expr, ast.IfExp):
+        return _state_leaves(expr.body) + _state_leaves(expr.orelse)
+    return [expr]
+
+
+def _chooses_a_state(returns: List[ast.expr]) -> bool:
+    """The function picks its result among constant state values by condition:
+    either one conditional expression or several returns, at least one a str constant."""
+    leaves = [leaf for r in returns for leaf in _state_leaves(r)]
+    branching = len(returns) > 1 or any(isinstance(r, ast.IfExp) for r in returns)
+    return branching and any(
+        isinstance(leaf, ast.Constant) and isinstance(leaf.value, str) for leaf in leaves
+    )
+
+
+def _is_record_table(value: ast.expr) -> bool:
+    """A list of two-or-more-field dicts with str keys -- a table of records."""
+    if not isinstance(value, ast.List) or not value.elts:
+        return False
+    for elt in value.elts:
+        if not isinstance(elt, ast.Dict) or len(elt.keys) < 2:
+            return False
+        if not all(isinstance(k, ast.Constant) and isinstance(k.value, str) for k in elt.keys):
+            return False
+    return True
+
+
+def _called_names(tree: ast.AST) -> List[str]:
+    """Names a parsed module calls: f(...) and obj.f(...)."""
+    names: List[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                names.append(node.func.id)
+            elif isinstance(node.func, ast.Attribute):
+                names.append(node.func.attr)
+    return names
 
 
 @dataclass
@@ -101,10 +162,13 @@ class DonorScout:
                 text = test_file.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            for symbol in re.findall(r"\b([a-zA-Z_]\w*)\s*\(", text):
-                self._test_index.setdefault(symbol, []).append(
-                    str(test_file.relative_to(self.root)).replace("\\", "/")
-                )
+            try:
+                tree = ast.parse(text)
+            except SyntaxError:
+                continue
+            rel = str(test_file.relative_to(self.root)).replace("\\", "/")
+            for symbol in _called_names(tree):
+                self._test_index.setdefault(symbol, []).append(rel)
 
     def scout(self, paths: Optional[List[str]] = None) -> ScoutReport:
         self._build_test_index()
@@ -131,77 +195,53 @@ class DonorScout:
         except SyntaxError:
             return []
         out: List[Discovery] = []
-        lines = text.splitlines()
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                out.extend(self._classify_function(node, lines, rel))
+                out.extend(self._classify_function(node, rel))
             elif isinstance(node, ast.Assign):
                 if len(node.targets) != 1 or not isinstance(
                     node.targets[0], ast.Name
                 ):
                     continue
                 name = node.targets[0].id
-                if not re.match(r"^[A-Z_][A-Z0-9_]*$", name):
+                if not name.isupper() or not _is_record_table(node.value):
                     continue
-                if not isinstance(node.value, (ast.Dict, ast.List)):
-                    continue
-                segment = ast.get_source_segment(text, node.value) or ""
-                if _RULE_HINTS.search(segment):
-                    out.append(
-                        Discovery(
-                            kind="rule",
-                            symbol=name,
-                            path=rel,
-                            line=node.lineno,
-                            donor_commit=self.commit,
-                            test_evidence=self._test_index.get(name, []),
-                            notes="rule table constant — candidate, review before extraction",
-                        )
+                out.append(
+                    Discovery(
+                        kind="rule",
+                        symbol=name,
+                        path=rel,
+                        line=node.lineno,
+                        donor_commit=self.commit,
+                        test_evidence=self._test_index.get(name, []),
+                        notes="record-table constant — candidate, review before extraction",
                     )
+                )
         return out
 
     def _classify_function(
-        self, node: Any, lines: List[str], rel: str
+        self, node: Any, rel: str
     ) -> List[Discovery]:
         name = node.name
         if name.startswith("_"):
             return []
-        end = min(node.end_lineno or node.lineno, len(lines))
-        body = "\n".join(lines[node.lineno : end])
-        header = "\n".join(lines[node.lineno - 1 : min(node.lineno + 8, len(lines))])
-        out: List[Discovery] = []
+        returns = _returns(node)
         evidence = self._test_index.get(name, [])
-        if _CALC_HINT.search(name) or _DECIMAL_HINT.search(body) or _ROUND_HINT.search(body):
-            out.append(
-                Discovery(
-                    kind="formula",
-                    symbol=name,
-                    path=rel,
-                    line=node.lineno,
-                    donor_commit=self.commit,
-                    test_evidence=evidence,
-                )
+        kinds = []
+        if any(_computes(r) for r in returns):
+            kinds.append("formula")
+        if returns and all(_decides(r) for r in returns):
+            kinds.append("approval")
+        if _chooses_a_state(returns):
+            kinds.append("workflow")
+        return [
+            Discovery(
+                kind=kind,
+                symbol=name,
+                path=rel,
+                line=node.lineno,
+                donor_commit=self.commit,
+                test_evidence=evidence,
             )
-        if _APPROVAL_HINTS.search(name) or _APPROVAL_HINTS.search(header):
-            out.append(
-                Discovery(
-                    kind="approval",
-                    symbol=name,
-                    path=rel,
-                    line=node.lineno,
-                    donor_commit=self.commit,
-                    test_evidence=evidence,
-                )
-            )
-        if _WORKFLOW_NAME.match(name) and _WORKFLOW_HINTS.search(body):
-            out.append(
-                Discovery(
-                    kind="workflow",
-                    symbol=name,
-                    path=rel,
-                    line=node.lineno,
-                    donor_commit=self.commit,
-                    test_evidence=evidence,
-                )
-            )
-        return out
+            for kind in kinds
+        ]

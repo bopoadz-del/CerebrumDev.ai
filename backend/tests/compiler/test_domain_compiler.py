@@ -84,6 +84,29 @@ def test_scout_finds_kinds_with_evidence(donor_repo: Path):
     assert all(d.donor_commit == "abc1234" for d in report.discoveries)
 
 
+def test_scout_classifies_by_shape_not_vocabulary(tmp_path: Path):
+    """Names, comments and docstrings carry no hint words: discovery comes
+    from what the code returns and how its constants are built."""
+    repo = tmp_path / "plain"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "m.py").write_text(
+        "def f(a, b):\n    return a * b\n\n\n"
+        "def g(x):\n    return x > 3\n\n\n"
+        "def h(s, ok):\n    return 'b' if ok else s\n\n\n"
+        "def j(x):\n    return str(x)\n\n\n"
+        "TABLE = [{'k': 1, 'v': 2}, {'k': 3, 'v': 4}]\n"
+        "lower = [{'k': 1, 'v': 2}]\n",
+        encoding="utf-8",
+    )
+    kinds = {(d.kind, d.symbol) for d in DonorScout(repo).scout().discoveries}
+    assert kinds == {
+        ("formula", "f"),
+        ("approval", "g"),
+        ("workflow", "h"),
+        ("rule", "TABLE"),
+    }
+
+
 def test_compile_never_certifies_and_provenance_is_complete(donor_repo: Path):
     report = DonorScout(donor_repo, commit="abc1234").scout()
     gen = CandidatePackGenerator(

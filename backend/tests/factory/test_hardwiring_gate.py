@@ -203,3 +203,58 @@ def test_inline_word_lists_and_regex_joins_are_refused(gate, tmp_path):
     assert gate.main(["--root", "pkg"]) == 1
 
 
+# --- the default gate: every injected by-name decision is REJECTED -----------
+
+_INJECTIONS = {
+    "phrase_literal": (
+        "phrase_match",
+        "def route(text: str) -> str:\n"
+        "    if 'zorblat refund' in text.lower():\n"
+        "        return 'refund'\n"
+        "    return 'other'\n",
+    ),
+    "compiled_regex": (
+        "phrase_match",
+        "import re\n"
+        "_ASK = re.compile(r'\\bplease\\s+quillon\\b', re.IGNORECASE)\n\n\n"
+        "def asks(text: str) -> bool:\n"
+        "    return bool(_ASK.search(text))\n",
+    ),
+    "word_list": (
+        "word_list",
+        "def asks(text: str) -> bool:\n"
+        "    return any(w in text for w in ('zorblat', 'quillon'))\n",
+    ),
+    "probe_id": (
+        "probe_id",
+        "def skip(case: dict) -> bool:\n"
+        "    return case.get('id') == 'K7'\n",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_INJECTIONS))
+def test_the_default_gate_rejects_each_injection_then_is_green(gate, tmp_path, capsys, name):
+    """phrase_match is ENFORCED by default at baseline 0, beside word_list and
+    probe_id: no --form flag is needed for any of them to be refused."""
+    form, source = _INJECTIONS[name]
+    assert form in gate.DEFAULT_FORMS
+    _write(tmp_path, "pkg/ok.py", "x = 1\n")
+    assert gate.main(["--root", "pkg"]) == 0
+    _write(tmp_path, "pkg/bad.py", source)
+    assert gate.main(["--root", "pkg"]) == 1
+    err = capsys.readouterr().err
+    assert "REJECTED" in err and form in err and "pkg/bad.py:" in err
+    (tmp_path / "pkg" / "bad.py").unlink()
+    assert gate.main(["--root", "pkg"]) == 0
+
+
+def test_the_committed_baseline_grandfathers_nothing():
+    """phrase_match was flipped at 0: every form, every root, no file entries."""
+    data = json.loads((SCRIPT.parent / "hardwiring_baseline.json").read_text(encoding="utf-8"))
+    mod = _load()
+    assert data["files"] == {} and data["total"] == 0
+    assert tuple(data["forms"]) == mod.DEFAULT_FORMS
+    assert tuple(data["roots"]) == mod.DEFAULT_ROOTS
+
+

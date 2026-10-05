@@ -14,8 +14,9 @@ import sqlalchemy as sa
 from app.core import accounts_store, backup as bk
 from app.core.accounts_backup_restore import (
     list_backup_archives,
-    parse_accounts_sql,
-    parse_copy_sql,
+    load_accounts_data,
+    read_legacy_sql_dump,
+    read_structured_snapshot,
     run_restore_from_backup,
 )
 from scripts.migrate_accounts_to_postgres import (
@@ -78,34 +79,59 @@ def _write_archive(backups: Path, stamp: str, files: dict[str, bytes]) -> Path:
     return archive
 
 
-def _owner_sql(tmp_path: Path) -> bytes:
+def _owner_db(tmp_path: Path) -> Path:
     src = tmp_path / "dump-src.db"
     engine = sa.create_engine(f"sqlite:///{src}")
     _seed_account(engine, OWNER_ID, OWNER_EMAIL, OWNER_PASSWORD)
     engine.dispose()
-    sql_path = tmp_path / "accounts.sql"
-    bk.snapshot_postgres_via_sqlalchemy(f"sqlite:///{src}", sql_path)
-    return sql_path.read_bytes()
+    return src
 
 
-def test_parse_copy_sql_reads_accounts_rows():
-    text = (
-        "COPY public.accounts (id, email, email_verified) FROM stdin;\n"
-        f"{OWNER_ID}\t{OWNER_EMAIL}\tt\n"
-        "\\.\n"
-    )
-    data = parse_copy_sql(text)
-    assert data["accounts"][0]["id"] == OWNER_ID
-    assert data["accounts"][0]["email"] == OWNER_EMAIL
-    assert data["accounts"][0]["email_verified"] is True
+def _owner_snapshot(tmp_path: Path) -> bytes:
+    """The structured accounts.json every new archive carries."""
+    src = _owner_db(tmp_path)
+    out = tmp_path / "accounts.json"
+    bk.snapshot_postgres_via_sqlalchemy(f"sqlite:///{src}", out)
+    return out.read_bytes()
 
 
-def test_parse_insert_sql_reads_sqlalchemy_dump(tmp_path):
-    sql = _owner_sql(tmp_path).decode("utf-8")
-    data = parse_accounts_sql(sql)
-    assert data["accounts"][0]["id"] == OWNER_ID
-    assert data["accounts"][0]["email"] == OWNER_EMAIL
-    assert "password_hash" in data["accounts"][0]
+def _owner_legacy_sql(tmp_path: Path) -> bytes:
+    """A legacy SQL-INSERT dump, produced by a real SQL engine (iterdump)."""
+    import sqlite3
+
+    src = _owner_db(tmp_path)
+    conn = sqlite3.connect(src)
+    try:
+        return ("\n".join(conn.iterdump()) + "\n").encode("utf-8")
+    finally:
+        conn.close()
+
+
+def test_structured_snapshot_round_trips_the_rows(tmp_path):
+    path = tmp_path / "accounts.json"
+    path.write_bytes(_owner_snapshot(tmp_path))
+    data = read_structured_snapshot(path)
+    row = data["accounts"][0]
+    assert row["id"] == OWNER_ID and row["email"] == OWNER_EMAIL
+    assert row["email_verified"] is True
+    assert "password_hash" in row
+
+
+def test_a_legacy_sql_dump_is_read_by_a_sql_engine_not_parsed(tmp_path):
+    path = tmp_path / "accounts.sql"
+    path.write_bytes(_owner_legacy_sql(tmp_path))
+    data = read_legacy_sql_dump(path)
+    row = data["accounts"][0]
+    assert row["id"] == OWNER_ID and row["email"] == OWNER_EMAIL
+    assert row["email_verified"] is True
+
+
+def test_a_custom_pg_dump_names_the_operator_tool(tmp_path):
+    path = tmp_path / "accounts.dump"
+    path.write_bytes(b"PGDMP\x01\x0e\x00 invented custom-format header")
+    with pytest.raises(AccountsRestoreError) as exc:
+        load_accounts_data(path)
+    assert exc.value.code == "dump_requires_operator_tool"
 
 
 def test_list_backups_flags_dump_and_peeks_emails(tmp_path, monkeypatch):
@@ -113,11 +139,11 @@ def test_list_backups_flags_dump_and_peeks_emails(tmp_path, monkeypatch):
     _write_archive(
         backups,
         "20260912T030000Z",
-        {"accounts.sql": _owner_sql(tmp_path)},
+        {"accounts.json": _owner_snapshot(tmp_path)},
     )
     listing = list_backup_archives()
     assert listing["recommended"] == "cerebrumdev-backup-20260912T030000Z.tar.gz"
-    assert listing["archives"][0]["accounts_sql"] is True
+    assert listing["archives"][0]["accounts_json"] is True
     assert listing["archives"][0]["source_accounts"] == [
         {"id": OWNER_ID, "email": OWNER_EMAIL}
     ]
@@ -127,7 +153,7 @@ def test_list_backups_flags_dump_and_peeks_emails(tmp_path, monkeypatch):
 def test_from_backup_refuses_unset_url(tmp_path, monkeypatch):
     _storage, backups = _configure(monkeypatch, tmp_path, postgres_url=None)
     _write_archive(
-        backups, "20260912T030000Z", {"accounts.sql": _owner_sql(tmp_path)}
+        backups, "20260912T030000Z", {"accounts.json": _owner_snapshot(tmp_path)}
     )
     with pytest.raises(AccountsRestoreError) as exc:
         run_restore_from_backup(archive="cerebrumdev-backup-20260912T030000Z.tar.gz")
@@ -151,7 +177,7 @@ def test_from_backup_merges_sql_dump_without_wiping_smoke(tmp_path, monkeypatch)
     _seed_account(dest, "acct_smoke1", SMOKE_EMAIL, "smoke-pass-123")
     dest.dispose()
     _write_archive(
-        backups, "20260912T030000Z", {"accounts.sql": _owner_sql(tmp_path)}
+        backups, "20260912T030000Z", {"accounts.json": _owner_snapshot(tmp_path)}
     )
 
     report = run_restore_from_backup(
@@ -160,7 +186,7 @@ def test_from_backup_merges_sql_dump_without_wiping_smoke(tmp_path, monkeypatch)
         prefer_source=True,
     )
     assert report["ok"] is True
-    assert report["dump_kind"] == "accounts.sql"
+    assert report["dump_kind"] == "accounts.json"
     assert report["emails_migrated"] == [OWNER_EMAIL]
     assert report["postgres_counts_after"]["accounts"] == 2
     dest = sa.create_engine(f"sqlite:///{target}")
@@ -185,7 +211,7 @@ def test_prefer_source_displaces_conflicting_live_email(tmp_path, monkeypatch):
     _seed_account(dest, LIVE_CONFLICT_ID, OWNER_EMAIL, "later-register-pass")
     dest.dispose()
     _write_archive(
-        backups, "20260912T030000Z", {"accounts.sql": _owner_sql(tmp_path)}
+        backups, "20260912T030000Z", {"accounts.json": _owner_snapshot(tmp_path)}
     )
 
     report = run_restore_from_backup(
@@ -252,7 +278,7 @@ def test_http_backup_endpoints(client, monkeypatch, tmp_path):
     _seed_account(dest, "acct_smoke1", SMOKE_EMAIL, "smoke-pass-123")
     dest.dispose()
     _write_archive(
-        backups, "20260912T030000Z", {"accounts.sql": _owner_sql(tmp_path)}
+        backups, "20260912T030000Z", {"accounts.json": _owner_snapshot(tmp_path)}
     )
     headers = {"Authorization": "Bearer master-secret"}
 
@@ -276,3 +302,22 @@ def test_http_backups_require_master_key(client, monkeypatch):
     monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
     assert client.get("/v1/ops/accounts-restore/backups").status_code == 404
     assert client.post("/v1/ops/accounts-restore/from-backup").status_code == 404
+
+
+def test_from_backup_merges_a_legacy_sql_archive(tmp_path, monkeypatch):
+    """Archives written before accounts_snapshot.v1 carry only accounts.sql:
+    they still restore through the endpoint, read by a SQL engine."""
+    target = tmp_path / "pg.db"
+    _storage, backups = _configure(monkeypatch, tmp_path, postgres_url=f"sqlite:///{target}")
+    dest = sa.create_engine(f"sqlite:///{target}")
+    _seed_account(dest, "acct_smoke1", SMOKE_EMAIL, "smoke-pass-123")
+    dest.dispose()
+    _write_archive(backups, "20260912T030000Z", {"accounts.sql": _owner_legacy_sql(tmp_path)})
+
+    report = run_restore_from_backup(
+        archive="cerebrumdev-backup-20260912T030000Z.tar.gz", force=True, prefer_source=True
+    )
+    assert report["ok"] is True
+    assert report["dump_kind"] == "accounts.sql"
+    assert report["emails_migrated"] == [OWNER_EMAIL]
+    assert report["postgres_counts_after"]["accounts"] == 2

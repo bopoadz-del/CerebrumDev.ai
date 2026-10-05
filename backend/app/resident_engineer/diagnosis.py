@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from app.resident_engineer.dna_loader import dna_entity_refs, load_product_dna
+from app.resident_engineer.modes import AutonomyLevel
 from app.resident_engineer.injection_guard import strip_instruction_patterns
 
 
@@ -33,5 +34,5 @@ def build_failure_report(
             "agents": [a for a in (refs.get("agent_ids") or []) if a][:20],
             "workflows": [w for w in (refs.get("workflow_ids") or []) if w][:20],
         },
-        "recommended_level": "L2" if related_action_ids else "L1",
+        "recommended_level": (AutonomyLevel.L2 if related_action_ids else AutonomyLevel.L1).value,
     }

@@ -427,3 +427,33 @@ def test_the_secret_scrubber_passes_and_a_match_decision_on_its_patterns_is_reje
     )
     hits = gate.phrase_matches(decision)
     assert hits and "decision" in hits[0][1]
+
+
+@pytest.mark.parametrize(
+    "loader",
+    [
+        "P = ROOT / 'secret_patterns.json'\n",
+        "F = 'secret_patterns.json'\nP = ROOT / F\n",
+        "F = 'secret_patterns.json'\nP = open(F)\n",
+        "P = Path('cfg/secret_patterns.json')\n",
+    ],
+)
+def test_reaching_the_secret_patterns_file_by_any_path_is_a_load(loader):
+    """A decision on a pattern match is refused in every module that REACHES
+    the file -- directly or through a bound name."""
+    gate = _gate()
+    decision = "\n\ndef leaks(r, text):\n    if r.search(text):\n        return True\n    return False\n"
+    hits = gate.phrase_matches(loader + decision)
+    assert hits and "decision" in hits[0][1]
+
+
+def test_binding_and_comparing_the_file_name_is_not_a_load():
+    """The gate defines its own rule by naming the file and comparing with it;
+    it never opens it, so its own regex decisions are not secret-pattern ones."""
+    gate = _gate()
+    src = (
+        "F = 'secret_patterns.json'\n\n\n"
+        "def names_it(s):\n    return s.endswith(F)\n\n\n"
+        "def shaped(r, text):\n    if r.match(text):\n        return 1\n    return 0\n"
+    )
+    assert gate.phrase_matches(src) == []

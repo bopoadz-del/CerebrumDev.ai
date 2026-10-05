@@ -1,9 +1,11 @@
 """Restore accounts from on-disk backup archives into ACCOUNTS_DATABASE_URL.
 
 Nightly snapshots live under ``STORAGE_PATH/backups`` as
-``cerebrumdev-backup-*.tar.gz``. A healthy Postgres-backed run stores
-``accounts.dump`` (pg_dump custom) or ``accounts.sql`` (SQLAlchemy INSERT
-fallback). SQLite-era archives store ``accounts.db``.
+``cerebrumdev-backup-*.tar.gz``. A Postgres-backed run stores
+``accounts.json`` (structured snapshot, accounts_snapshot.v1) and, when the
+client matches the server, ``accounts.dump`` (pg_dump custom). Older archives
+carry ``accounts.sql`` (SQL-INSERT dump, read by a SQL engine) and SQLite-era
+archives ``accounts.db``.
 
 This module lists those archives and merges dump rows into live Postgres
 without wiping smoke accounts. ``prefer_source`` parks a conflicting live
@@ -15,9 +17,7 @@ email so a historical owner id (``acct_c38ae401…``) can reclaim it.
 from __future__ import annotations
 
 import re
-import shutil
 import sqlite3
-import subprocess
 import tarfile
 import tempfile
 from pathlib import Path
@@ -39,14 +39,10 @@ from scripts.migrate_accounts_to_postgres import (
 )
 
 _ARCHIVE_RE = re.compile(r"^cerebrumdev-backup-\d{8}T\d{6}Z\.tar\.gz$")
-_INSERT_RE = re.compile(
-    r'^INSERT INTO (?P<table>"?[\w.]+"?) \((?P<cols>.+)\) VALUES \((?P<vals>.+)\);\s*$'
-)
-_COPY_HEAD_RE = re.compile(
-    r"^COPY\s+(?P<table>[\w.\"]+)\s+\((?P<cols>.+)\)\s+FROM\s+stdin;\s*$",
-    re.IGNORECASE,
-)
-_DUMP_MEMBERS = ("accounts.dump", "accounts.sql", "accounts.db")
+#: Restore preference: the structured snapshot every new archive carries,
+#: then a SQLite-era database, then a legacy SQL-INSERT dump, then a custom
+#: pg_dump (operator tool only -- see load_accounts_data).
+_DUMP_MEMBERS = (bk.ACCOUNTS_SNAPSHOT_NAME, "accounts.db", "accounts.sql", "accounts.dump")
 
 
 def _member_basename(name: str) -> str:
@@ -121,230 +117,123 @@ def _extract_member(archive: Path, dest: Path, wanted: Iterable[str]) -> Dict[st
     return found
 
 
-def _split_sql_ident_list(raw: str) -> List[str]:
-    return [part.strip().strip('"') for part in raw.split(",") if part.strip()]
+def read_structured_snapshot(path: Path) -> Dict[str, List[Dict[str, Any]]]:
+    """Rows from an ``accounts_snapshot.v1`` JSON document (see backup.py)."""
+    import json
 
-
-def _split_sql_values(raw: str) -> List[Any]:
-    out: List[Any] = []
-    i = 0
-    n = len(raw)
-    while i < n:
-        while i < n and raw[i] in " \t":
-            i += 1
-        if i >= n:
-            break
-        if raw.startswith("NULL", i) and (i + 4 == n or raw[i + 4] in ",)"):
-            out.append(None)
-            i += 4
-        elif raw.startswith("TRUE", i) and (i + 4 == n or raw[i + 4] in ",)"):
-            out.append(True)
-            i += 4
-        elif raw.startswith("FALSE", i) and (i + 5 == n or raw[i + 5] in ",)"):
-            out.append(False)
-            i += 5
-        elif raw[i] == "'":
-            i += 1
-            buf: List[str] = []
-            while i < n:
-                if raw[i] == "'" and i + 1 < n and raw[i + 1] == "'":
-                    buf.append("'")
-                    i += 2
-                elif raw[i] == "'":
-                    i += 1
-                    break
-                else:
-                    buf.append(raw[i])
-                    i += 1
-            out.append("".join(buf))
-        else:
-            j = i
-            while j < n and raw[j] != ",":
-                j += 1
-            token = raw[i:j].strip()
-            if token.isdigit() or (token.startswith("-") and token[1:].isdigit()):
-                out.append(int(token))
-            else:
-                try:
-                    out.append(float(token))
-                except ValueError:
-                    out.append(token)
-            i = j
-        while i < n and raw[i] in " \t":
-            i += 1
-        if i < n and raw[i] == ",":
-            i += 1
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    if doc.get("schema") != bk.ACCOUNTS_SNAPSHOT_SCHEMA:
+        raise AccountsRestoreError(
+            "dump_unreadable",
+            f"{path.name} is not an {bk.ACCOUNTS_SNAPSHOT_SCHEMA} document",
+        )
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for table in TABLES:
+        block = (doc.get("tables") or {}).get(table)
+        if not block:
+            continue
+        columns = list(block.get("columns") or [])
+        out[table] = [dict(zip(columns, row)) for row in block.get("rows") or []]
     return out
 
 
-def _table_key(raw: str) -> str:
-    name = raw.strip().strip('"')
-    if "." in name:
-        name = name.split(".")[-1].strip('"')
-    return name
+def read_legacy_sql_dump(path: Path) -> Dict[str, List[Dict[str, Any]]]:
+    """Rows from a legacy SQL-INSERT accounts dump, read by a SQL ENGINE.
 
+    The statements run in an in-memory SQLite whose tables come from the
+    accounts store's own schema (accounts_store._META), and the rows are read
+    back through that schema -- no SQL text is parsed here. Statement
+    boundaries come from sqlite3.complete_statement; a statement for a table
+    outside the schema fails with sqlite3.OperationalError and is skipped
+    (it is not an accounts table). Boolean columns come back as 0/1 from
+    SQLite and are restored to bool from the schema's column types.
+    """
+    import sqlalchemy as sa
 
-def parse_insert_sql(text: str) -> Dict[str, List[Dict[str, Any]]]:
-    data: Dict[str, List[Dict[str, Any]]] = {}
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped.upper().startswith("INSERT INTO"):
-            continue
-        match = _INSERT_RE.match(stripped)
-        if not match:
-            continue
-        table = _table_key(match.group("table"))
-        if table not in TABLES:
-            continue
-        cols = _split_sql_ident_list(match.group("cols"))
-        vals = _split_sql_values(match.group("vals"))
-        if len(cols) != len(vals):
-            raise AccountsRestoreError(
-                "dump_unreadable",
-                f"INSERT column/value mismatch for {table}",
-            )
-        data.setdefault(table, []).append(dict(zip(cols, vals)))
-    return data
+    from app.core.accounts_store import _META
 
-
-def _unescape_copy_field(raw: str) -> Any:
-    if raw == r"\N":
-        return None
-    out: List[str] = []
-    i = 0
-    while i < len(raw):
-        if raw[i] == "\\" and i + 1 < len(raw):
-            nxt = raw[i + 1]
-            out.append({"n": "\n", "t": "\t", "r": "\r", "\\": "\\"}.get(nxt, nxt))
-            i += 2
-        else:
-            out.append(raw[i])
-            i += 1
-    return "".join(out)
-
-
-def parse_copy_sql(text: str) -> Dict[str, List[Dict[str, Any]]]:
-    data: Dict[str, List[Dict[str, Any]]] = {}
-    lines = text.splitlines()
-    i = 0
-    while i < len(lines):
-        match = _COPY_HEAD_RE.match(lines[i].strip())
-        if not match:
-            i += 1
-            continue
-        table = _table_key(match.group("table"))
-        cols = _split_sql_ident_list(match.group("cols"))
-        i += 1
-        rows: List[Dict[str, Any]] = []
-        while i < len(lines) and lines[i] != r"\.":
-            fields = lines[i].split("\t")
-            if table in TABLES and len(fields) == len(cols):
-                row: Dict[str, Any] = {}
-                for col, raw in zip(cols, fields):
-                    value = _unescape_copy_field(raw)
-                    if col == "email_verified":
-                        if value in {"t", "true", "TRUE", "1"}:
-                            value = True
-                        elif value in {"f", "false", "FALSE", "0"}:
-                            value = False
-                    row[col] = value
-                rows.append(row)
-            i += 1
-        if table in TABLES:
-            data.setdefault(table, []).extend(rows)
-        i += 1
-    return data
-
-
-def parse_accounts_sql(text: str) -> Dict[str, List[Dict[str, Any]]]:
-    inserted = parse_insert_sql(text)
-    copied = parse_copy_sql(text)
-    merged: Dict[str, List[Dict[str, Any]]] = {}
-    for table in TABLES:
-        rows = (inserted.get(table) or []) + (copied.get(table) or [])
-        if rows:
-            merged[table] = rows
-    return merged
-
-
-def _sniff_dump(path: Path) -> str:
-    raw = path.read_bytes()[:32]
-    if raw.startswith(b"SQLite format 3"):
-        return "sqlite"
-    if raw.startswith(b"PGDMP"):
-        return "pg_dump"
+    conn = sqlite3.connect(":memory:")
     try:
-        head = raw.decode("utf-8", errors="ignore")
-    except Exception:  # noqa: BLE001
-        head = ""
-    if "INSERT INTO" in head or head.startswith("--") or head.startswith("BEGIN"):
-        return "sql"
-    text = path.read_text(encoding="utf-8", errors="ignore")[:400]
-    if "INSERT INTO" in text or "COPY " in text:
-        return "sql"
-    return "unknown"
+        engine = sa.create_engine("sqlite://", creator=lambda: conn)
+        _META.create_all(engine)
+        statement = ""
+        with path.open(encoding="utf-8") as fh:
+            for line in fh:
+                statement += line
+                if not sqlite3.complete_statement(statement):
+                    continue
+                try:
+                    conn.execute(statement)
+                except sqlite3.OperationalError:
+                    pass
+                statement = ""
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for table_name in TABLES:
+            table = _META.tables.get(table_name)
+            if table is None:
+                continue
+            booleans = {c.name for c in table.columns if isinstance(c.type, sa.Boolean)}
+            cursor = conn.execute(sa.select(table).compile(dialect=engine.dialect).string)
+            columns = [d[0] for d in cursor.description]
+            rows = []
+            for raw in cursor.fetchall():
+                row = dict(zip(columns, raw))
+                for name in booleans:
+                    if row.get(name) is not None:
+                        row[name] = bool(row[name])
+                rows.append(row)
+            if rows:
+                out[table_name] = rows
+        return out
+    finally:
+        conn.close()
 
 
-def _pg_restore_to_sql(dump: Path, dest: Path) -> Path:
-    exe = shutil.which("pg_restore")
-    if not exe:
-        raise AccountsRestoreError(
-            "dump_unreadable",
-            "accounts.dump is a custom pg_dump and pg_restore is not on PATH",
-            extra={"dump": dump.name},
-        )
-    proc = subprocess.run(
-        [
-            exe,
-            "--file",
-            str(dest),
-            "--data-only",
-            "--no-owner",
-            "--no-privileges",
-            str(dump),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    if proc.returncode != 0 or not dest.is_file() or dest.stat().st_size == 0:
-        err = " ".join((proc.stderr or proc.stdout or "").split())[:240]
-        raise AccountsRestoreError(
-            "dump_unreadable",
-            f"pg_restore failed for {dump.name}: {err or 'empty output'}",
-        )
-    return dest
+def _artifact_kind(path: Path) -> str:
+    """What an archive member is: by its magic bytes, else by its member name."""
+    head = path.read_bytes()[:16]
+    if head.startswith(b"SQLite format 3"):
+        return "sqlite"
+    if head.startswith(b"PGDMP"):
+        return "pg_dump"
+    return {
+        bk.ACCOUNTS_SNAPSHOT_NAME: "structured",
+        "accounts.sql": "sql",
+        "accounts.db": "sqlite",
+        "accounts.dump": "pg_dump",
+    }.get(path.name, "unknown")
 
 
 def load_accounts_data(path: Path) -> Tuple[Dict[str, List[Dict[str, Any]]], str]:
-    """Return (table→rows, dump_kind)."""
-    kind = _sniff_dump(path)
-    if path.name == "accounts.db" or kind == "sqlite":
-        return read_sqlite_tables(path), "accounts.db"
-    if kind == "sql" or path.suffix == ".sql":
-        text = path.read_text(encoding="utf-8")
-        data = parse_accounts_sql(text)
-        if not data.get("accounts"):
-            raise AccountsRestoreError(
-                "dump_unreadable",
-                f"{path.name} has no accounts INSERT/COPY rows",
-            )
-        return data, "accounts.sql"
-    if kind == "pg_dump" or path.name == "accounts.dump":
-        with tempfile.TemporaryDirectory() as tmp:
-            sql_path = Path(tmp) / "restored.sql"
-            _pg_restore_to_sql(path, sql_path)
-            data = parse_accounts_sql(sql_path.read_text(encoding="utf-8"))
-        if not data.get("accounts"):
-            raise AccountsRestoreError(
-                "dump_unreadable",
-                f"{path.name} restored to SQL with no accounts rows",
-            )
-        return data, "accounts.dump"
-    raise AccountsRestoreError(
-        "dump_unreadable",
-        f"unrecognized accounts artifact: {path.name}",
-    )
+    """Return (table->rows, artifact name)."""
+    kind = _artifact_kind(path)
+    if kind == "structured":
+        data = read_structured_snapshot(path)
+    elif kind == "sqlite":
+        data = read_sqlite_tables(path)
+    elif kind == "sql":
+        data = read_legacy_sql_dump(path)
+    elif kind == "pg_dump":
+        # A custom pg_dump is decoded by pg_restore into COPY text, which this
+        # service would have to parse. It does not: every archive written
+        # since accounts_snapshot.v1 also carries accounts.json, and an older
+        # pg_dump-only archive is restored with the operator tool
+        # (pg_restore --data-only --dbname <accounts database url> <file>).
+        raise AccountsRestoreError(
+            "dump_requires_operator_tool",
+            f"{path.name} is a custom pg_dump: restore it with "
+            "pg_restore --data-only --dbname <accounts database url>; "
+            "archives that carry accounts.json restore through this endpoint",
+            extra={"dump": path.name},
+        )
+    else:
+        raise AccountsRestoreError(
+            "dump_unreadable",
+            f"unrecognized accounts artifact: {path.name}",
+        )
+    if not data.get("accounts") and kind != "sqlite":
+        raise AccountsRestoreError("dump_unreadable", f"{path.name} holds no accounts rows")
+    return data, path.name
 
 
 def read_sqlite_tables(path: Path) -> Dict[str, List[Dict[str, Any]]]:
@@ -390,11 +279,10 @@ def _peek_archive_accounts(archive: Path, members: List[str]) -> List[Dict[str, 
             if path is None:
                 continue
             try:
-                if candidate == "accounts.db" or _sniff_dump(path) == "sqlite":
+                if _artifact_kind(path) == "sqlite":
                     return list_sqlite_account_identities(path)
-                if _sniff_dump(path) == "sql" or candidate == "accounts.sql":
-                    data = parse_accounts_sql(path.read_text(encoding="utf-8"))
-                    return _identities_from_data(data)
+                data, _ = load_accounts_data(path)
+                return _identities_from_data(data)
             except Exception:  # noqa: BLE001 — listing must not 500
                 return []
     return []
@@ -415,6 +303,7 @@ def list_backup_archives() -> Dict[str, Any]:
             item = {
                 "name": path.name,
                 "bytes": path.stat().st_size,
+                "accounts_json": bk.ACCOUNTS_SNAPSHOT_NAME in bases,
                 "accounts_dump": "accounts.dump" in bases,
                 "accounts_sql": "accounts.sql" in bases,
                 "accounts_db": "accounts.db" in bases,
@@ -422,12 +311,13 @@ def list_backup_archives() -> Dict[str, Any]:
                 "source_accounts": _peek_archive_accounts(path, members),
             }
             item["has_accounts_artifact"] = bool(
-                item["accounts_dump"] or item["accounts_sql"] or item["accounts_db"]
+                item["accounts_json"] or item["accounts_dump"]
+                or item["accounts_sql"] or item["accounts_db"]
             )
             archives.append(item)
 
     recommended = None
-    for key in ("accounts_dump", "accounts_sql", "accounts_db"):
+    for key in ("accounts_json", "accounts_db", "accounts_sql", "accounts_dump"):
         for item in archives:
             if item.get(key):
                 recommended = item["name"]
@@ -472,7 +362,7 @@ def run_restore_from_backup(
             if artifact is None:
                 raise AccountsRestoreError(
                     "dump_missing",
-                    f"{path.name} has no accounts.dump, accounts.sql, or accounts.db",
+                    f"{path.name} has none of: {', '.join(_DUMP_MEMBERS)}",
                     extra={"archive": path.name},
                 )
             data, dump_kind = load_accounts_data(artifact)

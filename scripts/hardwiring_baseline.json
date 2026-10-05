@@ -8,7 +8,8 @@
     "rescue_knob",
     "product_literal",
     "word_list",
-    "probe_id"
+    "probe_id",
+    "phrase_match"
   ],
   "roots": [
     "backend/app/factory",
@@ -20,6 +21,8 @@
     "backend/app/models",
     "backend/app/product_dna",
     "backend/app/workbench",
+    "backend/app/change_requests",
+    "backend/app/resident_engineer",
     "backend/app/main.py"
   ],
   "schema": "hardwiring_baseline.v1",

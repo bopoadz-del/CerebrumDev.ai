@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from app.change_requests.signing import (
     generate_keypair,
@@ -13,9 +13,10 @@ from app.change_requests.signing import (
     sign_document,
 )
 from app.change_requests.validate import validate_or_raise
+from app.resident_engineer.modes import AutonomyLevel
 
 RequesterType = Literal["resident", "human"]
-Autonomy = Literal["L1", "L2", "L3", "L4", "L5"]
+Autonomy = Union[AutonomyLevel, str]
 SCHEMA_VERSION = "1.0.0"
 
 
@@ -32,7 +33,7 @@ def build_repair_request(
     target: str,
     symptom: str,
     evidence: Optional[Dict[str, Any]] = None,
-    requested_autonomy_level: Autonomy = "L3",
+    requested_autonomy_level: Autonomy = AutonomyLevel.L3.value,
     failed_action_id: Optional[str] = None,
     dna_entity_refs: Optional[List[str]] = None,
     request_id: Optional[str] = None,
@@ -64,7 +65,7 @@ def build_expansion_request(
     requester_id: str,
     capability: str,
     evidence: Optional[Dict[str, Any]] = None,
-    requested_autonomy_level: Autonomy = "L4",
+    requested_autonomy_level: Autonomy = AutonomyLevel.L4.value,
     block_id: Optional[str] = None,
     endpoint: Optional[str] = None,
     hat_id: Optional[str] = None,
@@ -104,7 +105,7 @@ def build_upgrade_request(
     from_version: str,
     to_version: str,
     evidence: Optional[Dict[str, Any]] = None,
-    requested_autonomy_level: Autonomy = "L3",
+    requested_autonomy_level: Autonomy = AutonomyLevel.L3.value,
     component_kind: str = "block",
     changelog: Optional[str] = None,
     request_id: Optional[str] = None,
