@@ -1208,6 +1208,7 @@ def _run(
     cycle: str = "code",
     tenant_store: Any = None,
     brief: str = "",
+    inputs_hash: str = "",
 ) -> None:
     from app.factory.build.auto_pilot import factory_auto_pilot_enabled
     from app.factory.build.build_level import bar_for
@@ -1259,6 +1260,7 @@ def _run(
             tenant_store=tenant_store,
             brief=brief,
             session_id=session_id,
+            inputs_hash=inputs_hash or None,
         )
         outcome = runner.run()
         logger.info(
@@ -1356,7 +1358,7 @@ def start_runner_build(
         raise_if_cli_session_unready,
     )
     from app.factory.build.ledger import BuildLedger
-    from app.factory.build.runner import blueprint_hash
+    from app.factory.build.runner import blueprint_hash, frozen_blueprint
 
     resolved = (cycle or os.getenv("FACTORY_BUILD_SUITE") or "code").strip().lower()
     if resolved not in {"code", "pilot"}:
@@ -1364,6 +1366,12 @@ def start_runner_build(
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
+    # The build's identity is fixed HERE, once: the approved blueprint is
+    # frozen (a deep copy the caller cannot reach) and hashed, and that one
+    # value opens the ledger and travels into the thread. The runner never
+    # re-hashes, so nothing done to any blueprint object after this point
+    # can make the build disagree with its own ledger.
+    blueprint = frozen_blueprint(blueprint)
     inputs_hash = blueprint_hash(blueprint)
 
     # Open the run record BEFORE the thread starts. Otherwise a client that
@@ -1525,6 +1533,7 @@ def start_runner_build(
             resolved,
             tenant_store,
             str(brief or "").strip(),
+            inputs_hash,
         ),
         name=f"build-{getattr(blueprint, 'product_id', 'product')}",
         daemon=True,

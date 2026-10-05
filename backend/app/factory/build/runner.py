@@ -226,6 +226,22 @@ def _specs_from_product_models(workspace: Path) -> Dict[str, Any]:
         return {}
 
 
+def frozen_blueprint(blueprint: Any) -> Any:
+    """The blueprint as approved: a deep copy no later caller can reach.
+
+    The build is keyed to what was approved. The caller keeps its own object
+    (the session, the chat flow, a later typed field) and anything it changes
+    after approval changes ITS copy, never the build's -- so the hash taken
+    from this snapshot stays the build's identity for its whole life.
+    """
+    copier = getattr(blueprint, "model_copy", None)
+    if callable(copier):
+        return copier(deep=True)
+    import copy
+
+    return copy.deepcopy(blueprint)
+
+
 def blueprint_hash(blueprint: Any) -> str:
     """Stable hash of the build's *inputs*.
 
@@ -233,11 +249,21 @@ def blueprint_hash(blueprint: Any) -> str:
     and it never touches the generated tree -- an output hash cannot be a
     resume key because it is unknown until the build it is meant to authorise
     has already run.
-    """
-    from app.factory.blueprint import blueprint_to_dict
 
+    Fields still at their schema default are left out. A default is not an
+    input anyone gave -- it is the code version's filler -- so hashing it made
+    the identity of an unchanged blueprint depend on which Factory release
+    read it: a field added with a default (live 2026-10-05, #645
+    ``CapabilitySpec.connectors``) moved the hash of every in-flight build,
+    and the orphan resume after that deploy was refused as "inputs changed"
+    on a blueprint nobody had touched. Any value that differs from its
+    default -- an input someone actually gave -- still moves the hash, so a
+    genuinely different blueprint is still refused.
+    """
     payload = json.dumps(
-        blueprint_to_dict(blueprint), sort_keys=True, separators=(",", ":")
+        blueprint.model_dump(mode="json", exclude_defaults=True),
+        sort_keys=True,
+        separators=(",", ":"),
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -353,10 +379,16 @@ class RoleRunner:
         tenant_store: Any = None,
         brief: str = "",
         session_id: str = "",
+        inputs_hash: Optional[str] = None,
     ) -> None:
         from app.factory.planner import CapabilityPlanner, assert_generatable
 
         self.blueprint = blueprint
+        #: The build's identity, taken ONCE: handed in by start_runner_build,
+        #: which hashed the frozen snapshot at approval, or -- for a direct
+        #: caller -- taken here before any role runs. run() never re-derives
+        #: it, so nothing that touches self.blueprint later can move it.
+        self.inputs_hash = str(inputs_hash or "") or blueprint_hash(blueprint)
         self.workspace = Path(workspace).resolve()
         # The Factory holds no blocks -- the Store does. A runner handed no
         # explicit root resolves the Store exactly as production does
@@ -1407,7 +1439,7 @@ class RoleRunner:
         self._run_started = started
         self._deadline = deadline
         self._deadline_box["at"] = deadline
-        inputs_hash = blueprint_hash(self.blueprint)
+        inputs_hash = self.inputs_hash
         self.state["inputs_hash"] = inputs_hash
 
         # Refuse to continue a run whose blueprint changed underneath it.
