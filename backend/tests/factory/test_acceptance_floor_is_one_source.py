@@ -354,18 +354,21 @@ class TestAdvisoryLinesReportButDoNotVeto:
 # canonical detector already lives in authorship.py and accepts ``codewhale``
 # — so a second copy here is the bug, exactly as this module's docstring says.
 
-WRITER_STAMP = "Written by the factory WRITER role (codewhale exec)"
+WRITER_SOURCE = "codewhale exec"
 
 
-def _product(tmp_path, stamp, n=5):
+def _product(tmp_path, source=None, *, docstring_sentence="", n=5):
+    """A product tree whose handlers carry ``AUTHORED_BY = source`` (or no
+    marker when source is None) and, optionally, a docstring sentence."""
     root = tmp_path / "product"
     actions = root / "app" / "actions"
     actions.mkdir(parents=True)
     (actions / "__init__.py").write_text("", encoding="utf-8")
+    marker = f"AUTHORED_BY = {source!r}\n" if source is not None else ""
     for i in range(n):
         (actions / f"cap_{i}.py").write_text(
-            f'"""Handler for cap_{i}.\n\n{stamp}\n"""\n\n'
-            f'CAPABILITY_ID = "cap_{i}"\n\n\ndef handle(payload):\n    return {{}}\n',
+            f'"""Handler for cap_{i}.\n\n{docstring_sentence}\n"""\n\n'
+            f'CAPABILITY_ID = "cap_{i}"\n{marker}\n\ndef handle(payload):\n    return {{}}\n',
             encoding="utf-8",
         )
     (root / "scripts").mkdir(parents=True, exist_ok=True)
@@ -385,20 +388,29 @@ def _rendered_authorship_check(root):
 
 
 class TestAuthorshipReadsTheWritersActualStamp:
-    def test_codewhale_stamped_handlers_are_counted(self, tmp_path):
-        root = _product(tmp_path, WRITER_STAMP)
+    def test_codewhale_marked_handlers_are_counted(self, tmp_path):
+        root = _product(tmp_path, WRITER_SOURCE)
         status, detail = _rendered_authorship_check(root)()
         assert status == "PASS", detail
 
-    def test_a_legacy_coder_cli_stamp_still_counts(self, tmp_path):
-        """Old products must not start failing because the fix moved on."""
-        root = _product(tmp_path, "Written by the factory WRITER role (coder CLI)")
+    def test_a_coder_cli_marker_counts(self, tmp_path):
+        root = _product(tmp_path, "coder CLI")
         status, detail = _rendered_authorship_check(root)()
         assert status == "PASS", detail
+
+    def test_a_docstring_sentence_alone_counts_for_nothing(self, tmp_path):
+        """No prose reading: the old stamp sentence with no marker is not
+        authorship, however it is worded."""
+        root = _product(
+            tmp_path, None,
+            docstring_sentence="Written by the factory WRITER role (codewhale exec)",
+        )
+        status, detail = _rendered_authorship_check(root)()
+        assert status == "FAIL", detail
 
     def test_unstamped_template_handlers_do_not_count(self, tmp_path):
         """The floor is not weakened: a templated tree still fails."""
-        root = _product(tmp_path, "Generated from the deterministic template")
+        root = _product(tmp_path, "deterministic contract template")
         status, detail = _rendered_authorship_check(root)()
         assert status == "FAIL", detail
 
@@ -408,13 +420,13 @@ class TestAuthorshipReadsTheWritersActualStamp:
         script = render_acceptance_script()
         assert 'if "CODER_MODEL" in text' not in script
         # One source, rendered: the harness carries the Factory's canonical
-        # stamp regex and agent vocabulary verbatim (a product never ships
+        # marker reader and agent vocabulary verbatim (a product never ships
         # the Factory package to import them from).
         from app.factory.build.authorship import (
             AGENT_SOURCE_PREFIXES,
-            _WRITER_ROLE_STAMP_RE,
+            RENDERED_MARKER_READER,
         )
 
-        assert repr(_WRITER_ROLE_STAMP_RE.pattern) in script
+        assert RENDERED_MARKER_READER in script
         assert repr(tuple(AGENT_SOURCE_PREFIXES)) in script
         assert "app.factory" not in script

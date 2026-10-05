@@ -39,7 +39,9 @@ from app.factory.build.block_inputs import (
 from app.factory.build.authorship import (
     AGENT_SOURCE_EXACT,
     AGENT_SOURCE_PREFIXES,
-    _WRITER_ROLE_STAMP_RE,
+    AUTHORSHIP_MARKER,
+    RENDERED_MARKER_READER,
+    authorship_marker_line,
     coding_agent_artifact_ids,
     writer_contract_role_detail,
 )
@@ -1890,6 +1892,7 @@ from typing import Any, Dict
 from app.dispatch import execute
 
 CAPABILITY_ID = "{capability_id}"
+{authorship_marker_line(source)}
 ENTITY = {entity_name!r}
 BLOCK_IDS = {list(block_ids)!r}
 #: Each block's declared default action (from its block.json). Blocks are
@@ -2660,6 +2663,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+{RENDERED_MARKER_READER}
 
 def main() -> int:
     print("== {product_name} — release gate ==")
@@ -2717,23 +2721,17 @@ def main() -> int:
         handlers = [
             p for p in sorted(actions.glob("*.py")) if not p.name.startswith("_")
         ] if actions.is_dir() else []
-        # The SAME rule the acceptance floor's authorship_floor uses: the
-        # WRITER's own docstring stamp. Derived from the canonical vocabulary
-        # at RENDER time, so the delivered tree needs no app/factory import
-        # (the customer's export may not carry one). A private marker list
-        # here drifted behind the CodeWhale writer and reported 0 for a fully
-        # agent-written tree (live 2026-10-01).
-        _stamp_re = re.compile(r"{_WRITER_ROLE_STAMP_RE.pattern}")
+        # The SAME rule the acceptance floor's authorship_floor uses: each
+        # handler's module-level {AUTHORSHIP_MARKER} assignment, read from the
+        # syntax tree by a reader rendered from the Factory's canonical one,
+        # so the delivered tree needs no app/factory import. A docstring
+        # sentence decides nothing.
         _agent_prefixes = {tuple(AGENT_SOURCE_PREFIXES)!r}
         _agent_exact = {set(AGENT_SOURCE_EXACT)!r}
         stamped = 0
         for path in handlers:
-            head = path.read_text(encoding="utf-8", errors="replace")[:4000]
-            _m = _stamp_re.search(head)
-            if not _m:
-                continue
-            _src = _m.group(1).strip()
-            if _src.startswith(_agent_prefixes) or _src.lower() in _agent_exact:
+            _src = _authored_by(path.read_text(encoding="utf-8", errors="replace"))
+            if _src and (_src.startswith(_agent_prefixes) or _src.lower() in _agent_exact):
                 stamped += 1
         print(f"handlers: {{len(handlers)}} total, {{stamped}} stamped by the coding agent")
 

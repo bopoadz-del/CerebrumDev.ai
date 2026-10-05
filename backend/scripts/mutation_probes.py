@@ -120,14 +120,16 @@ def probe_e_control_agent_stamped_handler_is_counted() -> None:
             "Written by the factory WRITER role (coder LLM). Blocks are "
             "invoked through\n"
             "the local dispatch runtime -- this module makes no network "
-            'call.\n"""\n',
+            'call.\n"""\n'
+            'AUTHORED_BY = "coder LLM"\n',
             encoding="utf-8",
         )
         (actions / "legacy_template.py").write_text(
             '"""Handler for capability legacy_template.\n\n'
             "Written by the factory WRITER role (deterministic contract "
             "template).\n"
-            '"""\n',
+            '"""\n'
+            'AUTHORED_BY = "deterministic contract template"\n',
             encoding="utf-8",
         )
         ids = agent_written_handler_ids_in_workspace(root)

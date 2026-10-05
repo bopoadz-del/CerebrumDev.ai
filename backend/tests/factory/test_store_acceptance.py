@@ -714,11 +714,6 @@ def test_the_stamped_harness_judges_authorship_without_factory_code(tmp_path):
     (product / "scripts" / "acceptance.py").write_text(harness, encoding="utf-8")
     actions = product / "app" / "actions"
     actions.mkdir(parents=True)
-    for i in range(5):
-        (actions / f"zorblat_{i}.py").write_text(
-            f'"""Written by the factory WRITER role ({AGENT_SOURCE_PREFIXES[0]} x)."""\n',
-            encoding="utf-8",
-        )
     probe = textwrap.dedent(
         """
         import importlib.util, sys
@@ -728,14 +723,32 @@ def test_the_stamped_harness_judges_authorship_without_factory_code(tmp_path):
         print(*mod.check_authorship_floor())
         """
     )
-    out = subprocess.run(
-        [sys.executable, "-c", probe], cwd=product, capture_output=True, text=True,
-        env={
-            "PATH": "",
-            "SYSTEMROOT": __import__("os").environ.get("SYSTEMROOT", ""),
-            "PYTHONIOENCODING": "utf-8",
-        },
-        encoding="utf-8",
-    )
-    assert out.returncode == 0, out.stderr[-600:]
-    assert out.stdout.startswith("PASS"), out.stdout
+
+    def _run():
+        out = subprocess.run(
+            [sys.executable, "-c", probe], cwd=product, capture_output=True, text=True,
+            env={
+                "PATH": "",
+                "SYSTEMROOT": __import__("os").environ.get("SYSTEMROOT", ""),
+                "PYTHONIOENCODING": "utf-8",
+            },
+            encoding="utf-8",
+        )
+        assert out.returncode == 0, out.stderr[-600:]
+        return out.stdout
+
+    # Only the old docstring sentence, no marker: authorship is not read
+    # from prose, so this tree is below the floor.
+    for i in range(5):
+        (actions / f"zorblat_{i}.py").write_text(
+            f'"""Written by the factory WRITER role ({AGENT_SOURCE_PREFIXES[0]} x)."""\n',
+            encoding="utf-8",
+        )
+    assert _run().startswith("FAIL")
+    # The machine-read marker, read from the syntax tree: counted.
+    for i in range(5):
+        (actions / f"zorblat_{i}.py").write_text(
+            f'"""Handler zorblat_{i}."""\nAUTHORED_BY = {AGENT_SOURCE_PREFIXES[0] + " x"!r}\n',
+            encoding="utf-8",
+        )
+    assert _run().startswith("PASS")

@@ -45,6 +45,7 @@ _HANDLER = '''"""Record a thing.
 
 Written by the factory WRITER role (codewhale exec)
 """
+AUTHORED_BY = "codewhale exec"
 
 CAPABILITY_ID = "record_thing"
 '''
