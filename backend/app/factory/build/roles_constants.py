@@ -783,6 +783,12 @@ def pytest_configure(config):
         "markers",
         "pilot: Store-backed execute-all; excluded from the factory code-phase gate",
     )
+    # Declared placeholder refusals the product answers are written beside
+    # the JUnit report, keyed by the running test (app/placeholders.py), so
+    # the Factory reads which test was answered the typed refusal.
+    xml = getattr(config.option, "xmlpath", None)
+    if xml:
+        os.environ[#<<REFUSAL_LOG_ENV>>] = str(xml) + #<<REFUSAL_LOG_SUFFIX>>
 '''
 
 # The deploy-time-settings snippet is substituted in, not pasted into the
@@ -793,3 +799,17 @@ assert _CONFTEST_TEMPLATE.count(_DEPLOY_TIME_SLOT) == 1
 _CONFTEST = _CONFTEST_TEMPLATE.replace(
     _DEPLOY_TIME_SLOT, _DEPLOY_TIME_SETTINGS_SNIPPET.strip("\n")
 )
+
+
+def _with_refusal_log(text: str) -> str:
+    from app.factory.build.placeholder_connectors import (
+        REFUSAL_LOG_ENV,
+        REFUSAL_LOG_SUFFIX,
+    )
+
+    return text.replace("#<<REFUSAL_LOG_ENV>>", repr(REFUSAL_LOG_ENV)).replace(
+        "#<<REFUSAL_LOG_SUFFIX>>", repr(REFUSAL_LOG_SUFFIX)
+    )
+
+
+_CONFTEST = _with_refusal_log(_CONFTEST)

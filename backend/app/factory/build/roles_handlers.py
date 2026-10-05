@@ -5915,6 +5915,21 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         ),
     )
 
+    # The authority on a capability calling a DECLARED placeholder connector:
+    # stamped here, so it is a behavior test the writer may not edit, and a
+    # writer test that disagrees with it is that test's defect.
+    from app.factory.build.placeholder_connectors import (
+        CONTRACT_TEST,
+        render_contract_tests,
+    )
+
+    contract = render_contract_tests(
+        ctx.blueprint,
+        {cid: _sample_payload(specs.get(cid) or {}) for cid in specs},
+    )
+    if contract:
+        ctx.workspace.write_text(Path(CONTRACT_TEST), contract)
+
     # -- routes return their documented shape ------------------------------
     route_lines = [
         '"""The HTTP surface answers, and what it answers has the right shape."""',

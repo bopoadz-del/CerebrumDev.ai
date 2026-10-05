@@ -90,6 +90,18 @@ CHECKPOINT_STAGE = "checkpoint"
 CLI_PHASE_RAMP_HEADROOM_S = 120.0
 
 
+def _test_defect_items(defects: Sequence[Dict[str, Any]]) -> list:
+    """One typed ``test_defect`` work-list item per writer test that demanded
+    a live answer from a declared placeholder capability (failure_owner)."""
+    from app.factory.build.placeholder_connectors import defect_work_item
+
+    return [
+        defect_work_item(str(d.get("nodeid") or ""), list(d.get("capabilities") or []))
+        for d in defects
+        if d.get("nodeid")
+    ]
+
+
 def landed_capability_ids(ledger: Any, inputs_hash: str) -> list:
     """Capabilities already checkpointed for this ``blueprint_hash``.
 
@@ -1324,6 +1336,9 @@ class RoleRunner:
         # in this cycle stay spent, so a re-entered run cannot buy a fresh
         # budget to repeat what already failed.
         rework_used = self._rework_rounds_this_cycle()
+        # Writer-test regenerations for TEST_DEFECTs: their own count, never
+        # the product rework budget.
+        test_defect_rounds = 0
         work_list: Sequence[str] = ()
         collected: list[str] = []
 
@@ -1667,6 +1682,41 @@ class RoleRunner:
                     self._factory_test_files(),
                     behavior_test_files=self._behavior_test_files(),
                 )
+                defects = list(owned.get("test_defects") or [])
+                if owned["owner"] == failure_owner.TEST_DEFECT:
+                    # Only writer tests that contradict the DECLARED
+                    # placeholder contract failed. The product is right: no
+                    # rework round, no same-failure-twice. The writer is sent
+                    # back to regenerate those tests, within its own budget.
+                    if test_defect_rounds >= self.budget.max_rework:
+                        return self._finish(
+                            Outcome.FAILED_GATE,
+                            "TEST_DEFECT unresolved after "
+                            f"{test_defect_rounds} regeneration(s): "
+                            + ", ".join(owned["tests"]),
+                            phase=role,
+                            rework=rework_used,
+                            findings=verdict.findings,
+                        )
+                    test_defect_rounds += 1
+                    work_list = tuple(_test_defect_items(defects))
+                    self.ledger.append(
+                        EventKind.NOTE,
+                        role=role,
+                        detail="TEST_DEFECT (writer regenerates; not a product "
+                        "failure): " + ", ".join(owned["tests"]),
+                        payload={
+                            "owner": owned["owner"],
+                            "test_defects": defects,
+                            "round": test_defect_rounds,
+                            "writer_dispatched": True,
+                            "product_failure": False,
+                        },
+                    )
+                    done.discard(REWORK_TARGET)
+                    index = BUILD_PHASES.index(REWORK_TARGET)
+                    continue
+
                 if owned["owner"] != failure_owner.PRODUCT:
                     label = (
                         "FACTORY_FAULT"
@@ -1710,7 +1760,9 @@ class RoleRunner:
 
                 # G5: the same failing check/test on two consecutive rounds
                 # stops the run. Never a third attempt at the same thing.
-                current = failure_owner.failure_names(verdict)
+                current = failure_owner.failure_names(
+                    verdict, exclude=[d["nodeid"] for d in defects]
+                )
                 again = failure_owner.repeated(self._last_rework_failures(), current)
                 if again:
                     return self._finish(
@@ -1732,7 +1784,7 @@ class RoleRunner:
                     )
 
                 rework_used += 1
-                work_list = tuple(verdict.findings)
+                work_list = tuple(verdict.findings) + tuple(_test_defect_items(defects))
                 self.ledger.append(
                     EventKind.REWORK,
                     role=REWORK_TARGET,
