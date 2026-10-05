@@ -11,6 +11,7 @@ brief and no gate, which is exactly the point.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -184,9 +185,11 @@ def test_an_invented_gate_goes_advisory_with_zero_writer_rounds(
     assert passed.payload["advisory_checks"] == [INVENTED]
 
 
-def test_a_brief_defined_failure_still_goes_to_the_writer(
+def test_a_failing_check_the_compiled_brief_defines_reaches_the_writer(
     blueprint, tmp_path, stub_coder, monkeypatch
 ):
+    """The opposite of the invented gate: the brief DOES define this check,
+    so the failure reaches the writer's work_list and a REWORK happens."""
     _tester_gate_failing_once(
         monkeypatch,
         GateResult(
@@ -202,6 +205,9 @@ def test_a_brief_defined_failure_still_goes_to_the_writer(
     runner = RoleRunner(blueprint, tmp_path / "build", roles=_recording_writer(captured))
     outcome = runner.run()
 
+    assert brief_gates.SUITE_CHECK in runner._brief_defined_checks(), (
+        "the compiled brief defines the failing check"
+    )
     assert outcome.ok, outcome.detail
     assert outcome.rework_used == 1
     assert len(_events(runner, EventKind.REWORK)) == 1
@@ -240,6 +246,88 @@ def test_mixed_round_hands_the_writer_only_the_brief_defined_failure(
     assert [a["check"] for a in note.payload["gate_advisory"]] == [INVENTED]
     assert note.payload["gate_advisory"][0]["findings"] == ["invented finding"]
     assert note.payload["writer_dispatched"] is True
+
+
+def test_an_advisory_check_ships_in_the_status_and_the_exported_package(
+    tmp_path, monkeypatch
+):
+    """Nothing is silenced out of sight: a check moved to advisory is listed,
+    with its reason, in the build status the Floor reads AND in the
+    MANIFEST.json inside the zip the package endpoint hands over."""
+    import io
+    import zipfile
+
+    from fastapi.testclient import TestClient
+
+    from app.core.session_store import create_session, get_session, update_session
+    from app.factory import build_jobs
+    from app.factory.build.ledger import BuildLedger
+    from app.main import app
+
+    out = tmp_path / "advisory-product"
+    (out / "app").mkdir(parents=True)
+    (out / "app" / "main.py").write_text("app = None\n", encoding="utf-8")
+    (out / "README.md").write_text("product", encoding="utf-8")
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="advisory-product", inputs_hash="abc")
+    ledger.append(
+        EventKind.NOTE,
+        role=BuildRole.TESTER,
+        detail="GATE ADVISORY",
+        payload={
+            "gate_advisory": [
+                {
+                    "check": INVENTED,
+                    "reason": brief_gates.REASON_NOT_DEFINED,
+                    "findings": ["one", "two"],
+                }
+            ],
+            "writer_dispatched": False,
+        },
+    )
+
+    expected = [
+        {"check": INVENTED, "reason": brief_gates.REASON_NOT_DEFINED, "findings_count": 2}
+    ]
+    # The status is read off the ledger -- the same answer every reader gets.
+    real_status = build_jobs.build_status
+    assert real_status(out)["advisory_checks"] == expected
+
+    # Package eligibility (green CI, authored artifacts, acceptance) is not
+    # this test's subject: grant it, keep the status's own advisory list.
+    def eligible_status(output_dir, **kw):
+        status = dict(real_status(output_dir, **kw))
+        status.update(state="succeeded", pilot_ready=True, authorship={"agent_written": 1})
+        return status
+
+    monkeypatch.setattr(build_jobs, "build_status", eligible_status)
+    monkeypatch.setattr(
+        "app.factory.build.authorship.thin_store_green_export_blocker",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "app.factory.build.store_acceptance.acceptance_export_blocker",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setenv("FACTORY_CI_RUN_ID", "ci-run-1")
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
+
+    create_session("sess_advisory_pkg", "tester")
+    state = get_session("sess_advisory_pkg")
+    state.product_design.generation = {
+        "output_dir": str(out),
+        "product_id": "advisory-product",
+        "inputs_hash": "abc",
+        "engine": "runner",
+    }
+    update_session("sess_advisory_pkg", state)
+
+    pkg = TestClient(app).get("/v1/sessions/sess_advisory_pkg/product/package")
+    assert pkg.status_code == 200, pkg.text
+    manifest = json.loads(zipfile.ZipFile(io.BytesIO(pkg.content)).read("MANIFEST.json"))
+    assert manifest["advisory_checks"] == expected
 
 
 def test_the_real_tester_verdict_declares_its_brief_check(tmp_path):

@@ -131,8 +131,13 @@ def build_manifest(
     layer_counts: Dict[int, int],
     engine_included: bool,
     provenance: Optional[Dict[str, str]] = None,
+    advisory_checks: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """Assemble the versioned manifest. Validated, never a free-form dict."""
+    """Assemble the versioned manifest. Validated, never a free-form dict.
+
+    ``advisory_checks`` lists every gate this build moved to advisory because
+    its brief never defined it ([{check, reason, findings_count}]), so the
+    buyer sees what was not held against the product and why."""
     if retrieval_mode not in RETRIEVAL_MODES:
         raise ExportManifestError(
             f"{MANIFEST_MISMATCH}: retrieval_mode must be one of "
@@ -176,6 +181,14 @@ def build_manifest(
         "tenancy_mode": tenancy_mode,
         "prompt_template_version": prompt_version,
         "ci_run_id": ci_run,
+        "advisory_checks": [
+            {
+                "check": str(row.get("check") or ""),
+                "reason": str(row.get("reason") or ""),
+                "findings_count": int(row.get("findings_count") or 0),
+            }
+            for row in (advisory_checks or [])
+        ],
     }
 
 

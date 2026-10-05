@@ -111,6 +111,25 @@ def narrowed(verdict: Any, split: FailureSplit) -> Any:
     return replace(verdict, findings=split.defined_findings, payload=payload)
 
 
+def advisory_checks(events: Iterable[Any]) -> List[dict]:
+    """Every check this build moved to advisory, read back from its ledger:
+    ``[{check, reason, findings_count}]``, one row per check, findings summed
+    across rounds. The build status and the export manifest both carry this,
+    so nothing is silenced out of sight."""
+    rows: dict = {}
+    for event in events:
+        for entry in (getattr(event, "payload", None) or {}).get("gate_advisory") or []:
+            check = _norm(entry.get("check"))
+            if not check:
+                continue
+            row = rows.setdefault(
+                check, {"check": check, "reason": "", "findings_count": 0}
+            )
+            row["reason"] = str(entry.get("reason") or REASON_NOT_DEFINED)
+            row["findings_count"] += len(entry.get("findings") or [])
+    return [rows[check] for check in sorted(rows)]
+
+
 def brief_defined_checks(
     blueprint: Any, acceptance_checks: Iterable[str]
 ) -> FrozenSet[str]:
