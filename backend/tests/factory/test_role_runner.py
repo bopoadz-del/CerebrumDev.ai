@@ -410,7 +410,7 @@ def test_rework_budget_exhaustion_fails_the_run(blueprint, tmp_path, stub_coder,
     from app.factory.build import failure_owner
 
     rounds = count(1)
-    monkeypatch.setattr(failure_owner, "failure_names", lambda verdict: [f"round-{next(rounds)}"])
+    monkeypatch.setattr(failure_owner, "failure_names", lambda verdict, exclude=(): [f"round-{next(rounds)}"])
 
     def barren_tester(ctx):
         # Writes no tests at all; gate_suite_green fails this for real.
