@@ -173,6 +173,87 @@ def blocks_declaring_read(kind: str, scope: str, store_root: Any = None) -> Froz
     )
 
 
+#: The ``capability_class`` words the Factory dispatches on, from the Store's
+#: ``manifest_contract.CAPABILITY_CLASSES``. None is a block id: a site that
+#: compares against one of these is reading a declaration.
+MESSAGING = "messaging"
+ORCHESTRATION = "orchestration"
+MEMBERSHIP = "membership"
+DOCUMENT_EXTRACTION = "document_extraction"
+METRICS = "metrics"
+EVENTS = "events"
+RECORDS = "records"
+JOBS = "jobs"
+LAYOUT = "layout"
+GOVERNANCE = "governance"
+VISION_CAPTURE = "vision_capture"
+SHARED_REASONING = "shared_reasoning"
+CONVERSATION = "conversation"
+
+
+@lru_cache(maxsize=8)
+def _block_manifests(root: str) -> Dict[str, Dict[str, Any]]:
+    """block id -> its signed ``block.json``, as the Store holds it."""
+    out: Dict[str, Dict[str, Any]] = {}
+    for path in sorted((Path(root) / "block_registry").glob("*/block.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict):
+            out[str(data.get("id") or path.parent.name)] = data
+    return out
+
+
+def block_manifests(store_root: Any = None) -> Dict[str, Dict[str, Any]]:
+    root = _root(store_root)
+    return _block_manifests(str(root)) if root else {}
+
+
+def block_manifest(block_id: Any, store_root: Any = None) -> Dict[str, Any]:
+    return block_manifests(store_root).get(str(block_id or "").strip()) or {}
+
+
+def capability_class(manifest: Any) -> Optional[str]:
+    """The ``capability_class`` a manifest declares, or None."""
+    value = manifest.get("capability_class") if isinstance(manifest, dict) else None
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def block_capability_class(block_id: Any, store_root: Any = None) -> Optional[str]:
+    """What kind of capability the block declares it IS. Every site that
+    must treat one kind of block differently reads this, never the id."""
+    return capability_class(block_manifest(block_id, store_root))
+
+
+def blocks_of_class(cls: str, store_root: Any = None) -> FrozenSet[str]:
+    """Every Store block that declares ``capability_class == cls``."""
+    return frozenset(
+        bid for bid, m in block_manifests(store_root).items() if capability_class(m) == cls
+    )
+
+
+def capability_classes(block_ids: Any, store_root: Any = None) -> Dict[str, str]:
+    """block id -> declared class, for the ids that declare one."""
+    out: Dict[str, str] = {}
+    for raw in block_ids or ():
+        cls = block_capability_class(raw, store_root)
+        if cls:
+            out[str(raw)] = cls
+    return out
+
+
+def not_attachable(store_root: Any = None) -> Dict[str, str]:
+    """block id -> reason, for every block whose manifest declares
+    ``factory_attach.cleared`` false."""
+    out: Dict[str, str] = {}
+    for bid, manifest in block_manifests(store_root).items():
+        attach = manifest.get("factory_attach")
+        if isinstance(attach, dict) and attach.get("cleared") is False:
+            out[bid] = str(attach.get("reason") or "declared not cleared")
+    return out
+
+
 #: The vertical a product has when the user chose none. The Factory never
 #: infers one -- not from the brief's prose, not from the blocks it binds.
 NO_VERTICAL = "product"

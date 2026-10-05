@@ -865,12 +865,12 @@ def _pass_detail(
 def _render_probe() -> str:
     """The probe with this factory's resource obligations and halt sentences
     baked in."""
-    from app.factory.build.block_obligations import RESOURCE_OBLIGATIONS
+    from app.factory.build.block_obligations import resource_obligations
 
     return (
         BEHAVIOUR_PROBE.replace(
             "RESOURCE_OBLIGATIONS = {}",
-            "RESOURCE_OBLIGATIONS = " + repr(dict(RESOURCE_OBLIGATIONS)),
+            "RESOURCE_OBLIGATIONS = " + repr(dict(resource_obligations())),
             1,
         ).replace("HALTS = {}", "HALTS = " + repr(dict(HALT_SENTENCES)), 1)
     )

@@ -573,12 +573,16 @@ def _draft_blueprint_from_brief_inner(
             fallback_note = f"LLM drafting failed ({type(exc).__name__}); deterministic fallback used"
 
     dual = sorted(dual_registered_ids())
-    # Blocks the brief actually mentions become REUSE capabilities; audit is
-    # always added (governance is cross-cutting) so the demo blueprint never
-    # ships governance-less.
+    # Blocks the brief actually mentions become REUSE capabilities; every
+    # block that DECLARES itself governance (capability_class) is always
+    # added -- governance is cross-cutting -- so the demo blueprint never
+    # ships governance-less. Which block that is, the Store says.
     mentioned = [b for b in dual if b.replace("_", " ") in text or b in text]
-    if "audit" in dual and "audit" not in mentioned:
-        mentioned.append("audit")
+    from app.factory.store_kits import GOVERNANCE, capability_classes
+
+    for bid, cls in sorted(capability_classes(dual).items()):
+        if cls == GOVERNANCE and bid not in mentioned:
+            mentioned.append(bid)
 
     # The vertical is a structured field (the Floor's vertical_hint), never
     # parsed out of the brief's prose. Without one the draft is generic and

@@ -6,6 +6,8 @@ import json
 from typing import Any, Dict
 from unittest.mock import patch
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from app.core.chain_generator import check_chain_quality
@@ -43,6 +45,27 @@ LEGAL_CHAIN_WITHOUT_V2: Dict[str, Any] = {
         {"id": "chat"},
     ]
 }
+
+
+def _store(root, manifests):
+    """A fixture Store: block_registry/<id>/block.json for each manifest."""
+    for bid, manifest in manifests.items():
+        d = root / "block_registry" / bid
+        d.mkdir(parents=True)
+        (d / "block.json").write_text(json.dumps({"id": bid, **manifest}), encoding="utf-8")
+    return root
+
+
+@pytest.fixture(autouse=True)
+def _declared_store(tmp_path, monkeypatch):
+    """formula_executor_v2 DECLARES itself shared reasoning; nothing else
+    declares a class. The quality check reads that, never the id."""
+    root = _store(
+        tmp_path / "store",
+        {"formula_executor_v2": {"capability_class": "shared_reasoning"}, "legal_v2": {}},
+    )
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(root))
+    return root
 
 
 class TestCheckChainQuality:
@@ -194,3 +217,27 @@ class TestPreviewChainQuality:
         payload = response.json()
         assert "quality" in payload
         assert payload["quality"] == session.chain_quality
+
+
+class TestPrimaryBlockIsReadFromDeclarations:
+    """The shared-support exclusion follows the declaration, not the id."""
+
+    def test_an_invented_id_declaring_shared_reasoning_is_never_primary(self, tmp_path, monkeypatch):
+        root = _store(
+            tmp_path / "other",
+            {"zq_support_v2": {"capability_class": "shared_reasoning"}, "zq_domain_v2": {}},
+        )
+        monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(root))
+        pack = {**LEGAL_SOURCE_PACK, "blocks": ["pdf", "zq_support_v2", "zq_domain_v2"]}
+        with patch("app.core.chain_generator.get_source_pack", return_value=pack):
+            result = check_chain_quality("legal", {"blocks": [{"id": "pdf"}]}, True)
+        assert result["warnings"][0]["suggested_block"] == "zq_domain_v2"
+
+    def test_the_old_id_without_the_declaration_gets_no_exemption(self, tmp_path, monkeypatch):
+        root = _store(tmp_path / "bare", {"formula_executor_v2": {}, "legal_v2": {}})
+        monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(root))
+        with patch(
+            "app.core.chain_generator.get_source_pack", return_value=LEGAL_SOURCE_PACK
+        ):
+            result = check_chain_quality("legal", {"blocks": [{"id": "pdf"}]}, True)
+        assert result["warnings"][0]["suggested_block"] == "formula_executor_v2"

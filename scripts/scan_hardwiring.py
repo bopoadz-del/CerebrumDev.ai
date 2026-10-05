@@ -43,6 +43,20 @@ identifier in the path is a fixed point):
                 to text. Deciding by a phrase is classification by vocabulary
                 exactly like word_list; structure (AST, typed fields, magic
                 bytes, enum members) is the replacement.
+  block_name_dispatch  a string literal EQUAL to a Store block id used to
+                pick behaviour for a block: compared (==, !=, in, not in)
+                against an expression that carries block ids (a name made of
+                block / blocks / bid / bids / roster / peers / vendored, or a
+                variable bound by iterating one), as a subscript into one, in a
+                ``case`` on one, assigned to one (``EVENT_BUS_BLOCK =
+                "event_bus"`` is the same branch one step removed), or as the
+                keys of a table (a dict literal whose keys are all block ids:
+                two or more, or one at module scope). The ids are loaded at run
+                time from CEREBRUM_BLOCKS_ROOT/block_registry/*/block.json --
+                none is listed here -- and with no Store the gate fails
+                closed. A site that must treat a kind of block differently
+                reads what the block DECLARES (capability_class, reads/writes,
+                preconditions, factory_attach), never its id.
 
 What this cannot see: a per-case branch keyed on a field NAME (``if name ==
 "status"``) or an answer table (``{"database": "query"}``) has no lexical
@@ -70,7 +84,7 @@ import sys
 import tokenize
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Dict, FrozenSet, Iterable, List, Optional, Tuple
+from typing import Dict, FrozenSet, Iterable, List, Optional, Set, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 #: Every backend/app package that handles user or agent text or decides
@@ -125,9 +139,43 @@ DEFAULT_FORMS = (
     "word_list",
     "probe_id",
     "phrase_match",
+    "block_name_dispatch",
 )
 #: Forms decided by a loaded set rather than a pattern.
-DATA_FORMS = ("product_literal",)
+DATA_FORMS = ("product_literal", "block_name_dispatch")
+
+
+class NoStoreRegistry(RuntimeError):
+    """block_name_dispatch was asked for and no Store registry is reachable."""
+
+
+def load_block_ids(root: Optional[str] = None) -> FrozenSet[str]:
+    """Every Store block id, from ``<root>/block_registry/*/block.json``.
+
+    ``root`` defaults to CEREBRUM_BLOCKS_ROOT (CI checks the pinned Store out
+    there). No registry is a failure, never an empty set: a gate that loads
+    nothing passes everything.
+    """
+    import os
+
+    base = root or os.getenv("CEREBRUM_BLOCKS_ROOT") or os.getenv("CEREBRUM_BLOCKS_PATH")
+    registry = Path(base) / "block_registry" if base else None
+    if registry is None or not registry.is_dir():
+        raise NoStoreRegistry(
+            "block_name_dispatch needs the Store: set CEREBRUM_BLOCKS_ROOT to a "
+            "Cerebrum-Blocks checkout with block_registry/ (got %r)" % (base,)
+        )
+    ids = set()
+    for path in sorted(registry.glob("*/block.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        bid = data.get("id") if isinstance(data, dict) else None
+        ids.add(str(bid or path.parent.name))
+    if not ids:
+        raise NoStoreRegistry("block_name_dispatch: %s holds no block.json" % registry)
+    return frozenset(ids)
 
 
 def load_known_literals() -> FrozenSet[str]:
@@ -146,7 +194,7 @@ def load_known_literals() -> FrozenSet[str]:
 
 #: Forms computed by a function over the syntax tree rather than a token
 #: pattern (selectable with --form like any other).
-AST_FORMS = ("word_list", "phrase_match")
+AST_FORMS = ("word_list", "phrase_match", "block_name_dispatch")
 
 
 def _literal_body(text: str) -> str:
@@ -537,10 +585,107 @@ def phrase_matches(source: str, offset: int = 0) -> List[Tuple[int, str]]:
     return hits
 
 
+#: Name parts that mark an expression as carrying block ids. A name made of
+#: one of these (``bid``, ``block_ids``, ``vendored_blocks``, ``peers``,
+#: ``dual`` -- the dual-registered ids) holds Store block ids by the
+#: codebase's own naming; a variable bound by iterating one inherits it.
+_BLOCK_CARRIER_PARTS = frozenset(
+    {"block", "blocks", "bid", "bids", "roster", "peers", "vendored", "dual"}
+)
+
+
+def _str_literals(node: ast.AST) -> List[str]:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return [node.value]
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return [e.value for e in node.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+    return []
+
+
+def _carries_blocks(expr: ast.AST, bound: Set[str]) -> bool:
+    for n in ast.walk(expr):
+        name = n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute) else None
+        if name and (name in bound or set(name.lower().split("_")) & _BLOCK_CARRIER_PARTS):
+            return True
+    return False
+
+
+def _block_bound_names(tree: ast.AST) -> Set[str]:
+    """Names bound by iterating a block-carrying expression (``for mod in
+    block_mods``), to a fixed point."""
+    bound: Set[str] = set()
+    while True:
+        before = len(bound)
+        for n in ast.walk(tree):
+            pairs = []
+            if isinstance(n, (ast.For, ast.AsyncFor)):
+                pairs.append((n.target, n.iter))
+            elif isinstance(n, ast.comprehension):
+                pairs.append((n.target, n.iter))
+            for target, it in pairs:
+                if _carries_blocks(it, bound):
+                    bound.update(t.id for t in ast.walk(target) if isinstance(t, ast.Name))
+        if len(bound) == before:
+            return bound
+
+
+def block_name_dispatches(source: str, block_ids: FrozenSet[str]) -> List[Tuple[int, str]]:
+    """(line, id) for every Store block id used to pick behaviour for a block.
+
+    See the module docstring (block_name_dispatch) for the shapes.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    bound = _block_bound_names(tree)
+    module_values = {
+        id(stmt.value)
+        for stmt in getattr(tree, "body", [])
+        if isinstance(stmt, (ast.Assign, ast.AnnAssign)) and stmt.value is not None
+    }
+    out: List[Tuple[int, str]] = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Compare) and any(
+            isinstance(op, (ast.Eq, ast.NotEq, ast.In, ast.NotIn)) for op in n.ops
+        ):
+            sides = [n.left, *n.comparators]
+            for i, side in enumerate(sides):
+                others = sides[:i] + sides[i + 1:]
+                hits = [v for v in _str_literals(side) if v in block_ids]
+                if hits and any(_carries_blocks(o, bound) for o in others):
+                    out.extend((n.lineno, v) for v in hits)
+        elif isinstance(n, ast.Dict) and n.keys:
+            keys = [k.value for k in n.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)]
+            if len(keys) == len(n.keys) and all(k in block_ids for k in keys):
+                if len(keys) >= 2 or id(n) in module_values:
+                    out.extend((n.lineno, k) for k in keys)
+        elif isinstance(n, ast.Subscript):
+            hits = [v for v in _str_literals(n.slice) if v in block_ids]
+            if hits and _carries_blocks(n.value, bound):
+                out.extend((n.lineno, v) for v in hits)
+        elif isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None:
+            lits = _str_literals(n.value)
+            targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+            if lits and all(v in block_ids for v in lits) and any(
+                _carries_blocks(t, set()) for t in targets
+            ):
+                out.extend((n.lineno, v) for v in lits)
+        elif isinstance(n, ast.Match) and _carries_blocks(n.subject, bound):
+            for case in n.cases:
+                for p in ast.walk(case.pattern):
+                    if isinstance(p, ast.MatchValue):
+                        out.extend(
+                            (p.lineno, v) for v in _str_literals(p.value) if v in block_ids
+                        )
+    return out
+
+
 def scan_file(
     path: Path,
     forms: Iterable[str] = DEFAULT_FORMS,
     known: Optional[FrozenSet[str]] = None,
+    block_ids: Optional[FrozenSet[str]] = None,
 ) -> List[Tuple[int, str, str]]:
     """(line, form, token) for every hardwiring form in the file's CODE."""
     # utf-8-sig: a byte-order mark would make ast.parse fail, and a file whose
@@ -560,6 +705,11 @@ def scan_file(
         out.extend((line, "word_list", name) for line, name in word_lists(source))
     if "phrase_match" in forms:
         out.extend((line, "phrase_match", lit) for line, lit in phrase_matches(source))
+    if block_ids and "block_name_dispatch" in forms:
+        out.extend(
+            (line, "block_name_dispatch", bid)
+            for line, bid in block_name_dispatches(source, block_ids)
+        )
     for tok in tokens:
         if tok.type not in (tokenize.NAME, tokenize.STRING):
             continue
@@ -589,18 +739,21 @@ def scan(
     roots: Iterable[str],
     forms: Iterable[str] = DEFAULT_FORMS,
     known: Optional[FrozenSet[str]] = None,
+    block_ids: Optional[FrozenSet[str]] = None,
 ) -> Dict[str, List[Tuple[int, str, str]]]:
     found: Dict[str, List[Tuple[int, str, str]]] = {}
     forms = tuple(forms)
-    if known is None and any(f in DATA_FORMS for f in forms):
+    if known is None and "product_literal" in forms:
         known = load_known_literals()
+    if block_ids is None and "block_name_dispatch" in forms:
+        block_ids = load_block_ids()
     for root in roots:
         base = ROOT / root
         paths = [base] if base.is_file() else sorted(base.rglob("*.py"))
         for path in paths:
             if "tests" in path.parts or "__pycache__" in path.parts:
                 continue
-            hits = scan_file(path, forms, known)
+            hits = scan_file(path, forms, known, block_ids)
             if hits:
                 found[path.relative_to(ROOT).as_posix()] = hits
     return found
@@ -665,7 +818,11 @@ def main(argv: List[str] | None = None) -> int:
     roots = tuple(args.root) if args.root else DEFAULT_ROOTS
     forms = tuple(dict.fromkeys(DEFAULT_FORMS + tuple(args.form or ())))
 
-    found = scan(roots, forms)
+    try:
+        found = scan(roots, forms)
+    except NoStoreRegistry as exc:
+        print(f"REJECTED: {exc}", file=sys.stderr)
+        return 1
     current = as_counts(found)
     now = total(current)
 
