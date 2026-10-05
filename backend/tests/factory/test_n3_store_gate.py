@@ -96,6 +96,10 @@ class StatusOpener:
                     }
                 ],
             )
+        if "/actions/artifacts" in url:
+            # The gate run published no typed artifact: failures stay
+            # unitemised rather than guessed.
+            return _Resp(200, {"total_count": 0, "artifacts": []})
         if "/commits/" in url:
             return _Resp(200, {"sha": self.commit_sha})
         raise AssertionError(f"unexpected GitHub URL {url}")

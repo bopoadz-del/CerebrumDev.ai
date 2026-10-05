@@ -181,7 +181,8 @@ def inspect_files(files: Dict[str, str]) -> List[Finding]:
         # Presence of any ui/frontend file in the scan set. Tree/zip reads
         # only .py/.txt/Dockerfile, so a real frontend would still show
         # frontend/*.py or we treat absence of those as F14.
-        if "frontend" not in " ".join(normalised) and not any(
+        # A frontend/ directory anywhere in the scanned paths, by path segment.
+        if not any("frontend" in Path(n).parts for n in normalised) and not any(
             n.startswith("frontend/") for n in files
         ):
             findings.append(

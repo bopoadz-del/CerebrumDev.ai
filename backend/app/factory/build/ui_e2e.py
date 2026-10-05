@@ -28,7 +28,7 @@ UI_NOT_BUILT = "ui_shipped_unbuilt"
 LABEL_KEYS = ("label", "labels", "authority", "precedence", "basis", "layer")
 
 UI_E2E_PROBE = r'''
-import json, os, re, sys, tempfile
+import ast, json, os, re, sys, tempfile
 os.environ["STORAGE_PATH"] = tempfile.mkdtemp(prefix="ui-gate-")
 os.environ.setdefault("PLATFORM_TOKEN", "dev-local-token")
 sys.path.insert(0, os.getcwd())
@@ -40,6 +40,44 @@ advisory = []
 
 def finding(text):
     findings.append(text)
+
+
+def _imports_formulas(path):
+    """The handler imports the product's formulas module (syntax tree)."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import) and any(a.name.split(".")[-1] == "formulas" for a in node.names):
+            return True
+        if isinstance(node, ast.ImportFrom):
+            if (node.module or "").split(".")[-1] == "formulas" or any(a.name == "formulas" for a in node.names):
+                return True
+    return False
+
+
+def _dockerfile_builds(directory):
+    """The Dockerfile, read as instructions: the image builds ``directory``
+    when a COPY/ADD brings it in (or a WORKDIR enters it) and a RUN follows."""
+    path = Path("Dockerfile")
+    if not path.is_file():
+        return False
+    entered = False
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line[0] == "#":
+            continue
+        keyword, _, rest = line.partition(" ")
+        keyword = keyword.upper()
+        args = [a for a in rest.split() if a[:2] != "--"]
+        if keyword in ("COPY", "ADD") and any(Path(a).parts[:1] == (directory,) for a in args[:-1]):
+            entered = True
+        elif keyword == "WORKDIR" and args and directory in Path(args[0]).parts:
+            entered = True
+        elif keyword == "RUN" and entered:
+            return True
+    return False
 
 
 page = Path("app/static/index.html")
@@ -65,8 +103,7 @@ ui_caps = caps if discovers else literal
 if Path("frontend/package.json").is_file():
     pkg = json.loads(Path("frontend/package.json").read_text(encoding="utf-8", errors="replace") or "{}")
     builds = bool((pkg.get("scripts") or {}).get("build"))
-    docker = Path("Dockerfile").read_text(encoding="utf-8", errors="replace") if Path("Dockerfile").is_file() else ""
-    if builds and not re.search(r"\b(npm|pnpm|yarn|node)\b", docker):
+    if builds and not _dockerfile_builds("frontend"):
         advisory.append(
             "frontend/ ships with a build script and the Dockerfile never builds it: "
             "the image serves app/static/index.html while the real UI is dead source. "
@@ -129,7 +166,7 @@ if len(ui_caps) < need:
 if Path("app/formulas.py").is_file():
     for cap in ui_caps:
         handler = Path("app/actions") / (cap + ".py")
-        if handler.is_file() and "formulas" in handler.read_text(encoding="utf-8", errors="replace"):
+        if handler.is_file() and _imports_formulas(handler):
             formula_used = True
             break
     if ui_caps and not formula_used:
@@ -175,12 +212,51 @@ after you yielded, at the cost of a full rework round.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
 from pathlib import Path
 
 import pytest
+
+
+def _imports_formulas(path):
+    """The handler imports the product's formulas module (syntax tree)."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import) and any(a.name.split(".")[-1] == "formulas" for a in node.names):
+            return True
+        if isinstance(node, ast.ImportFrom):
+            if (node.module or "").split(".")[-1] == "formulas" or any(a.name == "formulas" for a in node.names):
+                return True
+    return False
+
+
+def _dockerfile_builds(directory):
+    """The Dockerfile, read as instructions: the image builds ``directory``
+    when a COPY/ADD brings it in (or a WORKDIR enters it) and a RUN follows."""
+    path = Path("Dockerfile")
+    if not path.is_file():
+        return False
+    entered = False
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line[0] == "#":
+            continue
+        keyword, _, rest = line.partition(" ")
+        keyword = keyword.upper()
+        args = [a for a in rest.split() if a[:2] != "--"]
+        if keyword in ("COPY", "ADD") and any(Path(a).parts[:1] == (directory,) for a in args[:-1]):
+            entered = True
+        elif keyword == "WORKDIR" and args and directory in Path(args[0]).parts:
+            entered = True
+        elif keyword == "RUN" and entered:
+            return True
+    return False
 from fastapi.testclient import TestClient
 
 PAGE = Path("app/static/index.html")
@@ -280,9 +356,7 @@ def test_the_formulas_are_reachable_from_the_ui():
         pytest.skip("no capability is driven from the UI yet")
     for cap in driven:
         handler = Path("app/actions") / (cap + ".py")
-        if handler.is_file() and "formulas" in handler.read_text(
-            encoding="utf-8", errors="replace"
-        ):
+        if handler.is_file() and _imports_formulas(handler):
             return
     pytest.fail(
         "app/formulas.py ships and no capability the UI drives uses it: "

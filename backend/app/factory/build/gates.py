@@ -22,7 +22,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol
 
 from app.factory.build.authority import BuildRole
@@ -480,7 +480,23 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 #: dependency, not the product being wrong.
 _MISSING_DEP = re.compile(r"No module named ['\"]?([A-Za-z0-9_.]+)")
 #: ``path/to/file.py:123:`` -- a traceback frame in pytest's long format.
-_FRAME = re.compile(r"(?m)^([^\s:][^:\n]*\.py):\d+:")
+def _frame_locations(text: str) -> List[str]:
+    """Source files of a pytest traceback's frames, in order.
+
+    pytest writes each frame's location as ``<path>:<lineno>: ...`` at the
+    start of a line (its ReprFileLocation grammar). A line is a frame when
+    the part before the first ``:`` is a Python source path and the part
+    before the second is a line number -- read by that grammar, not matched.
+    """
+    out: List[str] = []
+    for line in (text or "").splitlines():
+        if not line or line[0].isspace():
+            continue
+        path, sep, rest = line.partition(":")
+        lineno, sep2, _ = rest.partition(":")
+        if sep and sep2 and lineno.isdigit() and PurePath(path).suffix == ".py":
+            out.append(path)
+    return out
 
 
 def _strip_ansi(text: str) -> str:
@@ -518,7 +534,7 @@ def failing_tests_from_junit(workspace: Path, junit_path: Path) -> Optional[List
             continue
         nodeid, rel = _nodeid(workspace, case.get("classname") or "", case.get("name") or "")
         message = (problem.get("message") or problem.text or "").strip().splitlines()
-        frames = _FRAME.findall(problem.text or "")
+        frames = _frame_locations(problem.text or "")
         out.append(
             {
                 "nodeid": nodeid,
@@ -893,27 +909,38 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
     # instruction the factory does not verify is a suggestion. FinOps
     # (sess_065fc3eac75c4f62) hardcoded UK VAT and GBP for a Dubai business
     # and passed 13/13 -- no gate had ever read a tax rate.
-    from app.factory.build.money_contract import MONEY_ASSUMED, money_findings
+    # The locale is the user's typed answer (Floor -> blueprint.locale ->
+    # docs/declared_locale.json); the product's models declare which fields
+    # are money. VETO on a literal code or rate; WITHHELD when money exists
+    # but no currency was declared -- never a frozen guess.
+    from app.factory.build.money_contract import MONEY_ASSUMED, money_verdict
 
-    money = money_findings(ctx.workspace, ctx.brief)
-    if money:
+    money = money_verdict(ctx.workspace)
+    if money.status == "FAIL":
         return GateResult(
             ok=False,
             gate="writer_contract",
             reason=MONEY_ASSUMED,
-            detail=(
-                f"{MONEY_ASSUMED}: the brief names no country or currency and "
-                f"the product decides for it -- {money[0]}"
-            ),
-            findings=list(money),
-            payload={"money_assumptions": len(money)},
+            detail=f"{MONEY_ASSUMED}: {money.findings[0]}",
+            findings=list(money.findings),
+            payload={"money_contract": "FAIL", "money_findings": len(money.findings)},
         )
+    money_line = (
+        f"money_contract WITHHELD({money.reason})"
+        if money.status == "WITHHELD"
+        else f"money_contract {money.status}"
+    )
     return GateResult(
         ok=True,
         gate="writer_contract",
-        detail=f"{compiled.detail}; {behaviour.detail}; {surface.detail}",
+        detail=f"{compiled.detail}; {behaviour.detail}; {surface.detail}; {money_line}",
         findings=list(behaviour.findings),
-        payload={**dict(behaviour.payload), "agent_written": len(agent_written)},
+        payload={
+            **dict(behaviour.payload),
+            "agent_written": len(agent_written),
+            "money_contract": money.status,
+            "money_reason": money.reason,
+        },
     )
 
 

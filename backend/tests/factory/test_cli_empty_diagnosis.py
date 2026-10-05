@@ -12,7 +12,7 @@ from app.factory.build.brief_compiler import compile_brief
 from app.factory.build.coder_session import (
     CLI_EMPTY_DESCRIBED_NOT_WRITTEN,
     CLI_EMPTY_EMPTY_COMPLETION,
-    CLI_EMPTY_WRONG_PATH,
+    CLI_EMPTY_WRITE_TARGETS_UNREAD,
     LOG_REL,
     NAMED_BLOCKER_CLI_NO_AUTHORSHIP,
     classify_cli_empty,
@@ -85,10 +85,12 @@ def test_classify_cli_empty_empty_completion():
     assert reason == "empty-completion"
 
 
-def test_classify_cli_empty_wrong_path():
-    reason = classify_cli_empty(_wrong_path_log())
-    assert reason == CLI_EMPTY_WRONG_PATH
-    assert reason == "wrong-path"
+def test_write_tool_prose_decides_nothing():
+    """``Write(...)`` / ``Wrote ...`` is the CLI's prose, not a typed tool
+    record: the session is classified by what its log structurally shows,
+    and the detail says the write targets were not itemised."""
+    assert classify_cli_empty(_wrong_path_log()) == CLI_EMPTY_EMPTY_COMPLETION
+    assert "no typed tool record" in CLI_EMPTY_WRITE_TARGETS_UNREAD
 
 
 def test_classify_cli_empty_blank_is_empty_completion():
@@ -108,7 +110,6 @@ def test_classify_cli_empty_does_not_weaken_no_authorship():
         assert reason in {
             CLI_EMPTY_DESCRIBED_NOT_WRITTEN,
             CLI_EMPTY_EMPTY_COMPLETION,
-            CLI_EMPTY_WRONG_PATH,
         }
         assert NAMED_BLOCKER_CLI_NO_AUTHORSHIP not in reason
 
@@ -204,4 +205,5 @@ def test_empty_harvest_folds_classify_reason_into_no_authorship(
     assert result.blocker == NAMED_BLOCKER_CLI_NO_AUTHORSHIP
     assert NAMED_BLOCKER_CLI_NO_AUTHORSHIP in result.detail
     assert CLI_EMPTY_DESCRIBED_NOT_WRITTEN in result.detail
+    assert CLI_EMPTY_WRITE_TARGETS_UNREAD in result.detail
     assert result.ok is True

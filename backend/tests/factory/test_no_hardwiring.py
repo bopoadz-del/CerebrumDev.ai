@@ -212,6 +212,33 @@ def test_prose_paths_keys_and_closed_vocabulary_are_not_phrases(src):
     assert _gate().phrase_matches(src) == [], src
 
 
+def test_a_phrase_compiled_at_module_scope_and_applied_to_text_is_caught():
+    """A phrase compiled once and applied to text later is the same decision
+    as re.search("<phrase>", text): red at the use site, then green once the
+    pattern is gone. The rewrite of 'FROM records' SQL was exactly this."""
+    gate = _gate()
+    injected = (
+        "import re\n"
+        "_ZORBLAT_TABLE = re.compile(r'\\b(FROM|INTO)\\s+zorblat_rows\\b')\n"
+        "\n"
+        "def retarget(sql: str) -> str:\n"
+        "    return _ZORBLAT_TABLE.sub('FROM zorblat_entity', sql)\n"
+    )
+    hits = gate.phrase_matches(injected)
+    assert hits and hits[0][0] == 5, hits
+    removed = "def retarget(sql: str) -> str:\n    return sql\n"
+    assert gate.phrase_matches(removed) == []
+    # Shape patterns are structure, not phrases: a class and a count carry
+    # no word.
+    shape = (
+        "import re\n"
+        "_ZQ_SHAPE = re.compile(r'[A-Z]{3}')\n"
+        "def ok(value: str) -> bool:\n"
+        "    return bool(_ZQ_SHAPE.fullmatch(value))\n"
+    )
+    assert gate.phrase_matches(shape) == []
+
+
 # -- group C: prose and log signals became typed ---------------------------
 
 
@@ -381,3 +408,52 @@ def test_source_questions_are_answered_by_the_syntax_tree():
     # The prepared-step keys must be BOUND in code, not mentioned in text.
     mention = "# 'topic' 'message' payload={ channel='mcp' action='publish' 'event_bus'\n"
     assert handler_has_prepared_event_bus_step(mention) is False
+
+
+def test_the_secret_scrubber_passes_and_a_match_decision_on_its_patterns_is_rejected():
+    """Owner ruling 2026-10-05: the scrubber's patterns are data
+    (secret_patterns.json) used only to substitute. The same patterns used to
+    DECIDE something are a phrase check."""
+    gate = _gate()
+    scrubber = (
+        Path(__file__).resolve().parents[2] / "app" / "factory" / "build" / "sanitize.py"
+    ).read_text(encoding="utf-8")
+    assert gate.phrase_matches(scrubber) == []
+    decision = scrubber + (
+        "\n\ndef zorblat_leaks(text):\n"
+        "    if _rules()['long_blob'].search(text):\n"
+        "        return True\n"
+        "    return False\n"
+    )
+    hits = gate.phrase_matches(decision)
+    assert hits and "decision" in hits[0][1]
+
+
+@pytest.mark.parametrize(
+    "loader",
+    [
+        "P = ROOT / 'secret_patterns.json'\n",
+        "F = 'secret_patterns.json'\nP = ROOT / F\n",
+        "F = 'secret_patterns.json'\nP = open(F)\n",
+        "P = Path('cfg/secret_patterns.json')\n",
+    ],
+)
+def test_reaching_the_secret_patterns_file_by_any_path_is_a_load(loader):
+    """A decision on a pattern match is refused in every module that REACHES
+    the file -- directly or through a bound name."""
+    gate = _gate()
+    decision = "\n\ndef leaks(r, text):\n    if r.search(text):\n        return True\n    return False\n"
+    hits = gate.phrase_matches(loader + decision)
+    assert hits and "decision" in hits[0][1]
+
+
+def test_binding_and_comparing_the_file_name_is_not_a_load():
+    """The gate defines its own rule by naming the file and comparing with it;
+    it never opens it, so its own regex decisions are not secret-pattern ones."""
+    gate = _gate()
+    src = (
+        "F = 'secret_patterns.json'\n\n\n"
+        "def names_it(s):\n    return s.endswith(F)\n\n\n"
+        "def shaped(r, text):\n    if r.match(text):\n        return 1\n    return 0\n"
+    )
+    assert gate.phrase_matches(src) == []

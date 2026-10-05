@@ -12,9 +12,8 @@ the templated inventory for the same run.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 __all__ = (
@@ -376,9 +375,69 @@ class DualListedAuthorshipError(ValueError):
     """A capability cannot be both agent-written and templated."""
 
 
-_WRITER_ROLE_STAMP_RE = re.compile(
-    r"Written by the factory WRITER role \(([^)]*)\)"
-)
+#: The authorship marker: a module-level ``AUTHORED_BY = "<source>"``
+#: assignment in each action handler. It is read from the SYNTAX TREE --
+#: a docstring sentence decides nothing (a prose stamp is text, and the
+#: Factory never decides from text). One name, used by every writer and
+#: reader: the Factory's emitters, the writer brief, this module, the
+#: stamped acceptance harness and the release gate.
+AUTHORSHIP_MARKER = "AUTHORED_BY"
+
+
+def marker_source(text: str) -> str:
+    """The source a handler module's ``AUTHORED_BY`` assignment names, or ''.
+
+    Only a module-level ``AUTHORED_BY = "<str>"`` (or annotated) counts; a
+    file that does not parse, or a marker inside a function or a string,
+    names nothing.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(text or "")
+    except (SyntaxError, ValueError):
+        return ""
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+            value = node.value
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+            value = node.value
+        else:
+            continue
+        if any(isinstance(t, ast.Name) and t.id == AUTHORSHIP_MARKER for t in targets):
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                return value.value.strip()
+    return ""
+
+
+def authorship_marker_line(source: str) -> str:
+    """The line every writer puts at a handler's module level."""
+    return f"{AUTHORSHIP_MARKER} = {str(source)!r}"
+
+
+#: The reader above as source, rendered into scripts a delivered product
+#: runs without the Factory (the acceptance harness, the release gate).
+RENDERED_MARKER_READER = f'''
+def _authored_by(text):
+    import ast as _ast
+    try:
+        tree = _ast.parse(text or "")
+    except (SyntaxError, ValueError):
+        return ""
+    for node in tree.body:
+        if isinstance(node, _ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, _ast.AnnAssign):
+            targets, value = [node.target], node.value
+        else:
+            continue
+        if any(isinstance(t, _ast.Name) and t.id == {AUTHORSHIP_MARKER!r} for t in targets):
+            if isinstance(value, _ast.Constant) and isinstance(value.value, str):
+                return value.value.strip()
+    return ""
+'''
 
 
 def agent_written_handler_ids_in_workspace(workspace: Path | str) -> List[str]:
@@ -386,8 +445,8 @@ def agent_written_handler_ids_in_workspace(workspace: Path | str) -> List[str]:
 
     Ground truth for the writer-contract gate: a gate must not trust the
     writer's own status claim, so the agent-authored set is re-derived from
-    the files the writer physically produced (the ``Written by the factory
-    WRITER role (...)`` docstring stamp in ``app/actions/*.py``). Zero is
+    the files the writer physically produced (the module-level
+    ``AUTHORED_BY`` assignment in ``app/actions/*.py``). Zero is
     ``writer_no_output`` -- templated and factory-grounded writes do not
     count.
     """
@@ -398,11 +457,10 @@ def agent_written_handler_ids_in_workspace(workspace: Path | str) -> List[str]:
     ids: List[str] = []
     for path in sorted(actions.glob("*.py")):
         try:
-            head = path.read_text(encoding="utf-8")[:4000]
+            text = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        match = _WRITER_ROLE_STAMP_RE.search(head)
-        if match and is_coding_agent_source(match.group(1)):
+        if is_coding_agent_source(marker_source(text)):
             ids.append(path.stem)
     return ids
 
@@ -466,9 +524,8 @@ def is_templated_source(source: Any) -> bool:
 
 
 def stamped_writer_source(text: str) -> str:
-    """The source a handler file's WRITER-role stamp names, or ''."""
-    match = _WRITER_ROLE_STAMP_RE.search((text or "")[:4000])
-    return match.group(1).strip() if match else ""
+    """The source a handler file's ``AUTHORED_BY`` marker names, or ''."""
+    return marker_source(text)
 
 
 def coding_agent_artifact_ids(sources: Optional[Mapping[str, Any]]) -> List[str]:
@@ -607,7 +664,6 @@ def is_action_artifact_id(artifact_id: str) -> bool:
 #: capability id, so every path-keyed handler was rejected: live build
 #: sess_617f60024df24a4e went 13/13 with 8 agent-written handlers on disk and
 #: graded action_py=0, which demoted it to a code-cycle prototype.
-_ACTION_HANDLER_PATH_RE = re.compile(r"^app/actions/([A-Za-z_][A-Za-z0-9_]*)\.py$")
 
 
 def action_artifact_id(key: Any) -> Optional[str]:
@@ -619,9 +675,15 @@ def action_artifact_id(key: Any) -> Optional[str]:
     ``app/actions/__init__.py`` is not a capability.
     """
     text = str(key or "").strip().replace("\\", "/")
-    match = _ACTION_HANDLER_PATH_RE.match(text)
-    if match:
-        text = match.group(1)
+    # The handler's path, read as a path: exactly app/actions/<identifier>.py.
+    path = PurePosixPath(text)
+    if (
+        len(path.parts) == 3
+        and path.parts[:2] == ("app", "actions")
+        and path.suffix == ".py"
+        and path.stem.isidentifier()
+    ):
+        text = path.stem
         if text.startswith("__"):
             return None
     return text if is_action_artifact_id(text) else None
@@ -786,9 +848,9 @@ def thin_store_green_export_blocker(
     grade = status.get("level_grade")
     gates = grade.get("three_gate") if isinstance(grade, Mapping) else None
     if not isinstance(gates, Mapping):
-        from app.factory.build.level_grade import parse_three_gate_verdict
+        from app.factory.build.level_grade import three_gate_verdict
 
-        gates = parse_three_gate_verdict(str(status.get("detail") or ""))
+        gates = three_gate_verdict(status)
     cycle = str(status.get("cycle") or "").strip().lower()
     claiming_store_green = (
         cycle == "pilot"

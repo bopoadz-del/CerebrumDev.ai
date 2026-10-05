@@ -26,10 +26,11 @@ SCHEMA_ACCEPT_GATE = GATE_NAME
 SCHEMA_ACCEPT_HALT = SCHEMA_HALT
 SCHEMA_ACCEPT_CHECK = "writer_behaviour"
 
-#: Probe / brief envelope. ``status`` without allowed_values samples as this.
+#: The envelope status vocabulary's first value (it is declared).
 ENVELOPE_STATUS_SAMPLE = ENVELOPE_STATUS_VALUES[0]  # open
 
-#: Probe ``_value`` for ``channel`` / ``*_channel`` when no allowed_values.
+#: A safe channel value for a channel field that DECLARES no vocabulary
+#: (used by workflow guidance; the probe never reads meaning from a name).
 CHANNEL_SAMPLE = "email"
 
 #: Probe ``_value`` for a generic str field with no other heuristic.
@@ -72,14 +73,14 @@ def schema_accept_rules_text() -> str:
             "Do not require block-specific keys (topic, sql/table, file paths,",
             "team_id, channel, steps) from the caller — construct those inputs.",
             "",
-            "Sampling rules (must match writer_behaviour probe _value):",
-            "- CONSTRAINTS.allowed_values[0] when declared",
-            f"- status / *_status → {ENVELOPE_STATUS_SAMPLE} (envelope {vocab})",
-            f"- channel / *_channel → {CHANNEL_SAMPLE} (never the word {GENERIC_STR_SAMPLE})",
-            f"- datetime / *_at / *_datetime → {DATETIME_SAMPLE}",
-            f"- date / *_date → {DATE_SAMPLE}",
-            f"- time / *_time → {TIME_SAMPLE}",
-            f"- email-shaped names → {EMAIL_SAMPLE}",
+            "Sampling rules (must match writer_behaviour probe _value) -- read",
+            "from what the field DECLARES, never from its name:",
+            "- CONSTRAINTS.allowed_values[0] when declared (the envelope status",
+            f"  declares {vocab}, so it samples as {ENVELOPE_STATUS_SAMPLE})",
+            f"- type datetime / format datetime|timestamp|iso8601 → {DATETIME_SAMPLE}",
+            f"- type date / format date → {DATE_SAMPLE}",
+            f"- type time / format time → {TIME_SAMPLE}",
+            f"- format email → {EMAIL_SAMPLE}",
             "- int/float → min if set else 1 (min=0 samples as 0 in the probe)",
             "- bool → false",
             f"- otherwise the word {GENERIC_STR_SAMPLE}",
@@ -104,9 +105,10 @@ def schema_accept_brief_contract() -> str:
     """System-brief paragraph shared by WRITER seat + HTTP oneshot."""
     return (
         f"WRITER gate {SCHEMA_ACCEPT_GATE} POSTs a payload built from each "
-        "capability's own FIELDS + CONSTRAINTS (allowed_values[0], "
-        f"status={ENVELOPE_STATUS_SAMPLE}, channel={CHANNEL_SAMPLE}, "
-        f"generic str={GENERIC_STR_SAMPLE!r}). Every handler must accept "
+        "capability's own FIELDS + CONSTRAINTS (allowed_values[0], declared "
+        "type/format -- never the field's name -- generic str="
+        f"{GENERIC_STR_SAMPLE!r}). A field that needs a vocabulary or format "
+        "must declare it. Every handler must accept "
         "that payload. Declaring a stricter contract than the spec produces "
         f"{SCHEMA_ACCEPT_HALT!r}."
     )
@@ -138,25 +140,17 @@ def probe_sample_value(
         return 1
     if kind == "bool" or kind_l == "bool":
         return False
-    n = str(name or "").lower()
-    if "email" in n:
-        return EMAIL_SAMPLE
+    # Declared type / format only -- never a meaning read from the field name.
+    # A vocabulary (status, channel, ...) arrives as allowed_values above.
     fmt = str(con.get("format") or "").lower().replace("-", "")
-    if (
-        kind_l in ("datetime", "timestamp")
-        or fmt in ("datetime", "timestamp", "iso8601")
-        or n.endswith("_at")
-        or n.endswith("_datetime")
-    ):
+    if fmt == "email":
+        return EMAIL_SAMPLE
+    if kind_l in ("datetime", "timestamp") or fmt in ("datetime", "timestamp", "iso8601"):
         return DATETIME_SAMPLE
-    if kind_l == "date" or fmt == "date" or n.endswith("_date"):
+    if kind_l == "date" or fmt == "date":
         return DATE_SAMPLE
-    if kind_l == "time" or fmt == "time" or n.endswith("_time") or n == "time":
+    if kind_l == "time" or fmt == "time":
         return TIME_SAMPLE
-    if n == "status" or n.endswith("_status"):
-        return ENVELOPE_STATUS_SAMPLE
-    if n == "channel" or n.endswith("_channel"):
-        return CHANNEL_SAMPLE
     return GENERIC_STR_SAMPLE
 
 

@@ -115,8 +115,8 @@ describe('Factory Floor — architect LLM then coding agent', () => {
 
   it('approve starts a coding-agent runner build', async () => {
     const goPlatforms = vi.fn()
-    chatStreamMock.mockImplementation(async (_sid: string, message: string, onEvent: (ev: { event: string; data: unknown }) => void) => {
-      if (message === 'approve') {
+    chatStreamMock.mockImplementation(async (_sid: string, _message: string, onEvent: (ev: { event: string; data: unknown }) => void, _v?: unknown, _l?: unknown, typed?: { action: string }) => {
+      if (typed?.action === 'approve') {
         onEvent({
           event: 'generation',
           data: {
@@ -166,7 +166,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       screen.queryByRole('button', { name: 'Open Your Platforms' }),
     ).not.toBeInTheDocument()
     expect(goPlatforms).not.toHaveBeenCalled()
-    expect(chatStreamMock).toHaveBeenCalledWith('sess_ui', 'approve', expect.any(Function))
+    expect(chatStreamMock).toHaveBeenCalledWith('sess_ui', '', expect.any(Function), undefined, undefined, { action: 'approve' })
     expect(watchBuildMock).toHaveBeenCalled()
   })
 
@@ -751,7 +751,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     })
     render(<Floor sessionId="sess_cta" goPlatforms={() => {}} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Continue to pilot' }))
-    await waitFor(() => expect(chatStreamMock).toHaveBeenCalledWith('sess_cta', 'continue', expect.any(Function)))
+    await waitFor(() => expect(chatStreamMock).toHaveBeenCalledWith('sess_cta', '', expect.any(Function), undefined, undefined, { action: 'run_pilot' }))
     expect(await screen.findByRole('heading', { name: 'Coding agent has taken over' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: /Coding agent finished/ })).not.toBeInTheDocument()
   })
@@ -1039,8 +1039,8 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       releaseApprove = resolve
     })
     chatStreamMock.mockImplementation(
-      async (_sid: string, message: string, onEvent: (ev: { event: string; data: unknown }) => void) => {
-        if (message === 'approve') {
+      async (_sid: string, _message: string, onEvent: (ev: { event: string; data: unknown }) => void, _v?: unknown, _l?: unknown, typed?: { action: string }) => {
+        if (typed?.action === 'approve') {
           await approveGate
           onEvent({
             event: 'generation',
@@ -1099,8 +1099,8 @@ describe('Factory Floor — architect LLM then coding agent', () => {
   })
 
   it('does not offer Floor download while the coding agent is still writing', async () => {
-    chatStreamMock.mockImplementation(async (_sid: string, message: string, onEvent: (ev: { event: string; data: unknown }) => void) => {
-      if (message === 'approve') {
+    chatStreamMock.mockImplementation(async (_sid: string, _message: string, onEvent: (ev: { event: string; data: unknown }) => void, _v?: unknown, _l?: unknown, typed?: { action: string }) => {
+      if (typed?.action === 'approve') {
         onEvent({
           event: 'generation',
           data: {
@@ -1428,8 +1428,8 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     // bakery-operations: a session started on the Floor loads its design on
     // mount (empty), and after approve the newest card is the generation
     // card, which carries no blueprint -- the header read "Untitled platform".
-    chatStreamMock.mockImplementation(async (_sid: string, message: string, onEvent: (ev: { event: string; data: unknown }) => void) => {
-      if (message === 'approve') {
+    chatStreamMock.mockImplementation(async (_sid: string, _message: string, onEvent: (ev: { event: string; data: unknown }) => void, _v?: unknown, _l?: unknown, typed?: { action: string }) => {
+      if (typed?.action === 'approve') {
         onEvent({
           event: 'generation',
           data: {

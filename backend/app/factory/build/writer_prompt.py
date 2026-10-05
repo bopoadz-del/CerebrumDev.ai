@@ -281,11 +281,11 @@ for small steps (files written, models emitted, tests added).
 
 A zero-artifact pass is refused (writer_no_output).
 
-AUTHORSHIP STAMP (mandatory — the factory's disk-level artifact gate
-counts it): every action handler you author must carry this exact line in
-its module docstring:
+AUTHORSHIP MARKER (mandatory — the factory's disk-level artifact gate
+counts it): every action handler you author sets this module-level
+assignment, directly under its imports:
 
-    Written by the factory WRITER role (codewhale exec)
+    AUTHORED_BY = "codewhale exec"
 """
 
 

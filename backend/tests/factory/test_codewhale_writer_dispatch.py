@@ -24,7 +24,11 @@ def test_prompt_instructs_the_author_stamp():
         type("B", (), {"product_id": "p", "product_name": "n", "vertical": "v", "summary": "s"})(),
         brief="probe",
     )
-    assert "Written by the factory WRITER role (codewhale exec)" in text
+    # The prompt tells the writer to set the machine-read marker the gate
+    # counts, not to write a sentence.
+    from app.factory.build.authorship import authorship_marker_line
+
+    assert authorship_marker_line("codewhale exec").replace("'", '"') in text
 
 
 def _ctx(tmp_path):
@@ -72,7 +76,8 @@ def _plant_authored_handler(root):
     (actions / "cap.py").write_text(
         '"""Handler for capability cap.\n\n'
         'Written by the factory WRITER role (codewhale exec).\n'
-        '"""\n',
+        '"""\n'
+        'AUTHORED_BY = "codewhale exec"\n',
         encoding="utf-8",
     )
 
@@ -249,7 +254,8 @@ def test_codewhale_stamp_counts_as_agent_output(tmp_path):
     (actions / "cap.py").write_text(
         '"""Handler for capability cap.\n\n'
         "Written by the factory WRITER role (codewhale exec).\n"
-        '"""\n',
+        '"""\n'
+        'AUTHORED_BY = "codewhale exec"\n',
         encoding="utf-8",
     )
     assert agent_written_handler_ids_in_workspace(tmp_path) == ["cap"]
@@ -290,7 +296,8 @@ def test_worker_output_in_staging_survives_commit(tmp_path, monkeypatch):
         (actions / "cap.py").write_text(
             '"""Handler for capability cap.\n\n'
             "Written by the factory WRITER role (codewhale exec).\n"
-            '"""\n',
+            '"""\n'
+        'AUTHORED_BY = "codewhale exec"\n',
             encoding="utf-8",
         )
         return _receipt(tools=[{"tool": "write", "path": "app/actions/cap.py"}])

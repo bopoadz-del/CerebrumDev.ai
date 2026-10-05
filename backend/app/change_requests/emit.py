@@ -8,6 +8,7 @@ from app.change_requests.builders import build_repair_request, sign_and_register
 from app.change_requests.flags import resident_emit_change_requests_enabled
 from app.change_requests.intake import IntakeRejected, intake_change_request
 from app.change_requests.signing import signing_key_from_env
+from app.resident_engineer.modes import AutonomyLevel
 from app.resident_engineer.injection_guard import strip_instruction_patterns
 
 
@@ -44,7 +45,7 @@ def emit_repair_from_escalation(
         target=target,
         symptom=strip_instruction_patterns(symptom),
         evidence=evidence or {},
-        requested_autonomy_level="L3",
+        requested_autonomy_level=AutonomyLevel.L3.value,
         failed_action_id=failed_action_id,
     )
 

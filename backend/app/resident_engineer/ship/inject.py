@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import shutil
 from pathlib import Path
 from typing import Any, Dict
@@ -16,6 +17,24 @@ _SHIP_FILES = (
     "diagnosis.py",
     "modes.py",
 )
+#: The shipped router's module path (app.resident_engineer.router), derived
+#: from this package so the mount and its idempotency check name one module.
+_ROUTER_MODULE = __name__.rsplit(".", 2)[0] + ".router"
+
+
+def _imports_module(source: str, module: str) -> bool:
+    """Whether parsed ``source`` imports ``module`` (``from module import ...``
+    or ``import module``). Unparseable source counts as not importing it."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == module:
+            return True
+        if isinstance(node, ast.Import) and any(a.name == module for a in node.names):
+            return True
+    return False
 
 
 def inject_resident_runtime(product_out: Path) -> Dict[str, Any]:
@@ -63,12 +82,12 @@ def inject_resident_runtime(product_out: Path) -> Dict[str, Any]:
 
     # Mount router on generated FastAPI app if present
     main_py = Path(product_out) / "app" / "main.py"
-    if main_py.is_file() and "resident_engineer.router" not in main_py.read_text(encoding="utf-8"):
+    if main_py.is_file() and not _imports_module(main_py.read_text(encoding="utf-8"), _ROUTER_MODULE):
         main_py.write_text(
             main_py.read_text(encoding="utf-8")
             + "\n\n# Resident Mode (flag-gated; RESIDENT_ENGINEER_ENABLED default false)\n"
             "try:\n"
-            "    from app.resident_engineer.router import router as _resident_router\n"
+            f"    from {_ROUTER_MODULE} import router as _resident_router\n"
             "    app.include_router(_resident_router)\n"
             "except Exception:\n"
             "    pass\n",

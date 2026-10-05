@@ -13,10 +13,21 @@ import logging
 import os
 import threading
 from datetime import datetime, timezone
+from enum import Enum, auto
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+class ItemField(str, Enum):
+    """Typed keys of a queue item; the stored key is the member name."""
+
+    @staticmethod
+    def _generate_next_value_(name: str, start: int, count: int, last_values: list) -> str:
+        return name
+
+    audit_trail = auto()  # append-only list of audit entries
 
 QUEUE_STATES = (
     "received",
@@ -173,10 +184,10 @@ class ChangeRequestQueue:
             if promotion is not None:
                 item["promotion"] = promotion
             if audit_append is not None:
-                trail = item.setdefault("audit_trail", [])
+                trail = item.setdefault(ItemField.audit_trail.value, [])
                 if not isinstance(trail, list):
                     trail = []
-                    item["audit_trail"] = trail
+                    item[ItemField.audit_trail.value] = trail
                 entry = dict(audit_append)
                 entry.setdefault("at", item["updated_at"])
                 trail.append(entry)

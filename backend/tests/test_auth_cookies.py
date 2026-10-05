@@ -165,3 +165,35 @@ def test_cookie_is_not_a_master_key_channel(monkeypatch, tmp_path):
     client.cookies.set(LOGIN_COOKIE_NAME, "master-secret-key-value")
     res = client.get("/v1/auth/me")
     assert res.status_code == 401
+
+
+def test_cookie_is_not_an_api_key_channel(monkeypatch, tmp_path):
+    """The cookie only ever holds a login session, so it resolves against the
+    login-session table alone -- a live API key placed in it authenticates
+    nothing. Decided by where the credential came from, not by its spelling."""
+    client = _cookie_client(monkeypatch, tmp_path)
+    email = f"key-{uuid.uuid4().hex[:8]}@example.com"
+    login = _register(client, email)["login_token"]
+    key = client.post(
+        "/v1/auth/keys",
+        json={"label": "ci"},
+        headers={"Authorization": f"Bearer {login}"},
+    )
+    assert key.status_code == 201, key.text
+    api_key = key.json()["api_key"]
+    client.cookies.clear()
+    assert client.get("/v1/auth/me", headers={"X-API-Key": api_key}).status_code == 200
+
+    client.cookies.set(LOGIN_COOKIE_NAME, api_key)
+    assert client.get("/v1/auth/me").status_code == 401
+
+
+def test_a_login_session_is_known_by_lookup_not_by_its_prefix(monkeypatch, tmp_path):
+    """The store knows what it minted: a value wearing the session label
+    that the store never minted is not a session."""
+    client = _cookie_client(monkeypatch, tmp_path)
+    client.cookies.clear()
+    res = client.get(
+        "/v1/auth/me", headers={"Authorization": "Bearer cdt_not-minted-by-the-store"}
+    )
+    assert res.status_code == 401

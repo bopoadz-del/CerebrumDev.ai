@@ -20,11 +20,11 @@ n_required keeps need=5). Below that floor the grade demotes
 
 from __future__ import annotations
 
-import re
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from app.factory.build.authority import BuildRole
 from app.factory.build.authorship import full_pilot_authorship_from
 from app.factory.build.converge import FOURTEEN_ARTIFACT_CLASSES, present_classes
 from app.factory.build.product_gate import GATE_SCOPES
@@ -50,17 +50,34 @@ class Level(str, Enum):
     FOUNDING_CUSTOMER_READY = "FOUNDING_CUSTOMER_READY"
 
 
-_GATE_RE = re.compile(
-    r"\b(CODE|PRODUCT|STORE)\s+(PASS|NOT RUN|FAIL)\b",
-    re.IGNORECASE,
-)
+def three_gate_verdict(status: Mapping[str, Any]) -> Dict[str, str]:
+    """CODE / PRODUCT / STORE from the run's TYPED state -- never from the
+    sentence the runner prints.
 
-
-def parse_three_gate_verdict(detail: str) -> Dict[str, str]:
-    """Read CODE / PRODUCT / STORE from the runner SUCCESS/FAIL sentence."""
+    Every producer of that sentence (runner._finish on SUCCESS, the n3 green
+    ingest, build_jobs) writes it from two facts the status already carries:
+    the run succeeded, and its cycle (PRODUCT and STORE run only on the pilot
+    cycle). A failed run is located by its failed phase: TESTER on the pilot
+    cycle is the PRODUCT gate, STORE_MANAGER is the STORE gate, anything
+    earlier is CODE. Anything else is UNKNOWN.
+    """
     found = {name: "UNKNOWN" for name in GATE_SCOPES}
-    for match in _GATE_RE.finditer(detail or ""):
-        found[match.group(1).upper()] = match.group(2).upper().replace(" ", "_")
+    state = str(status.get("state") or "").strip().lower()
+    pilot = str(status.get("cycle") or "").strip().lower() == "pilot"
+    if state == "succeeded":
+        found["CODE"] = "PASS"
+        found["PRODUCT"] = found["STORE"] = "PASS" if pilot else "NOT_RUN"
+        return found
+    failure = status.get("failure")
+    phase = str((failure or {}).get("phase") or "").strip().upper() if isinstance(failure, Mapping) else ""
+    if state != "failed" or not phase:
+        return found
+    if phase == BuildRole.STORE_MANAGER.value:
+        found.update(CODE="PASS", PRODUCT="PASS" if pilot else "NOT_RUN", STORE="FAIL")
+    elif phase == BuildRole.TESTER.value and pilot:
+        found.update(CODE="PASS", PRODUCT="FAIL", STORE="NOT_RUN")
+    else:
+        found.update(CODE="FAIL", PRODUCT="NOT_RUN", STORE="NOT_RUN")
     return found
 
 
@@ -211,8 +228,7 @@ def grade_workspace(
     state = str(status.get("state") or "unknown")
     ready = bool(status.get("pilot_ready"))
     cycle = str(status.get("cycle") or "code")
-    detail = str(status.get("detail") or "")
-    gates = parse_three_gate_verdict(detail)
+    gates = three_gate_verdict(status)
     floor = full_pilot_authorship_from(status, workspace)
     missing = _missing_founding_files(workspace) if workspace.is_dir() else list(
         FOUNDING_EXTRA_FILES

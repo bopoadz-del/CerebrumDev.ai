@@ -10,6 +10,7 @@ and compare what came back against what went in.
 from __future__ import annotations
 
 import os
+import json
 import sqlite3
 import tarfile
 
@@ -186,10 +187,11 @@ class TestPostgresDumpHonesty:
         monkeypatch.setattr(bk.subprocess, "run", lambda *_a, **_k: _Proc())
         dest = tmp_path / "accounts.dump"
         written = bk.snapshot_postgres(f"sqlite:///{db}", dest)
-        assert written.suffix == ".sql"
-        text = written.read_text(encoding="utf-8")
-        assert "a@b.com" in text
-        assert "INSERT INTO" in text
+        # The fallback is the structured snapshot: typed rows, no SQL text.
+        assert written.name == bk.ACCOUNTS_SNAPSHOT_NAME
+        doc = json.loads(written.read_text(encoding="utf-8"))
+        assert doc["schema"] == bk.ACCOUNTS_SNAPSHOT_SCHEMA
+        assert doc["tables"]["accounts"] == {"columns": ["id", "email"], "rows": [["a1", "a@b.com"]]}
         assert dest.exists() is False or dest.stat().st_size == 0
 
     def test_sqlalchemy_fallback_is_used_by_create_backup(self, tmp_path, monkeypatch):
@@ -214,6 +216,6 @@ class TestPostgresDumpHonesty:
         monkeypatch.setattr(bk.subprocess, "run", lambda *_a, **_k: _Proc())
         result = bk.create_backup(include_content=False)
         assert result.ok is True
-        assert result.dump_method == "sqlalchemy"
-        assert "accounts.sql" in result.included
+        assert result.dump_method == "structured"
+        assert bk.ACCOUNTS_SNAPSHOT_NAME in result.included
         assert result.archive is not None and result.archive.is_file()

@@ -45,6 +45,14 @@ logger = logging.getLogger(__name__)
 
 from .blueprint import CapabilitySpec, ProductBlueprint
 from .dual_registry import dual_registered_ids
+from .floor_actions import (
+    REFINEMENT_ACTIONS,
+    VALUE_REQUIRED,
+    FloorAction,
+    FloorActionError,
+    parse_rigor,
+)
+from .locale_choice import sync_blueprint_locale
 from .blocks_source import resolve_blocks_root
 from .paths import factory_outputs_root
 from .product_architect import (
@@ -56,99 +64,13 @@ from .product_architect import (
 )
 from .build.coder_session import NAMED_BLOCKER_CLI, CodeCliUnavailable
 
-# --- Intent detection -------------------------------------------------------
-
-_PLATFORM_INTENT_RE = re.compile(
-    r"\b(build|create|make|generate|assemble|design|spin\s*up|ship|"
-    r"want|need|give\s*me|get\s*me|set\s*up|looking\s+for|i'?d\s+like)\b"
-    r"[\w\s,.'\-/: ]{0,100}?"
-    r"\b(platform|product|system|portal)\b",
-    re.IGNORECASE,
-)
-
-# Live Floor testers describe a business ("build me a tasting room for a
-# winery") without saying "platform". That is still a product brief.
-_BUSINESS_BRIEF_RE = re.compile(
-    r"\b(build|create|make|generate|assemble|design|spin\s*up|set\s*up|"
-    r"i\s+(?:want|need)|give\s*me|get\s*me)\b"
-    r".{0,100}\bfor\b.{2,80}",
-    re.IGNORECASE | re.DOTALL,
-)
-
-# Kit-configurator vocabulary: only the configurator dialect, not ordinary
-# English ("my hospitality domain", "reservation blocks"). Bare \bdomain\b /
-# \bblock\b used to dump product briefs into the legacy chain generator,
-# and the Floor then overwrote the reply with "kit configuration".
-_KIT_CONFIG_RE = re.compile(
-    r"("
-    r"\b(lora|learning\s*rate|vector\s*db|hnsw)\b"
-    r"|\b(add|remove|show|list|use)\s+(?:the\s+)?(block|blocks|kit|kits|domain|chain)\b"
-    r"|\b(chain|kit)\s+(with|blocks|block)\b"
-    r"|\bproduct\s+chain\b"
-    r"|\bwhat blocks\b"
-    r"|\bblocks are available\b"
-    r"|\buse domain\b"
-    r"|\bthe retail domain\b"
-    r"|\bretail kit\b"
-    r")",
-    re.IGNORECASE,
-)
-
-# Explicit commands: deterministic entry into the platform flow, always on.
-_EXPLICIT_CMD_RE = re.compile(
-    r"^\s*(?:/platform\b|new\s+platform\b|platform\s*:)",
-    re.IGNORECASE,
-)
-
-_APPROVAL_RE = re.compile(
-    r"^\s*(approve|approved|go\s*ahead|looks\s*good|generate\s*it|"
-    r"build\s*it|yes\b.*\b(build|generate|approve))",
-    re.IGNORECASE,
-)
-
-# "continue" / "resume" after takeover. Must NOT require a pending
-# (unapproved) blueprint â€” that is the live Floor hole: after start_coder
-# the blueprint is approved and generation is mid-flight or interrupted,
-# and the chat LLM was told start_coder is forbidden.
-_RESUME_RE = re.compile(
-    r"^\s*(?:please\s+)?"
-    r"(continue|resume|keep\s+going|pick\s+up(?:\s+where\s+you\s+left\s+off)?"
-    r"|start\s+the\s+coder|resume\s+the\s+coder)"
-    r"(?:\s+please)?\s*[.!]?\s*$",
-    re.IGNORECASE,
-)
-
-# Floor "run the pilot" after code-phase 5/5. Same workspace â€” not a new draft.
-_PILOT_RE = re.compile(
-    r"^\s*(?:please\s+)?"
-    r"(?:run\s+(?:the\s+)?pilot(?:\s+gate|\s+cycle)?|"
-    r"make\s+it\s+pilot(?:-?\s*ready)?|"
-    r"pilot(?:-?\s*ready)?|"
-    r"continue\s+(?:to\s+)?pilot|"
-    r"resume\s+(?:to\s+)?pilot)"
-    r"(?:\s+please)?\s*[.!]?\s*$",
-    re.IGNORECASE,
-)
-
-
-def is_kit_config_vocabulary(message: str) -> bool:
-    """True when the message is about chains/blocks/kits, not a product brief."""
-    return bool(_KIT_CONFIG_RE.search(message or ""))
-
-
-def is_platform_intent(message: str) -> bool:
-    """True when the message asks the factory to create a platform/product."""
-    text = message or ""
-    if is_kit_config_vocabulary(text):
-        return False
-    if _PLATFORM_INTENT_RE.search(text):
-        return True
-    return bool(_BUSINESS_BRIEF_RE.search(text))
-
-
-def is_explicit_platform_command(message: str) -> bool:
-    """True for explicit commands (/platform, 'new platform', 'platform:')."""
-    return bool(_EXPLICIT_CMD_RE.search(message or ""))
+# --- Routing ---------------------------------------------------------------
+#
+# The Floor never decides what the user wants from the words they typed.
+# Actions arrive typed (app.factory.floor_actions); free text goes to the
+# Floor chat LLM, whose decision is typed too. The regexes that used to
+# detect "a platform brief", "approve", "continue", "run the pilot" in the
+# message are gone.
 
 
 def platform_chat_enabled() -> bool:
@@ -164,46 +86,6 @@ def platform_chat_enabled() -> bool:
         "no",
         "off",
     }
-
-
-def should_handle_platform_message(message: str) -> bool:
-    """Router contract: should this chat message enter the platform flow?
-
-    Explicit commands always qualify. Free-text intent qualifies when the
-    platform chat gate is on (default). Kit-configurator vocabulary stays in
-    the legacy chat. Everything else falls through to the legacy chat.
-    """
-    text = message or ""
-    if is_explicit_platform_command(text):
-        return True
-    if not platform_chat_enabled():
-        return False
-    return is_platform_intent(text)
-
-
-def is_approval(message: str) -> bool:
-    """True when the message is a short approval of a pending blueprint."""
-    return bool(_APPROVAL_RE.search(message or ""))
-
-
-def is_exact_approve_gate(message: str) -> bool:
-    """True for the Floor Approve button / exact approve token.
-
-    The UI sends the word ``approve``. Natural-language confirms
-    (``looks good``, ``go ahead``) stay on the chat LLM path.
-    """
-    token = (message or "").strip().lower().rstrip(".!")
-    return token in {"approve", "approved"}
-
-
-def is_resume_request(message: str) -> bool:
-    """True when the user asked to continue/resume an existing coding run."""
-    return bool(_RESUME_RE.match((message or "").strip()))
-
-
-def is_pilot_request(message: str) -> bool:
-    """True when the user asked to run the Store-green / pilot cycle."""
-    return bool(_PILOT_RE.match((message or "").strip()))
 
 
 # --- State helpers ----------------------------------------------------------
@@ -229,46 +111,6 @@ def _session_output(session_id: str, product_id: str, output_root: Optional[Path
 
 # --- Refinement commands ------------------------------------------------------
 
-_ADD_CAP_RE = re.compile(
-    r"(?:add|include)\s+(?:capability\s+)?([a-z0-9_]+)", re.IGNORECASE
-)
-_REMOVE_CAP_RE = re.compile(
-    r"(?:remove|drop|exclude)\s+(?:capability\s+)?([a-z0-9_]+)", re.IGNORECASE
-)
-_RENAME_RE = re.compile(
-    r"(?:rename\s+(?:product\s+)?to\s+|product\s+name\s+(?:is\s+)?)\"?([^\"\n]+)\"?",
-    re.IGNORECASE,
-)
-_VERTICAL_RE = re.compile(
-    r"(?:change\s+vertical\s+to\s+|vertical\s+(?:is\s+)?)\"?([a-z0-9_]+)\"?",
-    re.IGNORECASE,
-)
-_LIST_CAPS_RE = re.compile(
-    r"^(?:list\s+capabilities|show\s+capabilities|what\s+is\s+in\s+the\s+blueprint|show\s+blueprint)$",
-    re.IGNORECASE,
-)
-#: Build rigor in the customer's own words. The acceptance floor grades the
-#: build against the bar it declares, so a throwaway is not failed on a
-#: production security scan. Synonyms map to the four floor levels.
-_RIGOR_SYNONYMS = {
-    "prototype": "prototype", "throwaway": "prototype", "poc": "prototype",
-    "proof of concept": "prototype", "test": "prototype", "disposable": "prototype",
-    "light": "light", "half-ass": "light", "half ass": "light", "halfass": "light",
-    "quick": "light", "basic": "light", "lite": "light",
-    "standard": "standard", "normal": "standard", "default": "standard",
-    "production": "production", "prod": "production", "full": "production",
-    "strict": "production", "real": "production",
-}
-_RIGOR_RE = re.compile(
-    r"(?:set\s+(?:the\s+)?rigor\s+(?:to\s+)?|rigor\s*(?:to\s+|[:=]\s*)|"
-    r"make\s+it\s+(?:a\s+)?|build\s+(?:a\s+)?|run\s+(?:a\s+)?|as\s+(?:a\s+)?)"
-    r"(prototype|throwaway|proof of concept|poc|disposable|half[\s-]?ass|"
-    r"light|lite|basic|quick|standard|normal|default|production|prod|full|"
-    r"strict|real|test)\b(?:\s+platform)?",
-    re.IGNORECASE,
-)
-
-
 def _capability_for_id(cap_id: str, dual_ids: List[str]) -> Dict[str, Any]:
     """Build a minimal capability spec for a user-added capability id."""
     cap_id = re.sub(r"[^a-z0-9_]+", "_", cap_id.lower()).strip("_")
@@ -290,47 +132,63 @@ def _capability_for_id(cap_id: str, dual_ids: List[str]) -> Dict[str, Any]:
     }
 
 
-def parse_refinement_command(message: str) -> tuple[str, Dict[str, Any]]:
-    """Parse a blueprint refinement command. Returns ('', {}) if not a command."""
-    text = (message or "").strip()
-    m = _ADD_CAP_RE.search(text)
-    if m:
-        return "add_capability", {"cap_id": m.group(1)}
-    m = _REMOVE_CAP_RE.search(text)
-    if m:
-        return "remove_capability", {"cap_id": m.group(1)}
-    m = _RENAME_RE.search(text)
-    if m:
-        return "rename_product", {"name": m.group(1).strip()}
-    m = _VERTICAL_RE.search(text)
-    if m:
-        return "set_vertical", {"vertical": m.group(1).strip()}
-    if _LIST_CAPS_RE.search(text):
-        return "list_capabilities", {}
-    m = _RIGOR_RE.search(text)
-    if m:
-        key = re.sub(r"[\s-]+", " ", m.group(1).strip().lower())
-        level = _RIGOR_SYNONYMS.get(key) or _RIGOR_SYNONYMS.get(key.replace(" ", ""))
-        if level:
-            return "set_rigor", {"rigor": level}
-    return "", {}
+#: Result ``action`` names the Floor and tests read (unchanged wire names).
+_RESULT_ACTION = {
+    FloorAction.ADD_CAPABILITY: "add_capability",
+    FloorAction.REMOVE_CAPABILITY: "remove_capability",
+    FloorAction.RENAME: "rename_product",
+    FloorAction.SET_VERTICAL: "set_vertical",
+    FloorAction.SET_RIGOR: "set_rigor",
+    FloorAction.LIST_CAPABILITIES: "list_capabilities",
+}
 
 
-def refine_from_chat(state: Any, message: str) -> Optional[Dict[str, Any]]:
-    """Apply a refinement command to the pending blueprint and return a summary.
+def apply_refinement(
+    state: Any, action: FloorAction, value: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """Apply a TYPED refinement (a Floor control, or the chat LLM's typed
+    decision) to the pending blueprint and return a summary.
 
-    Returns None if the message is not a refinement command.
+    Returns None when there is no pending blueprint to refine. Nothing here
+    reads the user's words: the action and its value arrive as fields.
     """
     pd = getattr(state, "product_design", None)
     if not pd or not pd.blueprint:
         return None
     if pd.blueprint_approved:
         return None
+    if action not in REFINEMENT_ACTIONS:
+        raise FloorActionError(f"{action.value} is not a blueprint refinement")
+    value = (value or "").strip()
+    if action in VALUE_REQUIRED and not value:
+        return {
+            "ok": False,
+            "refined": False,
+            "action": _RESULT_ACTION[action],
+            "summary": f"'{action.value}' needs a value.",
+            "blueprint": pd.blueprint,
+        }
+    args: Dict[str, Any] = {}
+    if action in (FloorAction.ADD_CAPABILITY, FloorAction.REMOVE_CAPABILITY):
+        args["cap_id"] = value
+    elif action is FloorAction.RENAME:
+        args["name"] = value
+    elif action is FloorAction.SET_VERTICAL:
+        args["vertical"] = value
+    elif action is FloorAction.SET_RIGOR:
+        try:
+            args["rigor"] = parse_rigor(value).value
+        except FloorActionError as exc:
+            return {
+                "ok": False,
+                "refined": False,
+                "action": _RESULT_ACTION[action],
+                "summary": str(exc),
+                "blueprint": pd.blueprint,
+            }
+    action = _RESULT_ACTION[action]  # the body below speaks the wire names
 
-    action, args = parse_refinement_command(message)
-    if not action:
-        return None
-
+    sync_blueprint_locale(pd)  # the user's declared country/currency, never a guess
     bp = ProductBlueprint.model_validate(pd.blueprint)
     caps = [c.model_dump(mode="json") for c in bp.capabilities]
     cap_ids = {c["id"] for c in caps}
@@ -456,7 +314,7 @@ def refine_from_chat(state: Any, message: str) -> Optional[Dict[str, Any]]:
         "action": action,
         "summary": (
             f"Blueprint updated: {len(bp.capabilities)} capabilities. "
-            "Reply 'approve' to build, or keep refining."
+            "Approve the feature list to build, or keep refining."
         ),
         "blueprint": pd.blueprint,
         "yaml": yaml_text,
@@ -641,6 +499,7 @@ def approve_and_generate(
     if not pd.blueprint:
         raise ValueError("no blueprint drafted â€” describe the platform first")
 
+    sync_blueprint_locale(pd)  # the user's declared country/currency, never a guess
     bp = ProductBlueprint.model_validate(pd.blueprint)
     pd.blueprint_approved = True
     gated = _compile_and_lint_approved(state, bp)
@@ -1248,6 +1107,7 @@ def reseed_and_ingest_n3(
     if pd is None or not getattr(pd, "blueprint", None):
         raise ValueError("no blueprint â€” draft and approve before n3_reseed")
 
+    sync_blueprint_locale(pd)  # the user's declared country/currency, never a guess
     bp = ProductBlueprint.model_validate(pd.blueprint)
     out = _generation_output_dir(state, output_root)
     if out is None:
@@ -1344,6 +1204,7 @@ def start_fresh_generation(
         reply["already_running"] = True
         return reply
 
+    sync_blueprint_locale(pd)  # the user's declared country/currency, never a guess
     bp = ProductBlueprint.model_validate(pd.blueprint)
     pd.blueprint_approved = True
     if not pd.plan:
@@ -1534,6 +1395,7 @@ def resume_generation(
             state, output_root=output_root, triggered_by=resume_by
         )
 
+    sync_blueprint_locale(pd)  # the user's declared country/currency, never a guess
     bp = ProductBlueprint.model_validate(pd.blueprint)
     pd.blueprint_approved = True
     if not pd.plan:
@@ -1640,6 +1502,7 @@ def resume_pilot_cycle(
     pd = state.product_design
     if not pd or not pd.blueprint:
         raise ValueError("no blueprint drafted â€” describe the platform first")
+    sync_blueprint_locale(pd)  # the user's declared country/currency, never a guess
     bp = ProductBlueprint.model_validate(pd.blueprint)
     pd.blueprint_approved = True
     if not pd.plan:

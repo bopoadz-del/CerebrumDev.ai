@@ -98,6 +98,7 @@ def _factory_planted_handler(cid: str) -> str:
         f'"""Handler for capability {cid}.\n\n'
         "Written by the factory WRITER role (factory-grounded persist).\n"
         '"""\n'
+        'AUTHORED_BY = "factory-grounded persist"\n'
         f"CAPABILITY_ID = {cid!r}\n\n"
         "def handle(payload):\n"
         '    return {"ok": True, "capability": CAPABILITY_ID}\n'

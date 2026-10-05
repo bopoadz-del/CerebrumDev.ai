@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import quote
-from urllib.request import urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from app.factory.build.builds_push import (
     BUILDS_TOKEN_ENV,
@@ -69,11 +69,15 @@ N3_FAIL_HONESTY = frozenset(
 DEFAULT_POLL_S = 15.0
 DEFAULT_WALL_S = 1800.0
 SCORE_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
-#: The store-gate status itemises what failed: ``... k/N FAIL:a,b``. Without
-#: it the Factory only ever learned a score, and could not say WHICH check --
-#: or whose -- failed (live: eight automotive rounds reported "store gate
-#: failed" while the only red line was the Factory's own authorship counter).
-FAIL_NAMES_RE = re.compile(r"FAIL:([A-Za-z0-9_,=]+)")
+#: Which checks failed is read from the gate's typed artifact
+#: ``store-gate`` of the run on this sha (``store_gate.json``: every line with name, status,
+#: detail) -- never parsed out of the status description, which is display
+#: text capped at 140 characters. Without the names the Factory could not say
+#: WHICH check -- or whose -- failed (live: eight automotive rounds read
+#: "store gate failed" while the only red line was the Factory's own
+#: authorship counter).
+STORE_GATE_ARTIFACT_NAME = "store-gate"
+STORE_GATE_ARTIFACT_FILE = "store_gate.json"
 
 #: N3 G-floor names → Factory ``ACCEPTANCE_CHECK_NAMES`` aliases.
 N3_NAME_ALIASES = {
@@ -374,18 +378,62 @@ def _factory_check_name(name: str) -> str:
     return N3_NAME_ALIASES.get(raw, raw)
 
 
-def _parse_failing_names(description: str) -> List[str]:
-    """Check names the status itemised as FAIL. Unknown or truncated tokens
-    (the description is capped at 140 chars) are dropped, never guessed."""
-    match = FAIL_NAMES_RE.search(description or "")
-    if not match:
+class _DropAuthOnRedirect(HTTPRedirectHandler):
+    """GitHub answers an artifact download with a redirect to blob storage,
+    which rejects the API token: carry no Authorization across the hop."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None:
+            new.remove_header("Authorization")
+        return new
+
+
+def _download(url: str, token: str, opener: Callable[..., Any]) -> bytes:
+    request = Request(
+        url,
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+    )
+    if opener is urlopen:
+        with build_opener(_DropAuthOnRedirect).open(request, timeout=30) as resp:
+            return resp.read()
+    with opener(request, timeout=30) as resp:
+        return resp.read()
+
+
+def _artifact_lines(
+    target: "BuildsTarget", token: str, opener: Callable[..., Any]
+) -> List[AcceptanceLine]:
+    """Every floor line from the gate run's typed ``store_gate.json``
+    artifact; [] when the run published none (or it has expired)."""
+    import io
+    import zipfile
+
+    path = (
+        f"/repos/{target.owner}/{target.repo}/actions/artifacts"
+        f"?name={quote(STORE_GATE_ARTIFACT_NAME, safe='')}&per_page=100"
+    )
+    status, body = github_request("GET", path, token=token, opener=opener)
+    if status >= 400 or not isinstance(body, Mapping):
         return []
-    out: List[str] = []
-    for token in match.group(1).split(","):
-        name = _factory_check_name(token)
-        if name in ACCEPTANCE_CHECK_NAMES and name not in out:
-            out.append(name)
-    return out
+    for artifact in body.get("artifacts") or []:
+        if not isinstance(artifact, Mapping) or artifact.get("expired"):
+            continue
+        run = artifact.get("workflow_run")
+        if not isinstance(run, Mapping) or run.get("head_sha") != target.sha:
+            continue
+        url = str(artifact.get("archive_download_url") or "")
+        if not url:
+            continue
+        try:
+            blob = _download(url, token, opener)
+            with zipfile.ZipFile(io.BytesIO(blob)) as archive:
+                payload = json.loads(archive.read(STORE_GATE_ARTIFACT_FILE).decode("utf-8"))
+        except (OSError, ValueError, KeyError, zipfile.BadZipFile):
+            continue
+        if isinstance(payload, Mapping):
+            return list(report_from_store_gate_payload(payload).lines)
+    return []
 
 
 def _itemised_lines(failing: Sequence[str]) -> List[AcceptanceLine]:
@@ -544,14 +592,15 @@ def fetch_store_gate_status(
     state = str(match.get("state") or "").strip().lower()
     description = str(match.get("description") or "")
     passed, total = _parse_score(description)
-    failing = _parse_failing_names(description)
     # A red status with no score at all: the workflow failed before the
     # harness scored anything (live round 9: the gate's own YAML broke
     # ``docker create``). No product check ran, so none can have failed.
     harness_ran = not (passed is None and state in {"failure", "error"})
     lines: List[AcceptanceLine] = []
-    if passed is not None and (failing or passed == total):
-        lines = _itemised_lines(failing)
+    if passed is not None and passed == total:
+        lines = _itemised_lines([])
+    elif passed is not None and state in {"failure", "error"}:
+        lines = _artifact_lines(target, token, opener)
     ok = (
         state == "success"
         and passed == ACCEPTANCE_REQUIRED

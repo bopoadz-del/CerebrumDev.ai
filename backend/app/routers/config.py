@@ -4,6 +4,7 @@ from ..models.session import SessionConfig, SessionState
 from ..core.session_guard import require_owned_session
 from ..core.session_store import update_session
 from ..core.domain_loader import load_domain_manifest
+from ..core.block_taxonomy import list_optional_blocks
 
 router = APIRouter()
 
@@ -25,3 +26,10 @@ async def save_config(
     state.updated_at = datetime.utcnow()
     update_session(state.session_id, state)
     return state
+
+
+@router.get("/{session_id}/config/optional-blocks")
+async def optional_blocks(state: SessionState = Depends(require_owned_session)):
+    """The optional primitives this instance can add. A typed request -- the
+    chat used to answer this when the user TYPED "list blocks"."""
+    return {"session_id": state.session_id, "optional_blocks": list_optional_blocks()}

@@ -696,6 +696,11 @@ def render_slot_bodies(
             do_lines += ["", "Domain pack (binding fields):", json.dumps(packed, indent=2, sort_keys=True)]
     if done_when:
         do_lines += ["", "Done when (from intake blueprint):", *[f"- {item}" for item in done_when]]
+    # Money: the locale the USER declared on the Floor and the structure to
+    # build around it (money_contract measures the same structure).
+    from app.factory.build.money_contract import money_brief_lines
+
+    do_lines += ["", *money_brief_lines(blueprint)]
 
     acceptance = _section_lines(
         "Fails loud. The run is not done until ALL of these are true. "

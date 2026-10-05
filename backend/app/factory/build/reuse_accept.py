@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import ast
 import json
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
@@ -50,36 +49,91 @@ WRITER_REUSE_ACCEPT_HALT = (
 )
 REUSE_ACCEPT_MISS = "reuse/accept miss"
 
-_BLOCK_DEFAULTS_ASSIGN = re.compile(
-    r"BLOCK_DEFAULT_ACTIONS\s*=\s*(\{(?:[^{}]|\{[^{}]*\})*\})",
-    re.MULTILINE,
-)
-_BLOCK_IDS_ASSIGN = re.compile(
-    r"BLOCK_IDS\s*=\s*(\[(?:[^\[\]]|\[[^\[\]]*\])*\])",
-    re.MULTILINE,
-)
-_ACTION_EQ = re.compile(
-    r"""action\s*==\s*['\"]([A-Za-z_][\w]*)['\"]"""
-    r"""|['\"]([A-Za-z_][\w]*)['\"]\s*==\s*action"""
-)
-_ACTION_NOT_IN = re.compile(
-    r"action\s+not in\s*(\[[^\]]+\]|\([^)]+\))",
-    re.IGNORECASE,
-)
-_IDENT_IN_LIST = re.compile(r"""['\"]([A-Za-z_][\w]*)['\"]""")
-#: A default the block's own code declares: ``<mapping>.get("action", "x")``
-#: or ``.get("operation", "x")``. This is the block's contract, so it wins over
-#: inference from the comparisons that follow it.
-_DECLARED_DEFAULT = re.compile(
-    r"""\.get\(\s*['\"](action|operation)['\"]\s*,\s*['\"]([A-Za-z_][\w]*)['\"]\s*\)"""
-)
 _ACTION_INPUT_NAMES = frozenset({"action", "operation"})
-#: Code that reads an action or operation at all, in any form.
-_READS_ACTION = re.compile(r"""['\"](?:action|operation)['\"]""")
+def _tree(source: str) -> Optional[ast.Module]:
+    try:
+        return ast.parse(source or "")
+    except SyntaxError:
+        return None
+
+
+def _names_action(node: ast.AST) -> bool:
+    """``action`` / ``operation`` as the thing being read: a bare name, an
+    attribute, ``x["action"]`` or ``x.get("action", ...)``."""
+    if isinstance(node, ast.Name):
+        return node.id in _ACTION_INPUT_NAMES
+    if isinstance(node, ast.Attribute):
+        return node.attr in _ACTION_INPUT_NAMES
+    if isinstance(node, ast.Subscript):
+        key = node.slice
+        return isinstance(key, ast.Constant) and key.value in _ACTION_INPUT_NAMES
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        return (
+            node.func.attr == "get"
+            and bool(node.args)
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value in _ACTION_INPUT_NAMES
+        )
+    return False
+
+
+def _identifier(node: ast.AST) -> Optional[str]:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.isidentifier():
+        return node.value
+    return None
+
+
+def _assignment(tree: ast.Module, name: str) -> Optional[ast.stmt]:
+    """The first assignment to ``name`` in the module, in source order."""
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target]
+        else:
+            continue
+        if any(isinstance(t, ast.Name) and t.id == name for t in targets):
+            found.append(node)
+    return min(found, key=lambda n: (n.lineno, n.col_offset)) if found else None
+
+
+def _assigned_literal(text: str, name: str) -> Any:
+    tree = _tree(text)
+    node = _assignment(tree, name) if tree is not None else None
+    if node is None:
+        return None
+    try:
+        return ast.literal_eval(node.value)
+    except (ValueError, SyntaxError, TypeError):
+        return None
+
 
 
 class ReuseAcceptHalt(ValueError):
     """WRITER must not claim done: REUSE schema-sample would Unknown action."""
+
+
+def _passes_action_none(text: str) -> bool:
+    """A call to ``execute`` / ``<x>.execute`` with ``action=None``, read
+    from the syntax tree (never a pattern over the text)."""
+    import ast
+
+    try:
+        tree = ast.parse(text or "")
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        if name != "execute":
+            continue
+        for kw in node.keywords:
+            if kw.arg == "action" and isinstance(kw.value, ast.Constant) and kw.value.value is None:
+                return True
+    return False
 
 
 def _harvest_candidate_ids(block_id: str) -> List[str]:
@@ -149,21 +203,49 @@ def default_action_from_block_json(meta: Any) -> Optional[str]:
 
 def default_action_from_source(source: str) -> Optional[str]:
     """The action a block's code declares as its default, else the first one
-    it compares against. An ``action`` default beats an ``operation`` one."""
-    blob = source or ""
-    declared = {}
-    for m in _DECLARED_DEFAULT.finditer(blob):
-        declared.setdefault(m.group(1), m.group(2))
+    it compares against. An ``action`` default beats an ``operation`` one.
+    Read from the syntax tree: ``<mapping>.get("action", "x")`` declares a
+    default; ``action not in ("x", ...)`` and ``action == "x"`` compare."""
+    tree = _tree(source)
+    if tree is None:
+        return None
+    nodes = sorted(
+        (n for n in ast.walk(tree) if hasattr(n, "lineno")),
+        key=lambda n: (n.lineno, n.col_offset),
+    )
+    declared: Dict[str, str] = {}
+    for node in nodes:
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and len(node.args) >= 2
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value in _ACTION_INPUT_NAMES
+        ):
+            value = _identifier(node.args[1])
+            if value:
+                declared.setdefault(node.args[0].value, value)
     if declared:
         return declared.get("action") or declared.get("operation")
-    match = _ACTION_NOT_IN.search(blob)
-    if match:
-        idents = _IDENT_IN_LIST.findall(match.group(1) or "")
-        if idents:
-            return idents[0]
-    match = _ACTION_EQ.search(blob)
-    if match:
-        return (match.group(1) or match.group(2) or "").strip() or None
+    for node in nodes:
+        if (
+            isinstance(node, ast.Compare)
+            and isinstance(node.ops[0], ast.NotIn)
+            and _names_action(node.left)
+            and isinstance(node.comparators[0], (ast.List, ast.Tuple, ast.Set))
+        ):
+            for elt in node.comparators[0].elts:
+                value = _identifier(elt)
+                if value:
+                    return value
+    for node in nodes:
+        if isinstance(node, ast.Compare) and isinstance(node.ops[0], ast.Eq):
+            left, right = node.left, node.comparators[0]
+            if _names_action(left) and _identifier(right):
+                return _identifier(right)
+            if _names_action(right) and _identifier(left):
+                return _identifier(left)
     return None
 
 
@@ -300,26 +382,14 @@ def harvest_block_default_actions(
 
 
 def parse_handler_block_ids(text: str) -> List[str]:
-    match = _BLOCK_IDS_ASSIGN.search(text or "")
-    if not match:
-        return []
-    try:
-        value = ast.literal_eval(match.group(1))
-    except (ValueError, SyntaxError):
-        return []
+    value = _assigned_literal(text, "BLOCK_IDS")
     if not isinstance(value, (list, tuple)):
         return []
     return [str(item) for item in value if str(item).strip()]
 
 
 def parse_handler_default_actions(text: str) -> Dict[str, str]:
-    match = _BLOCK_DEFAULTS_ASSIGN.search(text or "")
-    if not match:
-        return {}
-    try:
-        value = ast.literal_eval(match.group(1))
-    except (ValueError, SyntaxError):
-        return {}
+    value = _assigned_literal(text, "BLOCK_DEFAULT_ACTIONS")
     if not isinstance(value, dict):
         return {}
     return {
@@ -332,15 +402,31 @@ def parse_handler_default_actions(text: str) -> Dict[str, str]:
 def apply_default_actions_to_handler(
     text: str, default_actions: Mapping[str, str]
 ) -> str:
-    """Rewrite ``BLOCK_DEFAULT_ACTIONS = …`` so keep-path source is honest."""
+    """Rewrite ``BLOCK_DEFAULT_ACTIONS = …`` so keep-path source is honest.
+
+    The assignment is located on the syntax tree and replaced by its line
+    span; absent, it goes right after ``BLOCK_IDS = …``; with neither (or
+    source that does not parse), it leads the module.
+    """
     blob = text or ""
     assignment = f"BLOCK_DEFAULT_ACTIONS = {dict(default_actions or {})!r}"
-    if _BLOCK_DEFAULTS_ASSIGN.search(blob):
-        return _BLOCK_DEFAULTS_ASSIGN.sub(assignment, blob, count=1)
-    ids_match = _BLOCK_IDS_ASSIGN.search(blob)
-    if ids_match:
-        insert_at = ids_match.end()
-        return blob[:insert_at] + "\n" + assignment + blob[insert_at:]
+    tree = _tree(blob)
+    if tree is None:
+        return assignment + "\n" + blob
+    lines = blob.splitlines(keepends=True)
+    existing = _assignment(tree, "BLOCK_DEFAULT_ACTIONS")
+    if existing is not None:
+        start, end = existing.lineno - 1, existing.end_lineno
+        indent = lines[start][: existing.col_offset]
+        newline = "\n" if lines[end - 1].endswith("\n") else ""
+        return "".join(lines[:start] + [indent + assignment + newline] + lines[end:])
+    ids = _assignment(tree, "BLOCK_IDS")
+    if ids is not None:
+        end = ids.end_lineno
+        head = "".join(lines[:end])
+        if not head.endswith("\n"):
+            head += "\n"
+        return head + assignment + "\n" + "".join(lines[end:])
     return assignment + "\n" + blob
 
 
@@ -365,10 +451,14 @@ def block_takes_action(block_id: str) -> Optional[bool]:
                 path.parents[2] / "app" / "blocks" / f"{cand}.py",
             ):
                 text = _read_text(code)
-                if not text:
+                tree = _tree(text) if text else None
+                if tree is None:
                     continue
                 found_code = True
-                if _READS_ACTION.search(text):
+                if any(
+                    isinstance(n, ast.Constant) and n.value in _ACTION_INPUT_NAMES
+                    for n in ast.walk(tree)
+                ):
                     return True
         if found_code:
             return False
@@ -402,7 +492,7 @@ def reuse_accept_handler_errors(
             f"{prefix}{bid}: {REUSE_ACCEPT_MISS} — no BLOCK_DEFAULT_ACTIONS "
             f"entry ({PRODUCT_UNKNOWN_ACTION_NONE_HALT})"
         )
-    if re.search(r"execute\s*\([^)]*action\s*=\s*None", text or ""):
+    if _passes_action_none(text):
         errors.append(
             f"{prefix}execute() passes action=None "
             f"({PRODUCT_UNKNOWN_ACTION_NONE_HALT})"

@@ -1,8 +1,8 @@
-"""Floor chat LLM starts the coding agent after the feature list is approved.
+"""Floor chat LLM: free text in, a TYPED decision out -- never a build.
 
-Without a factory key the regex 'approve' path still launches WRITER.
-With the orchestrator on, the chat LLM's start_coder action is the door.
-Kit-configurator vocabulary never enters this path.
+The coding agent starts only from the Floor's typed Approve / Continue
+action. A model that answers start_coder gets the user pointed at the
+control; a model miss gets an honest pointer too -- no prose fallback.
 """
 
 from __future__ import annotations
@@ -27,11 +27,14 @@ def _state_with_pending_blueprint() -> SessionState:
     return s
 
 
-async def _collect_events(session_id: str, message: str):
+async def _collect_events(session_id: str, message: str, action=None, value=None):
+    from app.factory.floor_actions import parse_action
     from app.routers import chat as chat_router
 
     events = []
-    async for raw in chat_router._stream_response(session_id, message):
+    async for raw in chat_router._stream_response(
+        session_id, message, parse_action(action), value
+    ):
         lines = [line for line in raw.strip().splitlines() if line]
         ev = {"event": "", "data": ""}
         for line in lines:
@@ -89,20 +92,6 @@ def test_chat_llm_uses_cerebrum_chat_when_provider_is_cursor(monkeypatch):
     assert "api.cursor.com" not in cfg["base_url"]
 
 
-def test_kit_config_never_orchestrates(monkeypatch, session):
-    monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: True)
-    assert (
-        platform_chat_llm.should_orchestrate(session, "add block vector_search to the chain")
-        is False
-    )
-
-
-def test_exact_approve_skips_llm_when_blueprint_pending(monkeypatch, session):
-    monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: True)
-    assert platform_chat_llm.should_orchestrate(session, "approve") is False
-    assert platform_chat_llm.should_orchestrate(session, "approved") is False
-
-
 def test_looks_good_still_orchestrates(monkeypatch, session):
     monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: True)
     assert platform_chat_llm.should_orchestrate(session, "looks good") is True
@@ -120,32 +109,24 @@ def test_business_brief_orchestrates_without_saying_platform(monkeypatch):
     )
 
 
-def test_start_coder_apply_marks_chat_llm_trigger(session, monkeypatch):
-    captured = {}
-
-    def fake_approve(state, output_root=None, triggered_by="regex_approve"):
-        captured["triggered_by"] = triggered_by
-        return {
-            "ok": True,
-            "summary": "coding agent has taken over",
-            "generation": {"engine": "runner", "triggered_by": triggered_by},
-            "triggered_by": triggered_by,
-        }
-
-    monkeypatch.setattr(platform_chat_flow, "approve_and_generate", fake_approve)
-    result = platform_chat_llm.apply_decision(
-        session, "approve", {"action": "start_coder"}
+def test_model_start_coder_points_at_approve_and_never_builds(session, monkeypatch):
+    started = []
+    monkeypatch.setattr(
+        platform_chat_flow, "approve_and_generate", lambda *a, **k: started.append(1) or {}
     )
-    assert result["sse"] == "generation"
-    assert captured["triggered_by"] == "chat_llm"
-    assert result["triggered_by"] == "chat_llm"
+    monkeypatch.setattr(
+        platform_chat_flow, "start_or_resume_coder", lambda *a, **k: started.append(1) or {}
+    )
+    result = platform_chat_llm.apply_decision(session, "approve", {"action": "start_coder"})
+    assert started == []
+    assert result["sse"] == "info"
+    assert result["awaiting_action"] == "approve"
 
 
-def test_coerce_explicit_approval_if_model_forgets_tool(session):
-    decision = {"action": "reply", "message": "sounds good"}
-    out = platform_chat_llm.coerce_explicit_approval(decision, session, "approve")
-    assert out["action"] == "start_coder"
-    assert out.get("coerced") is True
+def test_any_free_text_is_the_models_to_decide(monkeypatch, session):
+    monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: True)
+    for text in ("approve", "add block vector_search to the chain", "looks good"):
+        assert platform_chat_llm.should_orchestrate(session, text) is True
 
 
 def test_decide_empty_object_is_soft_miss(session, monkeypatch):
@@ -188,12 +169,12 @@ def test_try_decide_hard_failure_still_logs_exception(session, monkeypatch, capl
 
 
 @pytest.mark.asyncio
-async def test_exact_approve_skips_llm_and_starts_coder(session, monkeypatch):
+async def test_typed_approve_skips_llm_and_starts_coder(session, monkeypatch):
     called = {"decide": 0}
 
     def boom(state, message):
         called["decide"] += 1
-        raise AssertionError("exact approve must not call the chat LLM")
+        raise AssertionError("a typed approve must not call the chat LLM")
 
     monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: True)
     monkeypatch.setattr(platform_chat_llm, "decide", boom)
@@ -207,7 +188,7 @@ async def test_exact_approve_skips_llm_and_starts_coder(session, monkeypatch):
         }
 
     monkeypatch.setattr(platform_chat_flow, "approve_and_generate", fake_approve)
-    events = await _collect_events(session.session_id, "approve")
+    events = await _collect_events(session.session_id, "", action="approve")
     assert called["decide"] == 0
     kinds = [e["event"] for e in events]
     assert kinds.count("generation") == 1
@@ -217,73 +198,45 @@ async def test_exact_approve_skips_llm_and_starts_coder(session, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_looks_good_empty_llm_falls_back_to_regex_approve(session, monkeypatch, caplog):
+async def test_chat_llm_looks_good_does_not_build(session, monkeypatch):
+    monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: True)
+    monkeypatch.setattr(
+        platform_chat_llm,
+        "decide",
+        lambda state, message: {
+            "action": "start_coder",
+            "brief": "",
+            "refine": {"op": "", "value": ""},
+            "message": "",
+        },
+    )
+    started = []
+    monkeypatch.setattr(
+        platform_chat_flow, "approve_and_generate", lambda *a, **k: started.append(1) or {}
+    )
+    events = await _collect_events(session.session_id, "looks good")
+    kinds = [e["event"] for e in events]
+    assert started == []
+    assert "generation" not in kinds
+
+
+@pytest.mark.asyncio
+async def test_model_miss_never_falls_back_to_a_prose_approve(session, monkeypatch, caplog):
     monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: True)
     monkeypatch.setattr(
         platform_chat_llm,
         "decide",
         lambda state, message: (_ for _ in ()).throw(LlmSoftMiss("empty action")),
     )
-
-    def fake_approve(state, output_root=None, triggered_by="regex_approve"):
-        return {
-            "ok": True,
-            "summary": "coding agent has taken over",
-            "generation": {"engine": "runner", "product_id": "retail"},
-            "triggered_by": triggered_by,
-        }
-
-    monkeypatch.setattr(platform_chat_flow, "approve_and_generate", fake_approve)
-    with caplog.at_level(logging.WARNING, logger="app.factory.platform_chat_llm"):
-        events = await _collect_events(session.session_id, "looks good")
-    kinds = [e["event"] for e in events]
-    assert kinds.count("generation") == 1
-    assert "Floor chat LLM miss" in caplog.text
-    assert not any(r.levelno >= logging.ERROR for r in caplog.records)
-
-
-@pytest.mark.asyncio
-async def test_chat_llm_looks_good_emits_generation(session, monkeypatch):
-    monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: True)
+    started = []
     monkeypatch.setattr(
-        platform_chat_llm,
-        "decide",
-        lambda state, message: {"action": "start_coder", "brief": "", "refine_message": "", "message": ""},
+        platform_chat_flow, "approve_and_generate", lambda *a, **k: started.append(1) or {}
     )
-
-    def fake_approve(state, output_root=None, triggered_by="regex_approve"):
-        return {
-            "ok": True,
-            "summary": "The chat LLM started the coding agent. Build started.",
-            "generation": {"engine": "runner", "product_id": "retail", "triggered_by": triggered_by},
-            "triggered_by": triggered_by,
-        }
-
-    monkeypatch.setattr(platform_chat_flow, "approve_and_generate", fake_approve)
-    events = await _collect_events(session.session_id, "looks good")
-    kinds = [e["event"] for e in events]
-    assert kinds.count("generation") == 1
-    assert "chain" not in kinds
-    payload = json.loads(next(e["data"] for e in events if e["event"] == "generation"))
-    assert payload["triggered_by"] == "chat_llm"
-    assert payload["generation"]["engine"] == "runner"
-
-
-@pytest.mark.asyncio
-async def test_regex_approve_still_starts_coder_when_llm_off(session, monkeypatch):
-    monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: False)
-
-    def fake_approve(state, **kwargs):
-        return {
-            "ok": True,
-            "summary": "coding agent has taken over",
-            "generation": {"engine": "runner", "product_id": "retail"},
-        }
-
-    monkeypatch.setattr(platform_chat_flow, "approve_and_generate", fake_approve)
-    events = await _collect_events(session.session_id, "approve")
-    kinds = [e["event"] for e in events]
-    assert kinds.count("generation") == 1
+    with caplog.at_level(logging.WARNING, logger="app.factory.platform_chat_llm"):
+        events = await _collect_events(session.session_id, "approve")
+    assert started == []
+    assert "generation" not in [e["event"] for e in events]
+    assert "Floor chat LLM miss" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -309,8 +262,8 @@ async def test_running_build_coder_owns_the_floor(session, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_feature_list_exclusion_still_refines_before_llm(session, monkeypatch):
-    """Approve & build unticks send 'remove capability X' — that must not
-    wait on the chat LLM, or the coder would start with the wrong list."""
+    """Approve & build unticks send a typed remove_capability -- that must
+    not wait on the chat LLM, or the coder would start with the wrong list."""
     called = {"decide": 0}
 
     def boom(state, message):
@@ -319,7 +272,7 @@ async def test_feature_list_exclusion_still_refines_before_llm(session, monkeypa
 
     monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: True)
     monkeypatch.setattr(platform_chat_llm, "decide", boom)
-    events = await _collect_events(session.session_id, "remove capability audit")
+    events = await _collect_events(session.session_id, "", action="remove_capability", value="audit")
     assert called["decide"] == 0
     kinds = [e["event"] for e in events]
     assert "blueprint" in kinds

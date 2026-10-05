@@ -51,7 +51,7 @@ from __future__ import annotations
 
 import os
 from typing import Any, Dict, List
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 #: Cursor BA key names (Factory coding / cli-pivot). Not /chat/completions
 #: credentials — Cursor has no public OpenAI-compatible chat API.
@@ -85,6 +85,9 @@ DEFAULT_PRIMARY_MODEL = "deepseek-chat"
 DEFAULT_FALLBACK_MODEL = "deepseek-chat"
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+#: Cursor's Cloud Agents API. It is not an OpenAI-compatible chat host: a
+#: chat base URL on this host is refused (see ``_is_cursor_chat_host``).
+CURSOR_AGENTS_BASE_URL = "https://api.cursor.com/v0/agents"
 DEFAULT_OPENROUTER_FALLBACK_MODEL = "minimax/minimax-m3:free"
 
 
@@ -210,31 +213,49 @@ def _kimi_key(*prefixes: str) -> str:
     return _env_first(*candidates)
 
 
+def _host_of(url: str) -> str:
+    """The parsed host of ``url`` (lower-cased by the parser), or ''."""
+    try:
+        return urlsplit((url or "").strip()).hostname or ""
+    except ValueError:
+        return ""
+
+
 def _is_openrouter_base(base_url: str) -> bool:
-    return "openrouter.ai" in (base_url or "").lower()
+    """``base_url`` is on the declared OpenRouter endpoint's host.
+
+    A host compared with the host of :data:`OPENROUTER_BASE_URL`, both parsed
+    -- not a search of the URL's text.
+    """
+    host = _host_of(base_url)
+    return bool(host) and host == _host_of(OPENROUTER_BASE_URL)
 
 
 def _is_cursor_chat_host(base_url: str) -> bool:
-    """True for the dead Cursor ``/v1/chat/completions`` host.
+    """True for a chat base URL on Cursor's Cloud Agents host.
 
-    Cursor Cloud Agents live at ``api.cursor.com/v0/agents``. There is no
+    Cursor Cloud Agents live at :data:`CURSOR_AGENTS_BASE_URL`. There is no
     public OpenAI-compatible chat-completions API on that host.
     """
-    return "api.cursor.com" in (base_url or "").lower()
+    host = _host_of(base_url)
+    return bool(host) and host == _host_of(CURSOR_AGENTS_BASE_URL)
 
 
-def _looks_like_openrouter_key(key: str) -> bool:
-    """OpenRouter issues ``sk-or-`` keys. Moonshot keys never use that prefix."""
-    return (key or "").strip().lower().startswith("sk-or-")
+def _first_off_openrouter(slots, default: str = "") -> str:
+    """First set value among ``slots`` whose own endpoint is not OpenRouter.
 
-
-def _looks_like_openrouter_model(model: str) -> bool:
-    """OpenRouter slugs are ``org/model`` and often end in ``:free``.
-
-    Moonshot / Claude ids are bare (``kimi-k2.7-code``, ``claude-sonnet-4-5``).
+    ``slots`` are ``(value_env, base_url_env)`` pairs: a key or model belongs
+    to the endpoint configured beside it (``X_LLM_API_KEY`` with
+    ``X_LLM_BASE_URL``). Which provider a value is for is read from that
+    typed configuration -- never from the value's spelling (a key prefix, a
+    ``/`` or a variant suffix in a model id).
     """
-    slug = (model or "").strip().lower()
-    return "/" in slug or ":free" in slug
+    for value_env, base_env in slots:
+        value = os.getenv(value_env, "").strip()
+        base = os.getenv(base_env, "").strip() if base_env else ""
+        if value and not _is_openrouter_base(base):
+            return value
+    return default
 
 
 def _openrouter_key(*prefixes: str) -> str:
@@ -270,19 +291,25 @@ def _env_first_skipping(*names: str, default: str = "", reject=None) -> str:
 
 
 def _native_moonshot_key(*prefixes: str) -> str:
-    """Moonshot credentials only — never an ``sk-or-`` OpenRouter key.
+    """Moonshot credentials only — never a key configured for OpenRouter.
 
-    Path-prefixed ``*_LLM_API_KEY`` still wins when it is a real Moonshot
-    key. An OpenRouter key stuffed into ``CEREBRUM_LLM_API_KEY`` does not
-    count as a native primary; OpenRouter stays the fallback leg.
+    Path-prefixed ``*_LLM_API_KEY`` still wins when its own base URL is not
+    OpenRouter. A key whose slot points at OpenRouter (``CEREBRUM_LLM_API_KEY``
+    beside ``CEREBRUM_LLM_BASE_URL=openrouter``) does not count as a native
+    primary; OpenRouter stays the fallback leg.
+
+    Unless the operator DECLARED the provider (``LLM_PROVIDER=kimi`` or a
+    ``KIMI_*`` key): then the shared key slot is that provider's by
+    declaration, and an OpenRouter base left beside it is the stale value --
+    rejected by ``_kimi_base_url(skip_openrouter=True)``.
     """
-    candidates: List[str] = [f"{prefix}_LLM_API_KEY" for prefix in prefixes]
-    candidates.extend(["KIMI_API_KEY", "CEREBRUM_LLM_API_KEY"])
-    for name in candidates:
-        value = os.getenv(name, "").strip()
-        if value and not _looks_like_openrouter_key(value):
-            return value
-    return ""
+    slots = [(f"{prefix}_LLM_API_KEY", f"{prefix}_LLM_BASE_URL") for prefix in prefixes]
+    slots.extend(
+        [("KIMI_API_KEY", "KIMI_BASE_URL"), ("CEREBRUM_LLM_API_KEY", "CEREBRUM_LLM_BASE_URL")]
+    )
+    if _names_kimi_explicitly():
+        return _env_first(*(value_env for value_env, _base in slots))
+    return _first_off_openrouter(slots)
 
 
 def _default_base_url() -> str:
@@ -342,10 +369,13 @@ def _kimi_model(*prefixes: str, skip_openrouter: bool = False) -> str:
     # defect. They are legacy aliases only: the DEFAULT is DeepSeek, so an
     # environment that configures nothing can no longer be routed to a retired
     # provider. Override with {PREFIX}_LLM_MODEL or CEREBRUM_LLM_MODEL.
-    reject = _looks_like_openrouter_model if skip_openrouter else None
-    return _env_first_skipping(
-        *candidates, default=_default_model(), reject=reject
-    )
+    if skip_openrouter:
+        slots = [(f"{prefix}_LLM_MODEL", f"{prefix}_LLM_BASE_URL") for prefix in prefixes]
+        slots.extend(
+            [("KIMI_MODEL", "KIMI_BASE_URL"), ("CEREBRUM_LLM_MODEL", "CEREBRUM_LLM_BASE_URL")]
+        )
+        return _first_off_openrouter(slots, default=_default_model())
+    return _env_first(*candidates, default=_default_model())
 
 
 def _kimi_fallback_model(*prefixes: str, default: str, skip_openrouter: bool = False) -> str:
@@ -353,8 +383,18 @@ def _kimi_fallback_model(*prefixes: str, default: str, skip_openrouter: bool = F
     for prefix in prefixes:
         candidates.append(f"{prefix}_LLM_FALLBACK_MODEL")
     candidates.extend(["KIMI_FALLBACK_MODEL", "CEREBRUM_LLM_FALLBACK_MODEL"])
-    reject = _looks_like_openrouter_model if skip_openrouter else None
-    return _env_first_skipping(*candidates, default=default, reject=reject)
+    if skip_openrouter:
+        slots = [
+            (f"{prefix}_LLM_FALLBACK_MODEL", f"{prefix}_LLM_BASE_URL") for prefix in prefixes
+        ]
+        slots.extend(
+            [
+                ("KIMI_FALLBACK_MODEL", "KIMI_BASE_URL"),
+                ("CEREBRUM_LLM_FALLBACK_MODEL", "CEREBRUM_LLM_BASE_URL"),
+            ]
+        )
+        return _first_off_openrouter(slots, default=default)
+    return _env_first(*candidates, default=default)
 
 
 def _non_cursor_base(value: str, default: str | None = None) -> str:
@@ -474,28 +514,45 @@ def _claude_base_url(*prefixes: str, skip_openrouter: bool = False) -> str:
 def _claude_model(*prefixes: str, skip_openrouter: bool = False) -> str:
     candidates: List[str] = [f"{prefix}_LLM_MODEL" for prefix in prefixes]
     candidates.extend(["ANTHROPIC_MODEL", "CLAUDE_MODEL", "CEREBRUM_LLM_MODEL"])
-    reject = _looks_like_openrouter_model if skip_openrouter else None
-    return _env_first_skipping(
-        *candidates, default="claude-sonnet-4-5", reject=reject
-    )
+    if skip_openrouter:
+        slots = [(f"{prefix}_LLM_MODEL", f"{prefix}_LLM_BASE_URL") for prefix in prefixes]
+        slots.extend(
+            [
+                ("ANTHROPIC_MODEL", "ANTHROPIC_BASE_URL"),
+                ("CLAUDE_MODEL", "ANTHROPIC_BASE_URL"),
+                ("CEREBRUM_LLM_MODEL", "CEREBRUM_LLM_BASE_URL"),
+            ]
+        )
+        return _first_off_openrouter(slots, default="claude-sonnet-4-5")
+    return _env_first(*candidates, default="claude-sonnet-4-5")
 
 
 def _claude_fallback_model(*prefixes: str, default: str, skip_openrouter: bool = False) -> str:
     candidates: List[str] = [f"{prefix}_LLM_FALLBACK_MODEL" for prefix in prefixes]
     candidates.extend(["ANTHROPIC_FALLBACK_MODEL", "CEREBRUM_LLM_FALLBACK_MODEL"])
-    reject = _looks_like_openrouter_model if skip_openrouter else None
-    return _env_first_skipping(*candidates, default=default, reject=reject)
+    if skip_openrouter:
+        slots = [
+            (f"{prefix}_LLM_FALLBACK_MODEL", f"{prefix}_LLM_BASE_URL") for prefix in prefixes
+        ]
+        slots.extend(
+            [
+                ("ANTHROPIC_FALLBACK_MODEL", "ANTHROPIC_BASE_URL"),
+                ("CEREBRUM_LLM_FALLBACK_MODEL", "CEREBRUM_LLM_BASE_URL"),
+            ]
+        )
+        return _first_off_openrouter(slots, default=default)
+    return _env_first(*candidates, default=default)
 
 
 def _native_claude_key(*prefixes: str) -> str:
-    """Anthropic-issued keys only — skip ``sk-or-`` and leave shared Moonshot keys alone."""
-    candidates: List[str] = [f"{prefix}_LLM_API_KEY" for prefix in prefixes]
-    candidates.extend(["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"])
-    for name in candidates:
-        value = os.getenv(name, "").strip()
-        if value and not _looks_like_openrouter_key(value):
-            return value
-    return ""
+    """Anthropic keys only — skip a key configured for OpenRouter and leave
+    shared Moonshot keys alone."""
+    slots = [(f"{prefix}_LLM_API_KEY", f"{prefix}_LLM_BASE_URL") for prefix in prefixes]
+    slots.extend([("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"), ("CLAUDE_API_KEY", "ANTHROPIC_BASE_URL")])
+    if normalise_provider(os.getenv("LLM_PROVIDER", "")) == "claude":
+        # Declared provider: its key slots are its own (see _native_moonshot_key).
+        return _env_first(*(value_env for value_env, _base in slots))
+    return _first_off_openrouter(slots)
 
 
 def _claude_config(*prefixes: str) -> Dict[str, Any]:
@@ -663,9 +720,15 @@ def _deepseek_config(*prefixes: str) -> Dict[str, Any]:
     """
     scoped = _scoped_path_endpoint(*prefixes)
     if scoped:
-        fallback = str(scoped["fallback_model"] or "")
-        if not fallback or "moonshot" in fallback.lower() or "kimi" in fallback.lower():
-            fallback = "deepseek-chat"
+        # The fallback belongs to this DeepSeek endpoint: a path-scoped
+        # ``{PREFIX}_LLM_FALLBACK_MODEL`` the operator set for it, else the
+        # DeepSeek default. The shared/legacy fallback slots the scoped
+        # triple would otherwise inherit are another provider's, so they are
+        # not read here -- rather than read and then rejected by spelling.
+        fallback = _env_first(
+            *(f"{prefix}_LLM_FALLBACK_MODEL" for prefix in prefixes),
+            default=DEFAULT_FALLBACK_MODEL,
+        )
         return {
             "provider": "deepseek",
             "api_key": scoped["api_key"],
@@ -900,8 +963,11 @@ SUPPORTED_FALLBACK_PROVIDERS = ("openrouter",)
 
 
 def _is_free_slug(model: str) -> bool:
-    """OpenRouter marks zero-priced models with a ``:free`` variant suffix."""
-    return model.strip().lower().endswith(":free")
+    """OpenRouter's model id grammar is ``author/slug[:variant]``; the
+    zero-priced tier is the ``free`` variant. The id is split by that grammar
+    and its variant field compared -- not searched for a substring."""
+    _slug, sep, variant = model.strip().lower().rpartition(":")
+    return bool(sep) and variant == "free"
 
 
 def get_factory_fallback_leg() -> Dict[str, Any] | None:

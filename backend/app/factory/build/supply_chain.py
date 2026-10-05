@@ -25,6 +25,7 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import parse_qs
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -48,18 +49,63 @@ REGISTRY_MANIFEST_URL = (
     "https://registry-1.docker.io/v2/library/python/manifests/{digest}"
 )
 
-_LATEST_RE = re.compile(r":latest(?:[^\w.-]|$)")
-_DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}\b")
-_FROM_RE = re.compile(r"^\s*FROM\s+(\S+)", re.MULTILINE | re.IGNORECASE)
 _REQ_RE = re.compile(r"^([A-Za-z0-9_.-]+)(.*)$")
-_INSTALL_RE = re.compile(
-    r"^\s*RUN\s+.*(pip install|apt-get\s+install|apk add)",
-    re.IGNORECASE | re.MULTILINE,
-)
-_FS_RE = re.compile(
-    r"STORAGE_PATH|mkdir -p\s+/app/data|alembic upgrade|/app/data",
-    re.IGNORECASE,
-)
+
+
+def dockerfile_instructions(text: str) -> List[tuple]:
+    """``(INSTRUCTION, args)`` per logical Dockerfile line, by the Dockerfile
+    grammar: ``#`` lines are comments, a trailing backslash continues the
+    instruction, the first word is the instruction (case-insensitive)."""
+    out: List[tuple] = []
+    pending = ""
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not pending and (not line or line.startswith("#")):
+            continue
+        if pending and line.startswith("#"):
+            continue
+        if line.endswith("\\"):
+            pending += line[:-1] + " "
+            continue
+        logical = (pending + line).strip()
+        pending = ""
+        if logical:
+            word, _, args = logical.partition(" ")
+            out.append((word.upper(), args.strip()))
+    if pending.strip():
+        word, _, args = pending.strip().partition(" ")
+        out.append((word.upper(), args.strip()))
+    return out
+
+
+def _from_image(args: str) -> str:
+    """The image of a FROM: the first argument that is not a ``--flag``."""
+    for token in args.split():
+        if not token.startswith("--"):
+            return token
+    return ""
+
+
+def _env_values(args: str) -> List[str]:
+    """Values an ENV sets: ``K=V ...`` pairs, or the legacy ``K V`` form."""
+    import shlex
+
+    try:
+        tokens = shlex.split(args)
+    except ValueError:
+        tokens = args.split()
+    if tokens and "=" not in tokens[0]:
+        return [" ".join(tokens[1:])]
+    return [t.partition("=")[2] for t in tokens if "=" in t]
+
+
+def _arg_tokens(args: str) -> List[str]:
+    import shlex
+
+    try:
+        return shlex.split(args.strip("[]").replace(",", " "))
+    except ValueError:
+        return args.split()
 
 
 SBOM_REL = Path("docs") / "sbom.cdx.json"
@@ -91,18 +137,36 @@ def findings_for_image_ref(ref: str, *, loc: str) -> List[str]:
     ref = (ref or "").strip()
     if not ref:
         return [f"{loc}: empty image reference"]
-    if ref.endswith(":latest") or _LATEST_RE.search(ref):
+    _name, tag, digest = parse_image_ref(ref)
+    if tag == "latest":
         return [f"{loc}: :latest is not a pin ({ref})"]
-    if not _DIGEST_RE.search(ref):
+    if not is_sha256_digest(digest):
         return [f"{loc}: image is not digest-pinned ({ref})"]
     return []
 
 
+def parse_image_ref(ref: str) -> tuple:
+    """``name[:tag][@algo:hex]`` split by the image-reference grammar: the
+    digest follows ``@``; a tag is the ``:`` suffix of the LAST path component
+    (a registry ``host:port`` is not a tag)."""
+    name, _, digest = (ref or "").strip().partition("@")
+    head, _, last = name.rpartition("/")
+    repo, _, tag = last.partition(":")
+    return (head + "/" + repo if head else repo), tag, digest
+
+
+def is_sha256_digest(value: str) -> bool:
+    """``sha256:<64 lowercase hex>`` -- the content-address grammar."""
+    algo, _, hexpart = (value or "").strip().partition(":")
+    return algo == "sha256" and len(hexpart) == 64 and all(c in "0123456789abcdef" for c in hexpart)
+
+
 def scan_dockerfile(text: str, *, loc: str = "Dockerfile") -> List[str]:
     findings: List[str] = []
-    for match in _FROM_RE.finditer(text or ""):
-        findings.extend(findings_for_image_ref(match.group(1), loc=f"{loc} FROM"))
-    if not findings and not _FROM_RE.search(text or ""):
+    refs = from_refs(text)
+    for ref in refs:
+        findings.extend(findings_for_image_ref(ref, loc=f"{loc} FROM"))
+    if not findings and not refs:
         findings.append(f"{loc}: no FROM line")
     return findings
 
@@ -114,14 +178,17 @@ def assert_generated_dockerfile(text: str, *, loc: str = "Dockerfile") -> None:
 
 
 def from_refs(text: str) -> List[str]:
-    return [match.group(1) for match in _FROM_RE.finditer(text or "")]
+    return [
+        _from_image(args)
+        for instruction, args in dockerfile_instructions(text)
+        if instruction == "FROM" and _from_image(args)
+    ]
 
 
 def extract_digest(ref: str) -> str:
-    match = _DIGEST_RE.search(ref or "")
-    if not match:
-        return ""
-    return match.group(0)[1:]  # drop leading @
+    """The ``sha256:<hex>`` an image reference is pinned to, or ""."""
+    digest = parse_image_ref(ref)[2]
+    return digest if is_sha256_digest(digest) else ""
 
 
 def scan_block_manifest(data: Dict[str, Any], *, loc: str) -> List[str]:
@@ -246,7 +313,7 @@ def fetch_registry_manifest_digest(
     the pin must still resolve.
     """
     want = (digest or "").strip()
-    if not want.startswith("sha256:") or len(want) != 71:
+    if not is_sha256_digest(want):
         return {
             "kind": "registry_manifest",
             "performed": True,
@@ -495,15 +562,28 @@ def render_cyclonedx_sbom(
     return json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
 
 
+def _floating_component(item: Mapping[str, Any]) -> bool:
+    """A component pinned to the floating ``latest`` tag, read from its own
+    fields: its version, its package URL's version (``...@<version>``), or an
+    image reference's tag."""
+    if str(item.get("version") or "") == "latest":
+        return True
+    base = str(item.get("purl") or "").partition("?")[0].partition("#")[0]
+    if base.rpartition("@")[2] == "latest" and "@" in base:
+        return True
+    return parse_image_ref(str(item.get("name") or ""))[1] == "latest"
+
+
 def assert_sbom(doc: Mapping[str, Any]) -> None:
     if doc.get("bomFormat") != "CycloneDX":
         raise SupplyChainError("SBOM bomFormat must be CycloneDX")
     if not str(doc.get("specVersion") or "").startswith("1."):
         raise SupplyChainError("SBOM specVersion must be CycloneDX 1.x JSON")
-    blob = json.dumps(doc)
-    if ":latest" in blob or _LATEST_RE.search(blob):
-        raise SupplyChainError("SBOM contains :latest — floating tags refused")
     components = doc.get("components")
+    meta = (doc.get("metadata") or {}).get("component")
+    for item in (list(components) if isinstance(components, list) else []) + [meta]:
+        if isinstance(item, dict) and _floating_component(item):
+            raise SupplyChainError("SBOM contains :latest — floating tags refused")
     if not isinstance(components, list) or not components:
         raise SupplyChainError("SBOM has no components")
     hashes = []
@@ -514,9 +594,13 @@ def assert_sbom(doc: Mapping[str, Any]) -> None:
             if isinstance(entry, dict):
                 hashes.append(str(entry.get("content") or ""))
         purl = str(item.get("purl") or "")
-        if "digest=" in purl:
+        # A package URL's qualifiers follow "?"; a digest qualifier is a key.
+        qualifiers = parse_qs(purl.partition("?")[2].partition("#")[0])
+        if "digest" in qualifiers:
             hashes.append(purl)
     recorded = PYTHON_312_SLIM_DIGEST.split(":", 1)[-1]
+    # The recorded base-image content address (hex) somewhere in the document.
+    blob = json.dumps(doc)
     if recorded not in blob:
         raise SupplyChainError("SBOM does not name the recorded python:3.12-slim digest")
 
@@ -557,6 +641,27 @@ def _text_has_outbound(text: str) -> bool:
     return False
 
 
+def _declares_data_path(dockerfile: str) -> bool:
+    """True when the image declares a writable data location: a VOLUME, or an
+    absolute path an ENV configures that a build step also materialises (the
+    path is an argument of a RUN). Read from the Dockerfile grammar -- not
+    from which variable name or which directory a line mentions."""
+    instructions = dockerfile_instructions(dockerfile)
+    if any(i == "VOLUME" for i, _ in instructions):
+        return True
+    configured = {
+        value
+        for i, args in instructions
+        if i == "ENV"
+        for value in _env_values(args)
+        if value.startswith("/")
+    }
+    built = {
+        token for i, args in instructions if i == "RUN" for token in _arg_tokens(args)
+    }
+    return bool(configured & built)
+
+
 def observe_behaviour(
     dockerfile: str,
     entrypoint: str,
@@ -569,8 +674,10 @@ def observe_behaviour(
         posture_id = str(posture or "")
     combined = f"{dockerfile or ''}\n{entrypoint or ''}"
     network = probe_set.posture_egresses(posture_id) or _text_has_outbound(combined)
-    filesystem = bool(_FS_RE.search(combined))
-    install = bool(_INSTALL_RE.search(dockerfile or ""))
+    filesystem = _declares_data_path(dockerfile)
+    # A RUN step executes at build time and writes the image: that IS the
+    # install permission, whichever tool the step names.
+    install = any(i == "RUN" for i, _ in dockerfile_instructions(dockerfile))
     return {
         "network": bool(network),
         "filesystem": bool(filesystem),

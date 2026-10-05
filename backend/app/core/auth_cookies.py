@@ -106,7 +106,9 @@ def _cookie_kwargs(request: Optional[Request] = None) -> dict:
 
 
 def set_login_cookie(response: Response, token: str, request: Optional[Request] = None) -> None:
-    if not token or not token.startswith("cdt_"):
+    # Callers pass the login session ``issue_login_token`` just minted; the
+    # cookie is that typed slot, so its holder is never re-guessed by spelling.
+    if not token:
         return
     response.set_cookie(value=token, **_cookie_kwargs(request))
 
@@ -125,10 +127,12 @@ def clear_login_cookie(response: Response, request: Optional[Request] = None) ->
 
 
 def cookie_login_token(request: Optional[Request]) -> str:
-    """Return a ``cdt_`` login token from the session cookie, or empty."""
+    """The session cookie's value, or empty.
+
+    Only a login session is ever stored here, and auth resolves a cookie
+    credential against the login-session table alone -- an unknown value
+    simply finds no row.
+    """
     if request is None:
         return ""
-    raw = (request.cookies.get(LOGIN_COOKIE_NAME) or "").strip()
-    if raw.startswith("cdt_"):
-        return raw
-    return ""
+    return (request.cookies.get(LOGIN_COOKIE_NAME) or "").strip()

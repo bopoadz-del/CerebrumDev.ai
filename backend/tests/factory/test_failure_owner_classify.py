@@ -41,18 +41,30 @@ def _verdict(findings, rows=None, reason="suite_red"):
     return SimpleNamespace(findings=findings, payload=payload, reason=reason, gate="suite_green")
 
 
+def _models_row(kind, message, line=31):
+    """The typed JUnit row for test_every_model_round_trips (what the
+    classifier reads; the stdout FAILED line is display text)."""
+    return {"nodeid": "tests/test_models.py::test_every_model_round_trips",
+            "file": "tests/test_models.py", "name": "test_every_model_round_trips",
+            "kind": kind, "message": message, "innermost": f"tests/test_models.py:{line}"}
+
+
 def test_assertion_in_a_factory_test_is_the_products_failure():
     """open_items: the product returned a wrong value; the writer can fix it."""
     v = _verdict(
-        ["FAILED tests/test_models.py::test_every_model_round_trips - AssertionError: ('open_items', '1', 1)"]
+        ["FAILED tests/test_models.py::test_every_model_round_trips - AssertionError: ('open_items', '1', 1)"],
+        rows=[_models_row("failure", "AssertionError: ('open_items', '1', 1)")],
     )
-    assert classify(v, FACTORY_FILES)["owner"] == PRODUCT
+    out = classify(v, FACTORY_FILES)
+    assert out["owner"] == PRODUCT
+    assert "unclassified" not in out.get("attribution", "")
 
 
 def test_a_broken_factory_test_is_still_the_factorys():
     """KeyError 'figure': the miner invented a field; the test itself is wrong."""
     v = _verdict(
-        ["FAILED tests/test_models.py::test_every_model_round_trips - KeyError: 'figure'"]
+        ["FAILED tests/test_models.py::test_every_model_round_trips - KeyError: 'figure'"],
+        rows=[_models_row("error", "KeyError: 'figure'")],
     )
     assert classify(v, FACTORY_FILES)["owner"] == FACTORY
 
@@ -88,11 +100,22 @@ def test_a_product_raise_in_a_factory_test_stays_product():
 
 def test_pure_factory_failure_still_halts_and_names_the_generator():
     v = _verdict(
-        ["FAILED tests/test_models.py::test_every_model_round_trips - KeyError: 'figure'"]
+        ["FAILED tests/test_models.py::test_every_model_round_trips - KeyError: 'figure'"],
+        rows=[_models_row("error", "KeyError: 'figure'")],
     )
     out = classify(v, FACTORY_FILES)
     assert out["owner"] == FACTORY
     assert "roles_handlers.py" in out["generator"]
+
+
+def test_stdout_lines_without_typed_rows_are_not_parsed():
+    """No JUnit rows: the FAILED display lines decide nothing -- the verdict
+    stays the product's (never a guess that it is the Factory's) and says it
+    is unclassified."""
+    v = _verdict(["FAILED tests/test_models.py::test_every_model_round_trips - KeyError: 'figure'"])
+    out = classify(v, FACTORY_FILES)
+    assert out["owner"] == PRODUCT
+    assert "unclassified" in out["attribution"]
 
 
 def test_environment_fault_is_unchanged():

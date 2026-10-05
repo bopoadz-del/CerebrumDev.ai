@@ -31,8 +31,7 @@ import pytest
 from app.factory.build.block_inputs import (
     _usable_align_name,
     align_spec_to_handler_source,
-    handler_required_fields,
-    required_fields_from_rosters,
+    handler_field_contracts,
 )
 
 _CONNECTOR = textwrap.dedent(
@@ -63,8 +62,7 @@ _HANDLER = textwrap.dedent(
 
 
 def test_the_live_shape_a_connectors_settings_roster_mines_no_fields():
-    assert required_fields_from_rosters(_CONNECTOR) == []
-    assert [n for n in handler_required_fields(_CONNECTOR) if n.isupper()] == []
+    assert [n for n in handler_field_contracts(_CONNECTOR) if n.isupper()] == []
 
 
 def test_the_spec_the_tester_samples_from_gains_no_settings():
@@ -77,18 +75,15 @@ def test_the_spec_the_tester_samples_from_gains_no_settings():
     assert not [n for n in names if str(n).isupper()], names
 
 
-def test_a_real_required_roster_is_still_mined():
-    """The guard: the miner was not switched off, it stopped mistaking one
-    kind of roster for another."""
-    assert sorted(required_fields_from_rosters(_HANDLER)) == ["folder_name", "owner_email"]
-
-
-def test_a_mixed_roster_keeps_the_fields_and_drops_the_settings():
-    source = _HANDLER.replace(
-        '["folder_name", "owner_email"]', '["folder_name", "ZZ_API_KEY", "owner_email"]'
-    )
-
-    assert sorted(required_fields_from_rosters(source)) == ["folder_name", "owner_email"]
+def test_a_required_roster_in_code_declares_no_field():
+    """Owner ruling 2026-10-05: required fields come only from the declared
+    schema. A roster the handler iterates -- settings or not -- adds nothing,
+    and a declared field keeps the required flag the schema gave it."""
+    spec, changed = align_spec_to_handler_source({"fields": []}, _HANDLER)
+    assert spec["fields"] == [] and changed == []
+    declared = {"fields": [{"name": "folder_name", "type": "str", "required": False}]}
+    spec, _ = align_spec_to_handler_source(declared, _HANDLER)
+    assert spec["fields"] == [{"name": "folder_name", "type": "str", "required": False}]
 
 
 @pytest.mark.parametrize("name", ["ZZ_CLIENT_ID", "ZZ_SECRET", "PORT", "ZZ2_KEY"])

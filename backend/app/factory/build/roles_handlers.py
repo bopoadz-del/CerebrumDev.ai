@@ -39,7 +39,9 @@ from app.factory.build.block_inputs import (
 from app.factory.build.authorship import (
     AGENT_SOURCE_EXACT,
     AGENT_SOURCE_PREFIXES,
-    _WRITER_ROLE_STAMP_RE,
+    AUTHORSHIP_MARKER,
+    RENDERED_MARKER_READER,
+    authorship_marker_line,
     coding_agent_artifact_ids,
     writer_contract_role_detail,
 )
@@ -81,7 +83,6 @@ from app.factory.build.block_obligations import (
     render_dependency_lines,
 )
 from app.factory.build.roles_constants import (
-    _BLOCK_CLASS_RE,
     _BLOCK_DEF_RE,
     _CONFTEST,
     _DISPATCH_RUNTIME,
@@ -757,22 +758,50 @@ def _candidate_store_ids(block_id: str) -> tuple:
     return tuple(seen)
 
 
-#: A block class names itself ...Block or carries a version suffix (V2, V3...).
-_BLOCK_CLASS_SUFFIX_RE = re.compile(r"(?:Block|V\d+)$")
-
-
 def _class_name_from_block_module(path: Path) -> Optional[str]:
+    """The block class a Store module defines, read from its syntax tree.
+
+    A Store block declares its own id (``name = "<id>"`` in its class body),
+    so the class that declares this module's id is the block. Failing that,
+    the class implementing the Store block interface (``process``, the method
+    the Store calls), else the first class. Never chosen by how a class is
+    NAMED.
+    """
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+        tree = ast.parse(text)
+    except (OSError, SyntaxError, ValueError):
         return None
-    names = _BLOCK_CLASS_RE.findall(text)
-    if not names:
+    classes = [node for node in tree.body if isinstance(node, ast.ClassDef)]
+    if not classes:
         return None
-    for name in names:
-        if _BLOCK_CLASS_SUFFIX_RE.search(name):
-            return name
-    return names[0]
+    module_id = path.stem
+
+    def _declares_id(cls: ast.ClassDef) -> bool:
+        for stmt in cls.body:
+            targets = stmt.targets if isinstance(stmt, ast.Assign) else (
+                [stmt.target] if isinstance(stmt, ast.AnnAssign) else []
+            )
+            value = getattr(stmt, "value", None)
+            if (
+                any(isinstance(t, ast.Name) and t.id == "name" for t in targets)
+                and isinstance(value, ast.Constant)
+                and value.value == module_id
+            ):
+                return True
+        return False
+
+    def _implements_process(cls: ast.ClassDef) -> bool:
+        return any(
+            isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)) and stmt.name == "process"
+            for stmt in cls.body
+        )
+
+    for predicate in (_declares_id, _implements_process):
+        for cls in classes:
+            if predicate(cls):
+                return cls.name
+    return classes[0].name
 
 
 def _resolve_store_def(
@@ -1863,6 +1892,7 @@ from typing import Any, Dict
 from app.dispatch import execute
 
 CAPABILITY_ID = "{capability_id}"
+{authorship_marker_line(source)}
 ENTITY = {entity_name!r}
 BLOCK_IDS = {list(block_ids)!r}
 #: Each block's declared default action (from its block.json). Blocks are
@@ -2067,6 +2097,13 @@ def _render_models(specs: Dict[str, Dict[str, Any]]) -> str:
             # validates against these and the tests build payloads from them,
             # so neither side can invent a rule the other cannot satisfy.
             "    CONSTRAINTS = " + repr(_constraints_of(spec)),
+            # Fields whose DECLARED type is money (storage collapses them to
+            # float, so the declaration is kept here): the money contract
+            # reads this, never a field's name.
+            "    MONEY_FIELDS = " + repr([
+                f["name"] for f in spec["fields"]
+                if _semantic_field_type(f.get("type")) == MONEY_SEMANTIC_TYPE
+            ]),
             "    _FIELD_PY = " + repr(json_to_py),
             "    _FIELD_JSON = " + repr(py_to_json),
             "",
@@ -2626,6 +2663,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+{RENDERED_MARKER_READER}
 
 def main() -> int:
     print("== {product_name} — release gate ==")
@@ -2683,23 +2721,17 @@ def main() -> int:
         handlers = [
             p for p in sorted(actions.glob("*.py")) if not p.name.startswith("_")
         ] if actions.is_dir() else []
-        # The SAME rule the acceptance floor's authorship_floor uses: the
-        # WRITER's own docstring stamp. Derived from the canonical vocabulary
-        # at RENDER time, so the delivered tree needs no app/factory import
-        # (the customer's export may not carry one). A private marker list
-        # here drifted behind the CodeWhale writer and reported 0 for a fully
-        # agent-written tree (live 2026-10-01).
-        _stamp_re = re.compile(r"{_WRITER_ROLE_STAMP_RE.pattern}")
+        # The SAME rule the acceptance floor's authorship_floor uses: each
+        # handler's module-level {AUTHORSHIP_MARKER} assignment, read from the
+        # syntax tree by a reader rendered from the Factory's canonical one,
+        # so the delivered tree needs no app/factory import. A docstring
+        # sentence decides nothing.
         _agent_prefixes = {tuple(AGENT_SOURCE_PREFIXES)!r}
         _agent_exact = {set(AGENT_SOURCE_EXACT)!r}
         stamped = 0
         for path in handlers:
-            head = path.read_text(encoding="utf-8", errors="replace")[:4000]
-            _m = _stamp_re.search(head)
-            if not _m:
-                continue
-            _src = _m.group(1).strip()
-            if _src.startswith(_agent_prefixes) or _src.lower() in _agent_exact:
+            _src = _authored_by(path.read_text(encoding="utf-8", errors="replace"))
+            if _src and (_src.startswith(_agent_prefixes) or _src.lower() in _agent_exact):
                 stamped += 1
         print(f"handlers: {{len(handlers)}} total, {{stamped}} stamped by the coding agent")
 
@@ -4051,6 +4083,13 @@ def run_writer(
     # production, FACTORY_CODEWHALE_WRITER=1 makes it the only path taken.
     # The kimi CLI vehicle underneath has been removed outright (see
     # app/factory/code_cli.py), so no later branch can shell out to it.
+    #
+    # The locale the user declared on the Floor and the run-time money
+    # settings module are stamped before ANY writer path, so the agent builds
+    # against them and the money contract can read them.
+    from app.factory.build.money_contract import emit_money_artifacts
+
+    emit_money_artifacts(ctx.workspace, ctx.blueprint)
     if writer_uses_codewhale(env):
         return _run_writer_via_codewhale_worker(ctx)
     writer_roster = _writer_block_roster(ctx.state)
@@ -5260,6 +5299,19 @@ def _resolve_known_field_type(raw: Any) -> Optional[str]:
     if not kind:
         return "str"
     return _TYPE_ALIASES.get(kind)
+
+
+#: Declared types that carry meaning beyond their storage type. A money field
+#: is stored as float; its declaration is what the money contract reads.
+MONEY_SEMANTIC_TYPE = "money"
+_SEMANTIC_TYPES = {"money": MONEY_SEMANTIC_TYPE, "currency": MONEY_SEMANTIC_TYPE}
+
+
+def _semantic_field_type(raw: Any) -> Optional[str]:
+    """The declared type's meaning (e.g. money), or None for plain types."""
+    kind = str(raw or "").strip().lower().split("(", 1)[0]
+    kind = kind.replace("optional[", "").replace("]", "").strip()
+    return _SEMANTIC_TYPES.get(kind)
 
 
 def _normalize_field_type(raw: Any) -> str:

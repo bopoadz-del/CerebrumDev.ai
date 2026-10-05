@@ -198,9 +198,25 @@ def test_truncated_parser_marked():
         text,
         job_id=job.job_id,
         warnings=["Extracted text exceeded 200000 characters and was truncated."],
+        parser_truncated=True,
     )
     document, _, _ = create_canonical_document(job, report)
     assert document.parser_truncated is True
+
+
+def test_truncation_is_the_typed_flag_not_the_warning_prose():
+    """A warning that merely says 'truncated' marks nothing; the parser's
+    typed flag is the fact."""
+    record = _source_record()
+    job = _job(record)
+    report = _report(
+        record,
+        "Short.",
+        job_id=job.job_id,
+        warnings=["The source said its own table was truncated."],
+    )
+    document, _, _ = create_canonical_document(job, report)
+    assert document.parser_truncated is False
 
 
 def test_save_and_retrieve_canonical_document(tmp_path, monkeypatch):

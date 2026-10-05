@@ -62,6 +62,12 @@ class ProductDesignState(BaseModel):
     #: source of a product's vertical: None means "product" (no domain kit).
     #: The Factory never infers it from the brief's prose or its blocks.
     vertical: Optional[str] = None
+    #: The country (ISO 3166 alpha-2) and currency (ISO 4217) the USER typed
+    #: on the Floor, shape-validated only. Copied onto the blueprint's
+    #: ``locale``; None means undeclared -- money is then WITHHELD, never
+    #: guessed (app.factory.locale_choice / money_contract).
+    country: Optional[str] = None
+    currency: Optional[str] = None
 
 
 class SessionState(BaseModel):

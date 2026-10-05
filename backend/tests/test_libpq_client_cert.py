@@ -82,15 +82,28 @@ def test_normalize_strips_unreadable_sslcert_keeps_sslmode():
     assert "sslkey" not in query
 
 
-def test_normalize_adds_sslmode_require_for_neon_without_inventing_cert():
+def test_normalize_never_infers_sslmode_from_the_hosts_spelling():
+    """Was test_normalize_adds_sslmode_require_for_neon_without_inventing_cert.
+
+    The TLS mode used to be added when the host ended in one vendor's domain
+    -- behaviour decided by a literal name. The mode is now the operator's to
+    declare in the URL; an undeclared mode is left to libpq, and a declared
+    one is kept (test_normalize_strips_unreadable_sslcert_keeps_sslmode).
+    """
     url = "postgresql://u:p@ep-example.c-5.us-east-2.aws.neon.tech/db"
     out = normalize_accounts_database_url(url)
     parsed = urlparse(out)
     query = parse_qs(parsed.query)
     assert parsed.scheme == "postgresql+psycopg"
-    assert query.get("sslmode") == ["require"]
+    assert "sslmode" not in query
     assert "sslcert" not in query
     assert "sslkey" not in query
+
+
+def test_normalize_keeps_an_explicit_driver():
+    out = normalize_accounts_database_url("postgresql+asyncpg://u:p@db:5432/x")
+    assert urlparse(out).scheme == "postgresql+asyncpg"
+    assert normalize_accounts_database_url("sqlite:///a.db") == "sqlite:///a.db"
 
 
 def test_normalize_does_not_force_sslmode_on_generic_postgres():
@@ -101,7 +114,7 @@ def test_normalize_does_not_force_sslmode_on_generic_postgres():
 def test_accounts_store_and_backup_share_the_same_normalizer(monkeypatch):
     raw = (
         "postgres://u:p@ep-x.aws.neon.tech/db"
-        "?sslcert=/root/.postgresql/postgresql.crt"
+        "?sslmode=require&sslcert=/root/.postgresql/postgresql.crt"
     )
     monkeypatch.setenv("ACCOUNTS_DATABASE_URL", raw)
     from app.core import accounts_store

@@ -12,6 +12,7 @@ export function VerticalPicker({
   value,
   onChange,
   onLoaded,
+  onLocaleLoaded,
   disabled,
 }: {
   sessionId: string
@@ -20,6 +21,8 @@ export function VerticalPicker({
   onChange: (vertical: string) => void
   /** The session's saved choice, loaded from the server (not a user change). */
   onLoaded?: (vertical: string) => void
+  /** The session's saved country/currency, loaded from the server. */
+  onLocaleLoaded?: (locale: { country: string; currency: string }) => void
   disabled?: boolean
 }) {
   const [options, setOptions] = useState<DeclaredVertical[]>([])
@@ -32,6 +35,8 @@ export function VerticalPicker({
         if (cancelled) return
         setOptions(res.verticals || [])
         if (res.chosen && onLoaded) onLoaded(res.chosen)
+        if ((res.country || res.currency) && onLocaleLoaded)
+          onLocaleLoaded({ country: res.country || '', currency: res.currency || '' })
       })
       .catch(() => {
         // No Store reachable: the user can still type a vertical.
@@ -39,7 +44,7 @@ export function VerticalPicker({
     return () => {
       cancelled = true
     }
-  }, [sessionId, onLoaded])
+  }, [sessionId, onLoaded, onLocaleLoaded])
 
   const listId = `vertical-options-${sessionId}`
   return (

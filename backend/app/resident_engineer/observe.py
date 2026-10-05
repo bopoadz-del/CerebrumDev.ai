@@ -11,6 +11,7 @@ from urllib.error import URLError, HTTPError
 from urllib.request import urlopen
 
 from app.resident_engineer.dna_loader import dna_entity_refs, load_product_dna
+from app.resident_engineer.modes import AutonomyLevel
 from app.resident_engineer.injection_guard import sanitize_untrusted, strip_instruction_patterns
 
 _ERROR_LINE = re.compile(r"(error|exception|traceback|critical|fatal)", re.I)
@@ -125,7 +126,7 @@ def observe(
     lock = check_block_lockfile_vs_store(bundle, store_versions)
     anomalies = flag_security_anomalies(bundle, logs)
     return {
-        "level": "L1",
+        "level": AutonomyLevel.L1.value,
         "mode": "resident",
         "product_id": refs.get("product_id"),
         "dna_refs": refs,

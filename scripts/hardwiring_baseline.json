@@ -8,10 +8,22 @@
     "rescue_knob",
     "product_literal",
     "word_list",
-    "probe_id"
+    "probe_id",
+    "phrase_match"
   ],
   "roots": [
-    "backend/app/factory"
+    "backend/app/factory",
+    "backend/app/routers",
+    "backend/app/core",
+    "backend/app/blocks",
+    "backend/app/cerebrum_product_kernel",
+    "backend/app/domain_compiler",
+    "backend/app/models",
+    "backend/app/product_dna",
+    "backend/app/workbench",
+    "backend/app/change_requests",
+    "backend/app/resident_engineer",
+    "backend/app/main.py"
   ],
   "schema": "hardwiring_baseline.v1",
   "total": 0

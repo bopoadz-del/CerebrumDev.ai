@@ -9,7 +9,10 @@ import {
   watchBuildStatus,
   type BuildStatus,
   type ChatEvent,
+  type DeclaredLocale,
   type ProductDesign,
+  type TypedFloorAction,
+  RIGOR_LEVELS,
 } from './api/factory'
 import { FactoryCodeCliStatus, useFactoryCodeCliHonesty } from './factoryReadinessView'
 import {
@@ -34,6 +37,7 @@ import {
 } from './buildProgress'
 import { LevelGradeStrip } from './levelGradeView'
 import { VerticalPicker } from './verticalPicker'
+import { LocalePicker } from './localePicker'
 import { displayProductName, humanizeProductId, latestBlueprintIn } from './productDisplay'
 
 interface Capability {
@@ -52,6 +56,8 @@ interface ChatMsg {
   blueprint?: {
     product_name?: string
     vertical?: string
+    /** Declared build grade: prototype | light | standard | production. */
+    rigor?: string
     summary?: string
     capabilities?: Capability[]
     drafting_mode?: string
@@ -65,6 +71,12 @@ interface ChatMsg {
   plainLanguage?: string
 }
 
+/** What the user pressed, shown in the chat log (a typed action is not text). */
+export function typedActionLabel(typed: TypedFloorAction): string {
+  const value = typed.value ? ': ' + typed.value : ''
+  return '[' + typed.action.replace(/_/g, ' ') + value + ']'
+}
+
 export function BlueprintCard({
   blueprint,
   busy,
@@ -75,7 +87,7 @@ export function BlueprintCard({
   blueprint: NonNullable<ChatMsg['blueprint']>
   busy: boolean
   onApprove: (excludedIds: string[], delivery: 'zip' | 'github_repo') => void
-  onRefine: (text: string) => void
+  onRefine: (typed: TypedFloorAction) => void
   accessPaused?: boolean
 }) {
   const caps = blueprint.capabilities ?? []
@@ -85,6 +97,8 @@ export function BlueprintCard({
   const excluded = caps.filter((c) => ticked[c.id] === false).map((c) => c.id)
   const selectedCount = caps.length - excluded.length
   const [delivery, setDelivery] = useState<'zip' | 'github_repo'>('zip')
+  const [renameTo, setRenameTo] = useState('')
+  const [capId, setCapId] = useState('')
   return (
     <div className="blueprint-card">
       <div className="bp-header">
@@ -183,20 +197,75 @@ export function BlueprintCard({
                 : 'Approve & build'}
             </button>
           </div>
-          <p className="bp-refine-hint">
+          <div className="bp-refine-hint" data-testid="bp-refine-controls">
             Refine:{' '}
-            <button className="link" disabled={busy} onClick={() => onRefine('list capabilities')}>
+            <button
+              className="link"
+              disabled={busy}
+              onClick={() => onRefine({ action: 'list_capabilities' })}
+            >
               list capabilities
             </button>{' '}
             ·{' '}
-            <button className="link" disabled={busy} onClick={() => onRefine('add capability payments')}>
-              add payments
+            <input
+              data-testid="bp-cap-id"
+              aria-label="Capability id"
+              placeholder="capability id"
+              value={capId}
+              disabled={busy}
+              onChange={(e) => setCapId(e.target.value)}
+            />{' '}
+            <button
+              className="link"
+              data-testid="bp-add-cap"
+              disabled={busy || !capId.trim()}
+              onClick={() => onRefine({ action: 'add_capability', value: capId.trim() })}
+            >
+              add
+            </button>{' '}
+            <button
+              className="link"
+              data-testid="bp-remove-cap"
+              disabled={busy || !capId.trim()}
+              onClick={() => onRefine({ action: 'remove_capability', value: capId.trim() })}
+            >
+              remove
             </button>{' '}
             ·{' '}
-            <button className="link" disabled={busy} onClick={() => onRefine('remove capability audit')}>
-              remove audit
-            </button>
-          </p>
+            <input
+              data-testid="bp-rename"
+              aria-label="Product name"
+              placeholder="new product name"
+              value={renameTo}
+              disabled={busy}
+              onChange={(e) => setRenameTo(e.target.value)}
+            />{' '}
+            <button
+              className="link"
+              data-testid="bp-rename-apply"
+              disabled={busy || !renameTo.trim()}
+              onClick={() => onRefine({ action: 'rename', value: renameTo.trim() })}
+            >
+              rename
+            </button>{' '}
+            ·{' '}
+            <label>
+              Grade:{' '}
+              <select
+                data-testid="bp-rigor"
+                aria-label="Build grade"
+                disabled={busy}
+                value={blueprint.rigor ?? 'production'}
+                onChange={(e) => onRefine({ action: 'set_rigor', value: e.target.value })}
+              >
+                {RIGOR_LEVELS.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </>
       )}
     </div>
@@ -492,6 +561,15 @@ export function Floor({
     setVerticalDirty(true)
   }, [])
   const syncVertical = useCallback((v: string) => setVertical(v), [])
+  // The country/currency the user declares (typed fields, shape-checked).
+  // Sent only when changed, like the vertical; '' = undeclared.
+  const [locale, setLocale] = useState<DeclaredLocale>({ country: '', currency: '' })
+  const [localeDirty, setLocaleDirty] = useState(false)
+  const pickLocale = useCallback((next: DeclaredLocale) => {
+    setLocale(next)
+    setLocaleDirty(true)
+  }, [])
+  const syncLocale = useCallback((next: DeclaredLocale) => setLocale(next), [])
   const [busy, setBusy] = useState(false)
   const [coderBuild, setCoderBuild] = useState<BuildStatus | null>(null)
   const [productDesign, setProductDesign] = useState<ProductDesign | null>(null)
@@ -591,10 +669,30 @@ export function Floor({
   }, [liveCoderBuild?.state])
 
   const sendCore = useCallback(
-    async (message: string): Promise<{ runnerStarted: boolean }> => {
+    async (
+      message: string,
+      typed?: TypedFloorAction,
+    ): Promise<{ runnerStarted: boolean }> => {
       let runnerStarted = false
-      setMsgs((m) => [...m, { role: 'user', text: message }, { role: 'factory', text: '' }])
+      // A typed action shows what the user pressed; it is not chat text.
+      const shown = typed
+        ? typedActionLabel(typed)
+        : message
+      setMsgs((m) => [...m, { role: 'user', text: shown }, { role: 'factory', text: '' }])
       try {
+        // Trailing typed fields, only when the user changed them.
+        const typedFields: [vertical?: string | null, locale?: DeclaredLocale | null] = localeDirty
+          ? [verticalDirty ? vertical : undefined, locale]
+          : verticalDirty
+            ? [vertical]
+            : []
+        // A typed action rides after the vertical/locale slots; free text
+        // keeps the original call shape.
+        const trailing: [
+          vertical?: string | null,
+          locale?: DeclaredLocale | null,
+          typed?: TypedFloorAction | null,
+        ] = typed ? [typedFields[0], typedFields[1], typed] : typedFields
         await chatStream(
           sessionId,
           message,
@@ -684,9 +782,10 @@ export function Floor({
             })
           }
           },
-          ...(verticalDirty ? [vertical] : []),
+          ...trailing,
         )
         if (verticalDirty) setVerticalDirty(false)
+        if (localeDirty) setLocaleDirty(false)
       } catch (e) {
         setMsgs((m) => [
           ...m.slice(0, -1),
@@ -695,7 +794,7 @@ export function Floor({
       }
       return { runnerStarted }
     },
-    [sessionId, vertical, verticalDirty],
+    [sessionId, vertical, verticalDirty, locale, localeDirty],
   )
 
   const send = useCallback(
@@ -706,6 +805,19 @@ export function Floor({
       setBusy(true)
       try {
         await sendCore(message)
+      } finally {
+        setBusy(false)
+      }
+    },
+    [accessPaused, busy, sendCore],
+  )
+
+  const sendTyped = useCallback(
+    async (typed: TypedFloorAction) => {
+      if (busy || accessPaused) return
+      setBusy(true)
+      try {
+        await sendCore('', typed)
       } finally {
         setBusy(false)
       }
@@ -743,10 +855,10 @@ export function Floor({
       let runnerStarted = false
       try {
         for (const id of excludedIds) {
-          const removed = await sendCore('remove capability ' + id)
+          const removed = await sendCore('', { action: 'remove_capability', value: id })
           runnerStarted = runnerStarted || removed.runnerStarted
         }
-        const approved = await sendCore('approve')
+        const approved = await sendCore('', { action: 'approve' })
         runnerStarted = runnerStarted || approved.runnerStarted
       } catch {
         runnerStarted = false
@@ -905,7 +1017,7 @@ export function Floor({
                     onApprove={(excludedIds, delivery) =>
                 void approveWithSelection(excludedIds, delivery)
               }
-                    onRefine={(text) => send(text)}
+                    onRefine={(typed) => void sendTyped(typed)}
                   />
                 )}
                 {m.card === 'generation' && (
@@ -1066,7 +1178,7 @@ export function Floor({
                 <button
                   type="button"
                   data-testid="continue-to-pilot"
-                  onClick={() => void send('continue')}
+                  onClick={() => void sendTyped({ action: 'run_pilot' })}
                   disabled={busy || accessPaused}
                 >
                   Continue to pilot
@@ -1172,6 +1284,13 @@ export function Floor({
         value={vertical}
         onChange={pickVertical}
         onLoaded={syncVertical}
+        onLocaleLoaded={syncLocale}
+        disabled={busy || coderBuilding || accessPaused}
+      />
+      <LocalePicker
+        country={locale.country}
+        currency={locale.currency}
+        onChange={pickLocale}
         disabled={busy || coderBuilding || accessPaused}
       />
       <form

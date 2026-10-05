@@ -656,8 +656,9 @@ def test_request_log_carries_correlation_id_without_emoji(client, caplog):
     assert resp.status_code == 200
     formatter = JsonFormatter()
     lines = [formatter.format(record) for record in caplog.records]
-    joined = "\\n".join(lines)
-    assert "s11-product" in joined or resp.headers.get(REQUEST_ID_HEADER)
+    # The correlation id is a structured log field, read from parsed JSON.
+    ids = {{json.loads(line).get("request_id") for line in lines}}
+    assert "s11-product" in ids or resp.headers.get(REQUEST_ID_HEADER)
     assert strip_emoji("ok") == "ok"
     party = chr(0x1F389)
     assert party not in json.dumps(resp.json())
@@ -752,7 +753,16 @@ def backfill_deploy_substrate(workspace: Any) -> Dict[str, List[str]]:
 def assert_fail_closed_health_source(main_source: str) -> None:
     if health_is_always_200(main_source):
         raise ValueError("app/main.py still emits LotDesk-class always-200 health (F1)")
-    if "health_response" not in main_source:
+    try:
+        tree = ast.parse(main_source)
+    except SyntaxError as exc:
+        raise ValueError(f"app/main.py does not parse: {exc}") from exc
+    called = {
+        (n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", ""))
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+    }
+    if "health_response" not in called:
         raise ValueError("app/main.py does not call health_response()")
 
 

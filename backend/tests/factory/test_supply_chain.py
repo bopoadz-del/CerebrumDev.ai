@@ -31,6 +31,7 @@ from app.factory.build.supply_chain import (
     findings_for_image_ref,
     fingerprint_disagreements,
     known_factory_block_ids,
+    from_refs,
     observe_behaviour,
     p1_declared_permissions,
     perform_local_pin_check,
@@ -201,6 +202,26 @@ def test_f21_match_on_role_runner_emission():
     assert result["ok"] is True
     observed = observe_behaviour(docker, entry, posture)
     assert observed == {"network": False, "filesystem": True, "install": True}
+
+
+def test_dockerfile_is_read_by_its_grammar_not_by_words():
+    """FROM / RUN / ENV are instructions, not substrings: a comment naming them
+    decides nothing, continuations join, --platform is not the image, and a
+    data path is one an ENV configures and a RUN materialises -- whatever the
+    variable or the tool is called."""
+    docker = (
+        "# FROM evil:latest  and  RUN pip install  in a comment\n"
+        f"from --platform=linux/amd64 {PYTHON_312_SLIM_FROM}\n"
+        "ENV ZORBLAT_HOME=/srv/zorblat\n"
+        "RUN zorbctl prepare \\\n    /srv/zorblat\n"
+    )
+    assert from_refs(docker) == [PYTHON_312_SLIM_FROM]
+    assert scan_dockerfile(docker) == []
+    observed = observe_behaviour(docker, "", {"posture": "P1"})
+    assert observed["install"] is True and observed["filesystem"] is True
+    bare = f"FROM {PYTHON_312_SLIM_FROM}\n# RUN mkdir -p /app/data STORAGE_PATH\n"
+    observed = observe_behaviour(bare, "alembic upgrade head", {"posture": "P1"})
+    assert observed["install"] is False and observed["filesystem"] is False
 
 
 def test_f21_mismatch_outbound_dockerfile():

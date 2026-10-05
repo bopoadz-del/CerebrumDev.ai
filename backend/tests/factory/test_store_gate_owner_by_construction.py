@@ -72,15 +72,45 @@ class _Resp:
         return False
 
 
-class StatusOpener:
-    """GitHub, reduced to the three calls the gate makes."""
+def _store_gate_zip(failing) -> bytes:
+    """The gate run's typed artifact: one line per floor check."""
+    import io
+    import zipfile
 
-    def __init__(self, *, state: str, description: str):
+    lines = [
+        {"name": name, "status": "FAIL" if name in failing else "PASS", "detail": "measured"}
+        for name in ACCEPTANCE_CHECK_NAMES
+        if name not in failing
+    ] + [{"name": name, "status": "FAIL", "detail": "measured"} for name in failing]
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        archive.writestr("store_gate.json", json.dumps({"lines": lines}))
+    return buf.getvalue()
+
+
+class StatusOpener:
+    """GitHub, reduced to the calls the gate makes: the status, and -- when
+    the run published one -- its typed store_gate.json artifact."""
+
+    def __init__(self, *, state: str, description: str, failing=None):
         self.state = state
         self.description = description
+        self.failing = failing
 
     def __call__(self, req: Request, timeout=None):
         url = req.full_url
+        if "/actions/artifacts" in url:
+            arts = [] if self.failing is None else [
+                {"name": "store-gate", "expired": False, "workflow_run": {"head_sha": "0" * 40},
+                 "archive_download_url": "https://api.github.test/artifact/0/zip"},
+                {"name": "store-gate", "expired": False, "workflow_run": {"head_sha": SHA},
+                 "archive_download_url": "https://api.github.test/artifact/1/zip"},
+            ]
+            return _Resp(200, {"total_count": len(arts), "artifacts": arts})
+        if url.endswith("/artifact/0/zip"):
+            raise AssertionError("read another sha's artifact")
+        if url.endswith("/artifact/1/zip"):
+            return _Resp(200, _store_gate_zip(list(self.failing or [])))
         if "/statuses" in url:
             return _Resp(
                 200,
@@ -217,6 +247,7 @@ def test_itemised_status_becomes_lines_and_a_product_score():
         opener=StatusOpener(
             state="failure",
             description=f"acceptance.py in Docker {ACCEPTANCE_REQUIRED - 1}/{ACCEPTANCE_REQUIRED} FAIL:authorship_floor",
+            failing=['authorship_floor'],
         ),
     )
     assert snap.harness_ran is True
@@ -243,16 +274,31 @@ def test_a_red_status_with_no_score_means_the_harness_never_ran():
     assert report_from_snapshot(snap).product_ok is False
 
 
-def test_truncated_or_unknown_fail_tokens_are_dropped_not_guessed():
+def test_unknown_check_names_in_the_artifact_are_dropped_not_guessed():
     snap = fetch_store_gate_status(
         TARGET,
         env=ENV,
         opener=StatusOpener(
             state="failure",
-            description=f"acceptance.py in Docker 19/{ACCEPTANCE_REQUIRED} FAIL:cross_tenant_404,authorship_fl",
+            description=f"acceptance.py in Docker 19/{ACCEPTANCE_REQUIRED}",
+            failing=["cross_tenant_404", "zorblat_check"],
         ),
     )
     assert [l.name for l in snap.lines if l.status == "FAIL"] == ["cross_tenant_404"]
+
+
+def test_the_description_text_decides_nothing():
+    """FAIL names written into the display description itemise nothing: the
+    typed artifact is the only source."""
+    snap = fetch_store_gate_status(
+        TARGET,
+        env=ENV,
+        opener=StatusOpener(
+            state="failure",
+            description=f"acceptance.py in Docker 19/{ACCEPTANCE_REQUIRED} FAIL:cross_tenant_404",
+        ),
+    )
+    assert snap.lines == []
 
 
 # -- a Factory-owned failure never fails the product ------------------------
@@ -267,6 +313,7 @@ def test_factory_owned_failure_routes_to_the_factory_lane_not_the_product(tmp_pa
         opener=StatusOpener(
             state="failure",
             description=f"acceptance.py in Docker {ACCEPTANCE_REQUIRED - 1}/{ACCEPTANCE_REQUIRED} FAIL:authorship_floor",
+            failing=['authorship_floor'],
         ),
     )
     assert result.ok is False
@@ -319,6 +366,7 @@ def test_product_owned_failure_still_routes_to_the_product(tmp_path):
         opener=StatusOpener(
             state="failure",
             description=f"acceptance.py in Docker {ACCEPTANCE_REQUIRED - 2}/{ACCEPTANCE_REQUIRED} FAIL:cross_tenant_404,authorship_floor",
+            failing=['cross_tenant_404', 'authorship_floor'],
         ),
     )
     assert result.honesty == N3_STORE_GATE_FAILED

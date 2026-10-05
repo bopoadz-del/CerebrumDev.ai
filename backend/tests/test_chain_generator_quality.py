@@ -148,7 +148,7 @@ class TestStreamResponseQuality:
         ):
             response = client.post(
                 f"/v1/sessions/{session.session_id}/chat",
-                json={"message": "Review this contract."},
+                json={"message": "Review this contract.", "action": "chain"},
             )
 
         assert response.status_code == 200

@@ -28,7 +28,7 @@ import hashlib
 import hmac
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 
 from fastapi import Header, HTTPException, Request
 
@@ -111,16 +111,22 @@ def _header_token(authorization: Optional[str], x_api_key: Optional[str]) -> str
     return ""
 
 
-def _provided_token(
+def _provided_credential(
     authorization: Optional[str],
     x_api_key: Optional[str],
     request: Optional[Request] = None,
-) -> str:
-    """Header credentials win. Cookie is only a ``cdt_`` login token."""
+) -> Tuple[str, bool]:
+    """``(token, from_cookie)``. Header credentials win.
+
+    The cookie only ever holds what :func:`set_login_cookie` stored -- a login
+    session the store minted -- so a cookie credential resolves as a login
+    session and nothing else: never the master key, never an API key. Where it
+    came from is the type; its spelling is never read.
+    """
     header = _header_token(authorization, x_api_key)
     if header:
-        return header
-    return cookie_login_token(request)
+        return header, False
+    return cookie_login_token(request), True
 
 
 def _verification_required() -> bool:
@@ -132,10 +138,12 @@ def _verification_required() -> bool:
     }
 
 
-def _resolve_user_principal(token: str) -> Optional[Principal]:
+def _resolve_user_principal(token: str, *, login_only: bool = False) -> Optional[Principal]:
+    """The account a credential belongs to, by lookup in the store's typed
+    tables (API keys, then login sessions) -- the store knows what it minted."""
     from . import accounts_store
 
-    account = accounts_store.account_for_api_key(token)
+    account = None if login_only else accounts_store.account_for_api_key(token)
     if account is None:
         account = accounts_store.account_for_login_token(token)
     if account is None:
@@ -199,20 +207,22 @@ def require_api_key(
     Returns the resolved :class:`Principal`; routers that need identity
     depend on this same function (FastAPI dedupes it per request).
     """
-    provided = _provided_token(authorization, x_api_key, request)
+    provided, from_cookie = _provided_credential(authorization, x_api_key, request)
     master = _master_key()
 
     if master:
-        if provided and _tokens_match(provided, master):
+        if provided and not from_cookie and _tokens_match(provided, master):
             return Principal(kind="admin")
-        principal = _resolve_user_principal(provided) if provided else None
+        principal = (
+            _resolve_user_principal(provided, login_only=from_cookie) if provided else None
+        )
         if principal is not None:
             return _enforce_verification(principal)
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
     # No master key configured. Account credentials still work.
     if provided:
-        principal = _resolve_user_principal(provided)
+        principal = _resolve_user_principal(provided, login_only=from_cookie)
         if principal is not None:
             return _enforce_verification(principal)
 
@@ -237,10 +247,10 @@ def require_account_allow_unverified(
     keep working in that state so the user can finish the flow instead of
     seeing a dead Factory.
     """
-    provided = _provided_token(authorization, x_api_key, request)
+    provided, from_cookie = _provided_credential(authorization, x_api_key, request)
     if not provided:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
-    principal = _resolve_user_principal(provided)
+    principal = _resolve_user_principal(provided, login_only=from_cookie)
     if principal is None or principal.kind != "user" or not principal.account_id:
         raise HTTPException(
             status_code=401,

@@ -20,13 +20,14 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 from app.factory.build.block_inputs import (
     STORE_NOTIFICATION_CHANNELS,
     align_spec_to_handler_fields,
     align_spec_to_handler_source,
     ensure_workflow_result,
     handler_field_contracts,
-    handler_required_fields,
     notification_channel,
     prepare_block_input,
     render_block_inputs_module,
@@ -326,10 +327,13 @@ def test_database_synthesizes_table_from_domain_record():
     domain = {"reference": "dash-1", "status": "open", "quantity": 2}
     raw = _refuse_like_live("database", domain)
     assert raw["error"] == _LIVE_SQL
-    out = prepare_block_input("database", domain)
-    assert out["table"] == "records"
+    # The table is the declared schema's (the capability entity) ...
+    out = prepare_block_input("database", domain, entity="zorblat_ticket")
+    assert out["table"] == "zorblat_ticket"
     assert out["values"]["reference"] == "dash-1"
     assert _refuse_like_live("database", out)["status"] == "ok"
+    # ... and with no entity and no named table, none is invented.
+    assert "table" not in prepare_block_input("database", domain)
 
 
 def test_database_uses_capability_entity_not_records():
@@ -545,15 +549,18 @@ def test_database_records_table_retargets_to_entity():
     assert out["table"] != "records"
 
 
-def test_database_sql_from_records_retargets_to_entity():
+def test_database_sql_a_handler_passes_is_never_rewritten_from_its_text():
+    """The text-rewrite of 'FROM records' is gone: the emitted store builds
+    SQLAlchemy Core statements from the declared tables, and a handler's own
+    SQL is its own -- judged by the harness, never patched by a regex."""
+    sql = "SELECT * FROM zorblat_legacy"
     out = prepare_block_input(
         "database",
-        {"sql": "SELECT * FROM records", "pet_name": "Nala"},
+        {"sql": sql, "pet_name": "Nala"},
         entity="pet_record",
     )
-    assert "pet_record" in out["sql"]
-    assert "FROM records" not in out["sql"]
-    assert out["table"] == "pet_record"
+    assert out["sql"] == sql
+    assert "table" not in out
 
 
 def test_database_keeps_caller_sql():
@@ -582,8 +589,11 @@ def test_emitted_module_matches_factory_for_live_contract_blocks(tmp_path, monke
     spec.loader.exec_module(mod)
     domain = {"reference": "V1", "status": "open", "quantity": 1}
     for bid in ("event_bus", "document_engine", "database", "team"):
-        factory = prepare_block_input(bid, domain, product_name="VetCare Hub")
-        emitted = mod.prepare_block_input(bid, domain, product_name="VetCare Hub")
+        # The handler wrapper always supplies the capability's entity; the
+        # database table is that declared table, never an invented default.
+        extra = {"entity": "pet_record"} if bid == "database" else {}
+        factory = prepare_block_input(bid, domain, product_name="VetCare Hub", **extra)
+        emitted = mod.prepare_block_input(bid, domain, product_name="VetCare Hub", **extra)
         assert _refuse_like_live(bid, factory)["status"] == "ok", (bid, factory)
         assert _refuse_like_live(bid, emitted)["status"] == "ok", (bid, emitted)
         if bid == "event_bus":
@@ -594,7 +604,7 @@ def test_emitted_module_matches_factory_for_live_contract_blocks(tmp_path, monke
             assert event_bus_step_is_store_ready(factory)
             assert event_bus_step_is_store_ready(emitted)
         if bid == "database":
-            assert factory["table"] == emitted["table"] == "records"
+            assert factory["table"] == emitted["table"] == "pet_record"
         if bid == "document_engine":
             assert Path(factory["pdf_path"]).is_file()
             assert Path(emitted["pdf_path"]).is_file()
@@ -663,33 +673,61 @@ def test_emitted_module_matches_factory_for_live_contract_blocks(tmp_path, monke
 # -- property_reference_code / sample ↔ handler alignment -----------------
 
 
-def test_handler_required_fields_are_mined_from_error_strings():
+def test_a_handler_check_never_makes_a_field_required():
+    """Owner ruling 2026-10-05: required fields come ONLY from the declared
+    schema. ``"k" not in payload`` in a handler declares nothing."""
     body = (
         "    if 'property_reference_code' not in payload:\n"
         "        return {'ok': False, 'error': 'Missing required field: property_reference_code'}\n"
     )
-    assert "property_reference_code" in handler_required_fields(body)
+    assert handler_field_contracts(body) == {}
+    spec = {"entity": "unit", "fields": [{"name": "unit_reference", "type": "str", "required": True}]}
+    aligned, changed = align_spec_to_handler_source(spec, body)
+    assert changed == []
+    assert [f["name"] for f in aligned["fields"]] == ["unit_reference"]
 
 
-def test_align_spec_adds_handler_required_field_for_sample_payload():
-    spec = {
-        "entity": "unit",
+def test_an_invented_handler_s_parameters_and_key_reads_are_never_required():
+    """Owner ruling 2026-10-05, with a handler no product has: it takes
+    parameters and reads keys the schema does not declare. Live, the generated
+    block wrapper's ``kw.get("params")`` made every route demand ``params``.
+    Only the schema's declared required fields are required."""
+    handler = (
+        "def zorblat_handle(payload, params=None, *a, **kw):\n"
+        "    quux = kw.get('quux_option')\n"
+        "    if quux is None and len(a) > 1:\n"
+        "        quux = a[1]\n"
+        "    if params is None:\n"
+        "        params = payload.get('frob_params')\n"
+        "    if 'wibble_ref' not in payload or not payload.get('wobble_id'):\n"
+        "        return {'ok': False, 'error': 'Missing required field: wibble_ref'}\n"
+        "    for name in ('flim_a', 'flim_b'):\n"
+        "        if name not in payload:\n"
+        "            return {'ok': False}\n"
+        "    return {'ok': True}\n"
+    )
+    declared = {
+        "entity": "zorblat",
         "fields": [
-            {"name": "unit_reference", "type": "str", "required": True},
-            {"name": "status", "type": "str", "required": True,
-             "allowed_values": ["vacant", "occupied"]},
+            {"name": "reference", "type": "str", "required": True},
+            {"name": "zorb_note", "type": "str", "required": False},
         ],
     }
-    aligned, added = align_spec_to_handler_fields(spec, ["property_reference_code"])
-    assert added == ["property_reference_code"]
-    payload = _sample_payload(aligned)
-    assert "property_reference_code" in payload
-    assert isinstance(payload["property_reference_code"], str)
-    assert payload["status"] == "vacant"
+    aligned, changed = align_spec_to_handler_source(declared, handler)
+    assert changed == []
+    assert aligned["fields"] == declared["fields"]
+    required = [f["name"] for f in aligned["fields"] if f.get("required")]
+    assert required == ["reference"]
+    guard = _constraint_guard(aligned)
+    for undeclared in ("params", "quux_option", "frob_params", "wibble_ref",
+                       "wobble_id", "flim_a", "flim_b", "kw", "a"):
+        assert repr(undeclared) not in guard, undeclared
 
 
-def test_handler_required_fields_mine_plural_lists_and_is_missing():
-    """Live VetConnect: handlers named several fields in one error string."""
+def test_rosters_and_is_missing_checks_add_no_field():
+    """Live VetConnect named several fields in one roster and message. Under
+    the owner's rule none of them is declared by the handler: the schema
+    declares fields. No junk name (``and``, ``steps``) appears either."""
     body = (
         "    needed = ['pet_name', 'owner_name', 'appointment_date', "
         "'veterinarian_name']\n"
@@ -701,42 +739,34 @@ def test_handler_required_fields_mine_plural_lists_and_is_missing():
         "        return {'ok': False, 'error': 'owner_id is missing and "
         "must be a non-empty string'}\n"
     )
-    mined = handler_required_fields(body)
-    for name in (
-        "pet_name",
-        "owner_name",
-        "appointment_date",
-        "veterinarian_name",
-        "owner_id",
-    ):
-        assert name in mined, (name, mined)
-    assert "and" not in mined
-    assert "steps" not in mined
-    assert "team_id" not in mined
+    contracts = handler_field_contracts(body)
+    for junk in ("and", "steps", "team_id"):
+        assert junk not in contracts
+    aligned, changed = align_spec_to_handler_source({"fields": []}, body)
+    assert aligned["fields"] == [] and changed == []
 
 
-def test_handler_required_fields_keeps_domain_status_and_channel():
+def test_handler_contracts_keep_domain_status_and_channel():
     """``status`` / ``channel`` are domain columns on new-domain pilots.
 
-    The envelope skip list used to drop them, so veterinarian availability
-    ``status`` and reminder ``channel`` never reached the sample payload.
+    The envelope skip list used to drop them, so reminder ``channel`` never
+    reached the sample payload. The vocabulary the code checks is mined; the
+    roster loop makes nothing required.
     """
     body = (
-        "        return {'ok': False, 'error': 'Missing required fields: "
-        "service_date, service_type, capacity, status'}\n"
-        "        return {'ok': False, 'error': 'channel is invalid'}\n"
+        "        for name in ('service_date', 'service_type', 'capacity', 'status'):\n"
+        "            if name not in payload:\n"
+        "                return {'ok': False, 'error': 'Missing required fields'}\n"
         "        if payload.get('channel') not in ('email', 'sms', 'push'):\n"
         "            return {'ok': False, 'error': 'channel is invalid'}\n"
     )
-    mined = handler_required_fields(body)
-    assert "status" in mined
     contracts = handler_field_contracts(body)
-    assert "channel" in contracts
     assert contracts["channel"]["allowed_values"] == ["email", "sms", "push"]
-    assert "ok" not in mined
-    assert "error" not in mined
+    assert "status" not in contracts
     assert "ok" not in contracts
+    assert "error" not in contracts
     assert "steps" not in contracts
+    assert all("required" not in c for c in contracts.values())
 
 
 def test_handler_field_contracts_mine_vetconnect_enums_types_bounds():
@@ -786,7 +816,7 @@ def test_handler_field_contracts_mine_vetconnect_enums_types_bounds():
     assert contracts["is_active"]["type"] == "bool"
     assert contracts["login_count"]["type"] == "int"
     assert contracts["login_count"]["min"] == 0
-    assert contracts["clinic_id"]["required"] is True
+    assert all("required" not in c for c in contracts.values())
     assert "and" not in contracts
     assert "or" not in contracts
     assert "class" not in contracts
@@ -796,11 +826,13 @@ def test_handler_field_contracts_mine_vetconnect_enums_types_bounds():
         "vaccine",
         "follow_up",
     ]
-    assert "message_template" in contracts
+    assert "message_template" not in contracts  # a presence check declares nothing
 
 
 def test_align_spec_merges_vocab_and_types_onto_bare_str_fields():
-    """Existing spec fields must pick up handler enums — not stay bare str."""
+    """Declared spec fields pick up handler enums -- not stay bare str. An
+    undeclared contract (clinic_id) adds no field, and required stays the
+    schema's."""
     spec = {
         "entity": "dashboard",
         "fields": [
@@ -812,7 +844,6 @@ def test_align_spec_merges_vocab_and_types_onto_bare_str_fields():
     contracts = {
         "role": {
             "name": "role",
-            "required": True,
             "type": "str",
             "allowed_values": [
                 "veterinarian",
@@ -822,26 +853,20 @@ def test_align_spec_merges_vocab_and_types_onto_bare_str_fields():
                 "pet_owner",
             ],
         },
-        "is_active": {"name": "is_active", "required": True, "type": "bool"},
-        "login_count": {
-            "name": "login_count",
-            "required": True,
-            "type": "int",
-            "min": 0,
-        },
-        "clinic_id": {"name": "clinic_id", "required": True, "type": "str"},
+        "is_active": {"name": "is_active", "type": "bool"},
+        "login_count": {"name": "login_count", "type": "int", "min": 0},
+        "clinic_id": {"name": "clinic_id", "type": "str"},
     }
-    aligned, changed = align_spec_to_handler_fields(
-        spec, ["clinic_id"], contracts=contracts
-    )
-    assert "clinic_id" in changed
+    aligned, changed = align_spec_to_handler_fields(spec, contracts)
+    assert "clinic_id" not in changed
     assert "role" in changed
     by_name = {f["name"]: f for f in aligned["fields"]}
+    assert "clinic_id" not in by_name
+    assert by_name["login_count"]["required"] is False
     payload = _sample_payload(aligned)
     assert payload["role"] == "veterinarian"
     assert payload["is_active"] is True
     assert isinstance(payload["login_count"], int) and payload["login_count"] >= 0
-    assert payload["clinic_id"]
     assert by_name["login_count"]["type"] == "int"
     assert by_name["is_active"]["type"] == "bool"
 
@@ -909,15 +934,23 @@ def test_align_spec_to_handler_source_covers_vetconnect_caps():
             "    return {'ok': True}\n"
         ),
     }
-    thin = {
-        "entity": "record",
-        "fields": [
-            {"name": "reference", "type": "str", "required": True},
-        ],
+    # The SCHEMA declares the fields (owner ruling 2026-10-05); the handler
+    # only enriches their type / vocabulary / bounds.
+    declared_names = {
+        "appointment_scheduling": ["pet_name", "owner_name", "appointment_date", "veterinarian_name"],
+        "veterinarian_availability_management": ["service_date", "service_type", "capacity", "status"],
+        "pet_records": ["owner_id"],
+        "automated_reminders": ["pet_id", "reminder_type", "channel", "message_template"],
+        "secure_multi_user_dashboard": ["clinic_id", "role", "access_level", "is_active", "login_count"],
     }
     for cid, source in handlers.items():
-        aligned, changed = align_spec_to_handler_source(thin, source)
-        assert changed, cid
+        declared = {
+            "entity": "record",
+            "fields": [{"name": "reference", "type": "str", "required": True}]
+            + [{"name": n, "type": "str", "required": True} for n in declared_names[cid]],
+        }
+        aligned, _changed = align_spec_to_handler_source(declared, source)
+        assert [f["name"] for f in aligned["fields"]] == [f["name"] for f in declared["fields"]]
         payload = _sample_payload(aligned)
         ns: dict = {"payload": None}
 
@@ -936,7 +969,8 @@ def test_align_spec_to_handler_source_covers_vetconnect_caps():
 
 
 def test_is_missing_and_must_be_does_not_mine_english_and():
-    """Live sess_e04e9cd: ``and: str = ""`` came from this exact phrase."""
+    """Live sess_e04e9cd: ``and: str = ""`` came from this exact phrase. The
+    handler's checks add no field at all; the declared ones render cleanly."""
     body = (
         "    if not payload.get('clinic_id'):\n"
         "        return {'ok': False, 'error': 'clinic_id is missing and "
@@ -945,21 +979,13 @@ def test_is_missing_and_must_be_does_not_mine_english_and():
         "        return {'ok': False, 'error': 'owner_id is missing and "
         "must be a non-empty string'}\n"
     )
-    mined = handler_required_fields(body)
-    contracts = handler_field_contracts(body)
-    assert "clinic_id" in mined
-    assert "owner_id" in mined
-    assert "and" not in mined
-    assert "and" not in contracts
+    assert "and" not in handler_field_contracts(body)
     aligned, changed = align_spec_to_handler_source(
         {"entity": "record", "fields": [{"name": "reference", "type": "str"}]},
         body,
     )
-    names = [f["name"] for f in aligned["fields"]]
-    assert "clinic_id" in names
-    assert "owner_id" in names
-    assert "and" not in names
-    assert "and" not in changed
+    assert [f["name"] for f in aligned["fields"]] == ["reference"]
+    assert changed == []
     src = _render_models({"secure_multi_user_dashboard": aligned})
     assert "    and:" not in src
     exec(compile(src, "<models>", "exec"), {})
@@ -1351,9 +1377,15 @@ def test_tester_late_aligns_vetconnect_handlers_into_accept_payload(tmp_path):
             "model_specs": {
                 "secure_multi_user_dashboard": {
                     "entity": "dashboard",
+                    # The schema declares the fields (owner ruling
+                    # 2026-10-05); late alignment enriches their bare
+                    # types / vocabularies from the on-disk handler.
                     "fields": [
                         {"name": "role", "type": "str", "required": True},
                         {"name": "is_active", "type": "str", "required": True},
+                        {"name": "access_level", "type": "str", "required": True},
+                        {"name": "clinic_id", "type": "str", "required": True},
+                        {"name": "login_count", "type": "str", "required": True},
                     ],
                 }
             },
@@ -1430,86 +1462,46 @@ def test_field_ops_role_runner_emits_block_inputs_and_pilot_accepts(
 # sent it, and every rework round handed the writer the identical 422 to "fix".
 
 
-def test_a_roster_loop_raising_an_f_string_is_mined():
-    body = (
+@pytest.mark.parametrize(
+    "body",
+    [
         'REQUIRED_KEYS = ["reference", "site_id"]\n'
         "def handle(payload):\n"
         "    for field in REQUIRED_KEYS:\n"
         "        if field not in payload:\n"
-        '            raise HTTPException(422, f"missing required field: {field}")\n'
-    )
-
-    assert handler_required_fields(body) == ["reference", "site_id"]
-
-
-def test_a_roster_differenced_against_the_payload_is_mined():
-    body = (
+        '            raise HTTPException(422, f"missing required field: {field}")\n',
         'MANDATORY = ("reference", "valuation_date")\n'
         "def handle(payload):\n"
         "    missing = set(MANDATORY) - set(payload)\n"
         "    if missing:\n"
-        '        raise HTTPException(422, "missing required field: " + sorted(missing)[0])\n'
-    )
-
-    assert handler_required_fields(body) == ["reference", "valuation_date"]
-
-
-def test_a_roster_read_in_a_comprehension_is_mined():
-    body = (
+        '        raise HTTPException(422, "missing required field: " + sorted(missing)[0])\n',
         '_NEEDED_COLUMNS = ["reference"]\n'
         "def handle(payload):\n"
         "    gaps = [k for k in _NEEDED_COLUMNS if k not in payload]\n"
-        "    if gaps:\n        raise ValueError(gaps)\n"
-    )
-
-    assert handler_required_fields(body) == ["reference"]
-
-
-def test_a_vocabulary_list_is_not_a_roster():
-    """``payload.get("status") not in ALLOWED`` holds VALUES, not field names.
-
-    Mining it would declare "open" and "closed" required columns and the
-    sample payload would carry two fields the entity does not have.
-    """
-    body = (
+        "    if gaps:\n        raise ValueError(gaps)\n",
         'ALLOWED_STATUSES = ["open", "closed"]\n'
         "def handle(payload):\n"
         '    if payload.get("status") not in ALLOWED_STATUSES:\n'
-        '        raise HTTPException(422, "bad status")\n'
-    )
-
-    assert handler_required_fields(body) == []
-
-
-def test_a_loop_that_never_consults_the_payload_is_not_a_roster():
-    body = (
+        '        raise HTTPException(422, "bad status")\n',
         'HEADINGS = ["Ref", "Date"]\n'
-        "def render():\n    for h in HEADINGS:\n        print(h)\n"
-    )
-
-    assert handler_required_fields(body) == []
-
-
-def test_an_interpolated_message_does_not_invent_a_field():
-    """The miner must not fabricate the thing it exists to discover.
-
-    Stripping punctuation off the captured text turned ``{field}`` into a
-    field called ``field`` and ``sorted(missing)[0]`` into ``sortedmissing0``;
-    both reached model_specs, so _sample_payload sent a junk column.
-    """
-    assert handler_required_fields('raise ValueError(f"Missing required field: {field}")') == []
-    assert (
-        handler_required_fields(
-            'raise ValueError("Missing required fields: " + ", ".join(sorted(missing)))'
-        )
-        == []
-    )
-
-
-def test_a_plain_unquoted_listing_still_mines():
-    body = 'raise ValueError("Missing required fields: pet_name, owner_name")'
-
-    assert handler_required_fields(body) == ["owner_name", "pet_name"]
+        "def render():\n    for h in HEADINGS:\n        print(h)\n",
+        'raise ValueError(f"Missing required field: {field}")',
+        'raise ValueError("Missing required fields: " + ", ".join(sorted(missing)))',
+        'raise ValueError("Missing required fields: zorblat_name, quux_name")',
+        "def handle(payload):\n"
+        "    for name in ('zorblat_name', 'quux_name'):\n"
+        "        if name not in payload:\n"
+        "            raise ValueError('Missing required fields: zorblat_name, quux_name')\n",
+    ],
+)
+def test_no_roster_message_or_check_in_code_adds_a_field(body):
+    """Live build: two capabilities answered 422 "missing required field:
+    reference" that model_specs never declared. The fix is the schema
+    declaring the field -- never a roster, a set difference, a comprehension
+    or a message in the handler (owner ruling 2026-10-05). Vocabulary
+    values and interpolations never become fields either."""
+    aligned, changed = align_spec_to_handler_source({"fields": []}, body)
+    assert aligned["fields"] == [] and changed == []
 
 
 def test_a_format_placeholder_in_a_refusal_is_never_a_field():

@@ -313,10 +313,14 @@ def test_the_probe_payload_matches_the_writer_probe_s():
             "duration_minutes",
             "channel",
         ]
+        # Every non-generic sample comes from a DECLARATION (vocabulary,
+        # bound, format) -- never from the field's name.
         CONSTRAINTS = {
             "status": {"allowed_values": ["draft", "live"]},
             "count": {"min": 3},
             "scheduled_time": {"format": "time"},
+            "contact_email": {"format": "email"},
+            "channel": {"allowed_values": ["email", "sms"]},
         }
         __annotations__ = {
             "name": "str",
@@ -334,8 +338,11 @@ def test_the_probe_payload_matches_the_writer_probe_s():
     assert writer_payload["scheduled_time"] == "10:00:00"
     assert writer_payload["scheduled_time"] != "sample"
     assert writer_payload["duration_minutes"] == 1
-    assert writer_payload["channel"] != "sample"
-    assert writer_payload["channel"] == "email"
+    assert writer_payload["channel"] == "email"  # allowed_values[0]
+    assert writer_payload["contact_email"] == "sample@example.com"  # format email
+    assert writer_payload["status"] == "draft"  # allowed_values[0]
+    # An undeclared field gets its type's neutral value, whatever it is called.
+    assert writer_payload["name"] == "sample"
 
 
 def test_a_returned_record_counts_only_when_it_carries_a_supplied_value():

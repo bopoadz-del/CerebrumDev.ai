@@ -80,8 +80,12 @@ def test_cloner_emission_contains_sqlite_init_contract():
 
 
 def test_cloner_emission_rewrites_result_key_and_store_host_di():
-    """Live sess_f1fe691: RuntimeError: 'result' + DatabaseBlock HAL miss."""
+    """Live sess_f1fe691: RuntimeError: 'result' + DatabaseBlock HAL miss.
+
+    The fixture is a whole function (valid Python): the result-key rewrite
+    reads the module's AST and leaves source it cannot parse untouched."""
     src = (
+        "def _run_block(block_cls, envelope):\n"
         "        try:\n"
         "            from app.dependencies import _create_block_instance\n"
         "            inst = _create_block_instance(block_cls)\n"
@@ -98,16 +102,24 @@ def test_cloner_emission_rewrites_result_key_and_store_host_di():
 
 
 def test_cloner_emission_contains_notification_mcp_contract():
+    # The transform reads the syntax tree, so the fixture is a whole function
+    # (a bare ``try:`` fragment is not Python); the rewritten span is the
+    # same Store fragment as before.
     src = (
+        "def notify(block_name, payload):\n"
+        "    if True:\n"
         "        try:\n"
         "            from vendor.cerebrum.blocks import BLOCK_REGISTRY\n"
         "            from app.dependencies import _create_block_instance\n"
         "            block = _create_block_instance(BLOCK_REGISTRY[block_name])\n"
+        "        except Exception:\n"
+        "            return {}\n"
     )
     out = emit_notification_mcp(src)
     assert MCP_OFFLINE_MARKER in out
     assert "offline" in out
-    assert emit_runtime_module("event_bus", src) == out
+    # Any module carrying the construct gets it -- the name decides nothing.
+    assert emit_runtime_module("zorblat_bus", src) == out
 
 
 def test_cloner_emission_contains_database_insert_and_query_contracts():
@@ -139,10 +151,11 @@ def test_document_engine_parse_is_store_unwired_not_a_real_pdf_lib():
     src = "def parse(self, data):\n    import pypdf\n    return pypdf.PdfReader(data)\n"
     out = emit_document_engine_parse(src)
     assert DOC_PARSE_UNWIRED_MARKER in out
-    assert "pypdf" in out
-    assert "pdfplumber" in out
+    # Exactly the module this code reads PdfReader from is stubbed -- not a
+    # fixed list of PDF libraries.
+    assert "for _pdf_name in ('pypdf',):" in out
     assert "Store-unwired document parse" in out
-    assert emit_runtime_module("document_engine", src) == out
+    assert emit_runtime_module("zorblat_docs", src) == out
     assert emit_document_engine_parse(out) == out
     assert needs_document_engine_parsers_package(
         "from vendor.cerebrum.blocks.document_engine.parsers import Parser\n"

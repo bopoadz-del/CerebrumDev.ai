@@ -243,7 +243,7 @@ def test_every_app_module_the_emitted_suite_imports_has_an_owner():
     )
 
 
-STAMP = '"""Written by the factory WRITER role (codewhale exec)"""\n'
+STAMP = '"""Written by the factory WRITER role (codewhale exec)"""\nAUTHORED_BY = "codewhale exec"\n'
 
 
 def _handler(root: Path, cap: str) -> None:

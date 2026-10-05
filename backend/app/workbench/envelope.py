@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional, Set
 
 import yaml
@@ -161,15 +161,15 @@ def path_allowed(workspace_root: Path, target: Path, *, write: bool) -> bool:
         resolved.relative_to(root)
     except (OSError, ValueError):
         return False
-    rel = str(resolved.relative_to(root)).replace("\\", "/")
+    rel = PurePosixPath(resolved.relative_to(root).as_posix())
     if write:
-        for prefix in DEFAULT_MUTABLE_PATHS:
-            p = prefix.rstrip("/")
-            if rel == p or rel.startswith(p + "/") or (prefix.endswith("/") and rel.startswith(prefix)):
-                return True
-            if not prefix.endswith("/") and rel == prefix:
-                return True
-        return False
+        # The envelope's declared mutable surfaces, compared as path
+        # components: a target is writable when it IS a declared path or lies
+        # inside one -- never a text-prefix test on its spelling.
+        return any(
+            rel == surface or surface in rel.parents
+            for surface in (PurePosixPath(p) for p in DEFAULT_MUTABLE_PATHS)
+        )
     # Reads: entire workspace is readable (DNA + request + baseline + mutable).
     return True
 

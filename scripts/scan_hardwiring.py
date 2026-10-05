@@ -32,13 +32,17 @@ identifier in the path is a fixed point):
                 on a mapping (``for k in KEYS: if k in d: d[k]``) are contract
                 checks, not word lists. Members loaded from data at run time
                 are not literals and are not this form.
-  probe_id      OPT-IN (``--form probe_id``): a probe / test-case id used as
-                an exact string literal (``"R18"``, ``"E1"``) -- the shape
-                of a photographed probe set. Off by default here because the
-                Factory's letter+digit literals are its OWN finding and stage
-                codes (``"closes": "F6"``, ``item.code in {"F1", "F24"}``):
-                keys in its ledger, contracts not answers. A repo whose probe
-                sets are named that way (the Fork's E1/A3/R18) turns it on.
+  probe_id      a probe / test-case id used as an exact string literal
+                (``"R18"``, ``"E1"``) -- the shape of a photographed probe set.
+                Ids live in app/factory/build/probe_set.json; code asks by
+                shape/class/name, and an ordinal scale is an enum referenced
+                by member, never a spelled id.
+  phrase_match  a single string literal used as a decision input against
+                text (``"x" in text``, ``text.startswith("x")``), or a
+                compiled module-scope regex whose pattern holds words, applied
+                to text. Deciding by a phrase is classification by vocabulary
+                exactly like word_list; structure (AST, typed fields, magic
+                bytes, enum members) is the replacement.
 
 What this cannot see: a per-case branch keyed on a field NAME (``if name ==
 "status"``) or an answer table (``{"database": "query"}``) has no lexical
@@ -69,7 +73,27 @@ from pathlib import Path
 from typing import Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_ROOTS = ("backend/app/factory",)
+#: Every backend/app package that handles user or agent text or decides
+#: behaviour, scanned like the Factory itself: the HTTP routers (the user's
+#: chat), all of core (auth, grounding, LLM routing, deploy, RAG), and the
+#: kernel / compiler / DNA / workbench packages. A root may be a directory or
+#: a single file. ``change_requests`` / ``resident_engineer`` name autonomy
+#: levels by enum member (``AutonomyLevel.L3``) and record keys by typed
+#: field (``ItemField.audit_trail``), never by spelled literal.
+DEFAULT_ROOTS = (
+    "backend/app/factory",
+    "backend/app/routers",
+    "backend/app/core",
+    "backend/app/blocks",
+    "backend/app/cerebrum_product_kernel",
+    "backend/app/domain_compiler",
+    "backend/app/models",
+    "backend/app/product_dna",
+    "backend/app/workbench",
+    "backend/app/change_requests",
+    "backend/app/resident_engineer",
+    "backend/app/main.py",
+)
 BASELINE = ROOT / "scripts" / "hardwiring_baseline.json"
 
 #: form -> pattern over a single token's text (NAME or STRING, never COMMENT).
@@ -100,6 +124,7 @@ DEFAULT_FORMS = (
     "product_literal",
     "word_list",
     "probe_id",
+    "phrase_match",
 )
 #: Forms decided by a loaded set rather than a pattern.
 DATA_FORMS = ("product_literal",)
@@ -117,11 +142,8 @@ def load_known_literals() -> FrozenSet[str]:
     spec.loader.exec_module(mod)
     known = mod.load()
     return frozenset(k.strip().lower() for k in known if k.strip())
-#: Measured, not yet enforced. phrase_match = a single string literal used as
-#: a decision input against text (scan_hardwiring.phrase_matches). It becomes a
-#: DEFAULT (enforced) form at 0 once the burn-down lands -- never by admitting
-#: the hits that stand today into a baseline.
-OPT_IN_FORMS: tuple = ("phrase_match",)
+
+
 #: Forms computed by a function over the syntax tree rather than a token
 #: pattern (selectable with --form like any other).
 AST_FORMS = ("word_list", "phrase_match")
@@ -323,6 +345,98 @@ def _is_phrase(value: object) -> bool:
     )
 
 
+#: Regex structure that carries letters without being words: a character
+#: class ([A-Za-z]) or an escape (\b, \s, \d).
+_REGEX_STRUCTURE = re.compile(r"\[(?:\\.|[^\]])*\]|\\.")
+_COMPILED_TEXT_METHODS = ("search", "match", "fullmatch", "findall", "finditer", "split", "sub", "subn")
+
+
+def _regex_is_phrase(pattern: object) -> bool:
+    """A compiled pattern is a phrase when a word survives once its classes
+    and escapes are removed: ``FROM\\s+records`` is; ``[A-Z]{2}`` is not."""
+    if not isinstance(pattern, str):
+        return False
+    return bool(_PHRASE_WORD.search(_REGEX_STRUCTURE.sub(" ", pattern)))
+
+
+def _module_compiled_patterns(tree: ast.AST) -> Dict[str, str]:
+    """name -> literal for module-scope ``NAME = re.compile("<literal>", ...)``."""
+    out: Dict[str, str] = {}
+    for node in getattr(tree, "body", []):
+        value = node.value if isinstance(node, (ast.Assign, ast.AnnAssign)) else None
+        if not (isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute)
+                and value.func.attr == "compile" and isinstance(value.func.value, ast.Name)
+                and value.func.value.id == "re" and value.args
+                and isinstance(value.args[0], ast.Constant)
+                and _regex_is_phrase(value.args[0].value)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if isinstance(target, ast.Name):
+                out[target.id] = value.args[0].value
+    return out
+
+
+#: The one data file whose patterns may be applied to text (owner ruling
+#: 2026-10-05): the secret scrubber's redaction formats. A module that loads
+#: it may only SUBSTITUTE with them; a match used to decide anything is a
+#: phrase check like any other.
+SECRET_PATTERNS_FILE = "secret_patterns.json"
+_MATCH_DECISION_METHODS = ("search", "match", "fullmatch", "findall", "finditer")
+
+
+def _loads_secret_patterns(tree: ast.AST) -> bool:
+    """The file's name is used to REACH it: an operand of a path join
+    (``root / "secret_patterns.json"``) or an argument of a call (``open(...)``,
+    ``Path(...)``), directly or through a name bound to it. A module that only
+    binds the name -- this gate defining its rule -- loads nothing."""
+
+    def names_file(n: ast.AST) -> bool:
+        return (isinstance(n, ast.Constant) and isinstance(n.value, str)
+                and n.value.endswith(SECRET_PATTERNS_FILE))
+
+    aliases = {
+        t.id
+        for n in ast.walk(tree) if isinstance(n, ast.Assign) and names_file(n.value)
+        for t in n.targets if isinstance(t, ast.Name)
+    }
+    for node in ast.walk(tree):
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            operands, alias_ok = (node.left, node.right), True
+        elif isinstance(node, ast.Call):
+            # An alias reaches the file through a constructor/opener call
+            # (open(F), Path(F)); a method on another value (s.endswith(F))
+            # only compares with it.
+            operands, alias_ok = node.args, isinstance(node.func, ast.Name)
+        else:
+            continue
+        for n in operands:
+            if names_file(n) or (alias_ok and isinstance(n, ast.Name) and n.id in aliases):
+                return True
+    return False
+
+
+def _match_decisions(tree: ast.AST) -> List[Tuple[int, str]]:
+    """(line, method) of every regex match call whose result sits in a test
+    position -- if/while/elif, a conditional expression, assert, a boolean
+    operator or a comprehension filter."""
+    tests: List[ast.AST] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.If, ast.While, ast.IfExp, ast.Assert)):
+            tests.append(node.test)
+        elif isinstance(node, ast.BoolOp):
+            tests.extend(node.values)
+        elif isinstance(node, ast.comprehension):
+            tests.extend(node.ifs)
+    out: List[Tuple[int, str]] = []
+    for test in tests:
+        for node in ast.walk(test):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in _MATCH_DECISION_METHODS):
+                out.append((node.lineno, f"secret pattern used as a decision: .{node.func.attr}()"))
+    return out
+
+
 def _code_templates(tree: ast.AST) -> List[Tuple[int, str]]:
     """(line offset, source) of every string constant that is itself Python
     code the Factory emits -- a probe, a harness -- so a phrase check hidden
@@ -378,8 +492,18 @@ def phrase_matches(source: str, offset: int = 0) -> List[Tuple[int, str]]:
     def is_text(expr: ast.AST, names: set) -> bool:
         return not isinstance(expr, ast.Constant) and _is_text(expr, names)
 
+    # A phrase compiled once at module scope and applied to text later is the
+    # same decision as re.search("<phrase>", text) -- caught at the use site.
+    compiled = _module_compiled_patterns(tree)
+
     for node in ast.walk(tree):
         names = text_in.get(id(node), set())
+        if (compiled and isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _COMPILED_TEXT_METHODS
+                and isinstance(node.func.value, ast.Name) and node.func.value.id in compiled):
+            haystack_at = 1 if node.func.attr in ("sub", "subn") else 0
+            if len(node.args) > haystack_at and is_text(node.args[haystack_at], names):
+                out.append((node.lineno, compiled[node.func.value.id]))
         if isinstance(node, ast.Compare):
             if (isinstance(node.left, ast.Constant) and _is_phrase(node.left.value)
                     and any(isinstance(o, (ast.In, ast.NotIn)) for o in node.ops)
@@ -405,6 +529,8 @@ def phrase_matches(source: str, offset: int = 0) -> List[Tuple[int, str]]:
                     list(first.elts) if isinstance(first, ast.Tuple) else [])
                 out.extend((node.lineno, lit.value) for lit in lits
                            if isinstance(lit, ast.Constant) and _is_phrase(lit.value))
+    if _loads_secret_patterns(tree):
+        out.extend(_match_decisions(tree))
     hits = [(ln + offset, lit) for ln, lit in out if not _in_spans(ln, spans)]
     for off, src in _code_templates(tree):
         hits.extend(phrase_matches(src, offset + off))
@@ -470,7 +596,8 @@ def scan(
         known = load_known_literals()
     for root in roots:
         base = ROOT / root
-        for path in sorted(base.rglob("*.py")):
+        paths = [base] if base.is_file() else sorted(base.rglob("*.py"))
+        for path in paths:
             if "tests" in path.parts or "__pycache__" in path.parts:
                 continue
             hits = scan_file(path, forms, known)

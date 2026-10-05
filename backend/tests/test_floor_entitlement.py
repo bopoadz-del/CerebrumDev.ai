@@ -98,7 +98,7 @@ def test_expired_trial_existing_session_approve_chat_402(
     _expire_and_enforce(account_id, monkeypatch)
     res = client.post(
         f"/v1/sessions/{session_id}/chat",
-        json={"message": "approve"},
+        json={"message": "", "action": "approve"},
         headers=headers,
     )
     assert res.status_code == 402, res.text

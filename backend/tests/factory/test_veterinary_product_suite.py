@@ -301,11 +301,17 @@ def test_query_adapter_creates_missing_table_instead_of_records_error():
 
 
 def test_document_engine_parse_adapter_stubs_pdf_libs():
-    src = emit_document_engine_parse("def parse(self, data):\n    return data\n")
+    # The stub covers the modules the code reads PdfReader from, decided on
+    # the syntax tree; a module that reads PdfReader from nowhere is untouched
+    # whatever it is called.
+    plain = "def parse(self, data):\n    return data\n"
+    assert emit_document_engine_parse(plain) == plain
+    assert emit_runtime_module("document_engine", plain) == plain
+    reader = "from PyPDF2 import PdfReader\n\ndef parse(self, data):\n    return PdfReader(data)\n"
+    src = emit_document_engine_parse(reader)
     assert DOC_PARSE_UNWIRED_MARKER in src
-    for name in ("pypdf", "PyPDF2", "pdfplumber"):
-        assert name in src
-    assert emit_runtime_module("document_engine", "def parse(self, data):\n    return data\n") == src
+    assert "for _pdf_name in ('PyPDF2',):" in src
+    assert emit_runtime_module("zorblat_docs", reader) == src
 
 
 def test_unrepaired_veterinary_domain_json_still_refused():
@@ -332,14 +338,22 @@ def test_unrepaired_veterinary_domain_json_still_refused():
 
 
 def test_sess_a69c8ce_leftover_records_and_sample_priority():
-    """Platforms card: table=records + priority='sample' on accept-payload."""
+    """Platforms card: a leftover handler table + priority='sample' on
+    accept-payload. The table is the DECLARED entity's (Alembic creates
+    exactly that one), whatever name the handler carried; SQL a handler
+    passes is its own and is never rewritten from its text."""
     leftover = prepare_block_input(
         "database",
-        {"table": "records", "sql": "SELECT * FROM records", "pet_name": "Nala"},
+        {"table": "records", "pet_name": "Nala"},
         entity="pet_record",
     )
     assert leftover["table"] == "pet_record"
-    assert "FROM pet_record" in leftover["sql"]
+    assert leftover["values"] == {"pet_name": "Nala"}
+    own_sql = "SELECT * FROM records"
+    passed = prepare_block_input(
+        "database", {"table": "records", "sql": own_sql}, entity="pet_record"
+    )
+    assert passed["sql"] == own_sql
     queued = prepare_block_input("queue", {"priority": "sample", "id": "id-1"})
     assert queued["priority"] == 0
     assert "id" not in queued
@@ -732,12 +746,19 @@ def test_sess_1fd1d54c_veterinarian_availability_same_status_class():
     assert accepted.get("ok") is True, (sample, accepted)
     from app.factory.build.data_lifecycle import sample_for_spec
 
-    lifecycle = sample_for_spec(
+    # The status vocabulary is DECLARED by the record envelope; the lifecycle
+    # sample follows the declaration, never the field's name.
+    lifecycle_spec, _added = ensure_record_envelope(
+        {"fields": [{"name": "status", "type": "str", "required": True}]}
+    )
+    lifecycle = sample_for_spec(lifecycle_spec, placeholder="s10-row")
+    assert lifecycle["status"] == "open"
+    assert lifecycle["status"] != "s10-row"
+    bare = sample_for_spec(
         {"fields": [{"name": "status", "type": "str", "required": True}]},
         placeholder="s10-row",
     )
-    assert lifecycle["status"] == "open"
-    assert lifecycle["status"] != "s10-row"
+    assert bare["status"] == "s10-row"  # undeclared: the placeholder
 
 
 def test_sess_1fd1d54c_tester_bakes_open_from_route_constraints(tmp_path):

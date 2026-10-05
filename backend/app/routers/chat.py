@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import re
 from datetime import datetime
 from typing import AsyncGenerator, Optional
 from fastapi import APIRouter, Depends, HTTPException
@@ -28,8 +27,14 @@ from ..core.grounding import (
 from ..core.rule_injector import inject_rules
 from ..core.llm_throttle import require_llm_rate
 from ..core.trial_limits import TrialLimitExceeded, require_remaining, require_within_limit
-from ..core.block_taxonomy import list_optional_blocks
 from ..factory import platform_chat_flow, platform_chat_llm
+from ..factory.floor_actions import (
+    REFINEMENT_ACTIONS,
+    RUN_ACTIONS,
+    FloorAction,
+    FloorActionError,
+    parse_action,
+)
 from ..models.session import SessionState
 
 logger = logging.getLogger(__name__)
@@ -42,6 +47,16 @@ class ChatMessage(BaseModel):
     #: never read out of ``message``. Sent once is enough: it persists on the
     #: session (``product_design.vertical``) until the user changes it.
     vertical: Optional[str] = None
+    #: Country (ISO 3166 alpha-2) and currency (ISO 4217) the user typed on
+    #: the Floor -- typed fields, persisted on the session like ``vertical``.
+    country: Optional[str] = None
+    currency: Optional[str] = None
+    #: What a Floor control asked the Factory to DO (app.factory.floor_actions:
+    #: approve, continue, run_pilot, draft, add/remove_capability, rename,
+    #: set_vertical, set_rigor, list_capabilities) and its value. Typed --
+    #: the Factory never decides an action from the words in ``message``.
+    action: Optional[str] = None
+    value: Optional[str] = None
 
 
 class ApproveRequest(BaseModel):
@@ -98,77 +113,12 @@ def _session_state_summary(state) -> str:
     return "\n".join(lines)
 
 
-def _parse_command(message: str):
-    """Detect natural-language config commands. Returns (command, args) or (None, None)."""
-    lowered = message.lower().strip()
-
-    domain_match = re.search(
-        r"(?:set\s+(?:the\s+)?domain\s+(?:to\s+)?|use\s+domain\s+|domain\s+(?:is\s+)?)([a-z0-9_-]+)",
-        lowered,
-    )
-    if domain_match:
-        return "set_domain", {"domain": domain_match.group(1)}
-
-    model_match = re.search(
-        r"(?:set\s+(?:the\s+)?(?:base\s+)?model\s+(?:to\s+)?|use\s+(?:model\s+)?)([a-zA-Z0-9_.-]+\-[0-9]+[a-zA-Z0-9_-]*)",
-        message,
-    )
-    if model_match:
-        return "set_model", {"model": model_match.group(1)}
-
-    lora_match = re.search(
-        r"(?:set\s+(?:the\s+)?lora\s+rank\s+(?:to\s+)?|lora\s+rank\s+(?:to\s+)?)(\d+)",
-        lowered,
-    )
-    if lora_match:
-        return "set_lora_rank", {"lora_rank": int(lora_match.group(1))}
-
-    lr_match = re.search(
-        r"(?:set\s+(?:the\s+)?learning\s+rate\s+(?:to\s+)?|learning\s+rate\s+(?:to\s+)?)([0-9.e-]+)",
-        lowered,
-    )
-    if lr_match:
-        try:
-            return "set_learning_rate", {"learning_rate": float(lr_match.group(1))}
-        except ValueError:
-            pass
-
-    vdb_match = re.search(
-        r"(?:set\s+(?:the\s+)?vector\s+db\s+(?:to\s+)?|use\s+vector\s+db\s+|vector\s+db\s+(?:is\s+)?)([a-z0-9]+)",
-        lowered,
-    )
-    if vdb_match:
-        return "set_vector_db", {"vector_db": vdb_match.group(1).capitalize()}
-
-    hnsw_match = re.search(
-        r"(?:set\s+(?:the\s+)?hnsw\s+(?:preset\s+)?(?:to\s+)?|hnsw\s+(?:preset\s+)?(?:to\s+)?)(fast|balanced|accurate)",
-        lowered,
-    )
-    if hnsw_match:
-        return "set_hnsw_preset", {"hnsw_preset": hnsw_match.group(1)}
-
-    if re.search(r"^(what\s+blocks|list\s+blocks|available\s+blocks|show\s+blocks)", lowered):
-        return "list_blocks", {}
-
-    return None, None
-
-
-def _apply_command(state, command: str, args: dict):
-    if command == "set_domain":
-        state.config.domain = args["domain"]
-    elif command == "set_model":
-        state.config.ai_config.base_model = args["model"]
-    elif command == "set_lora_rank":
-        state.config.ai_config.lora_rank = args["lora_rank"]
-    elif command == "set_learning_rate":
-        state.config.ai_config.learning_rate = args["learning_rate"]
-    elif command == "set_vector_db":
-        state.config.ai_config.vector_db = args["vector_db"]
-    elif command == "set_hnsw_preset":
-        state.config.ai_config.hnsw_preset = args["hnsw_preset"]
-
-
-async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator[str, None]:
+async def _stream_response(
+    session_id: str,
+    user_message: str,
+    action: Optional[FloorAction] = None,
+    value: Optional[str] = None,
+) -> AsyncGenerator[str, None]:
     state = get_session(session_id)
     if not state:
         yield _sse_event("error", "Session not found")
@@ -210,248 +160,32 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
     state.chat_history.append({"role": "user", "content": user_message})
     state.updated_at = datetime.utcnow()
 
-    command, args = _parse_command(user_message)
-    if command:
-        if command == "list_blocks":
-            optional = list_optional_blocks()
-            confirm = (
-                "Your instance already includes the domain kit plus all built-in blocks "
-                "(orchestrator, vector search, OCR, PDF, image, chat, auth, etc.).\n\n"
-                "Optional primitives you can add:\n- " + "\n- ".join(optional)
-            )
-            state.chat_history.append({"role": "assistant", "content": confirm})
-            update_session(session_id, state)
-            for word in confirm.split(" "):
-                yield _sse_event("delta", word + " ")
-            yield _sse_event("done", "")
-            return
-
-        _apply_command(state, command, args)
-        update_session(session_id, state)
-        yield _sse_event("command", json.dumps({"command": command, "args": args}))
-        confirm = f"Updated: {command.replace('_', ' ')}."
-        state.chat_history.append({"role": "assistant", "content": confirm})
-        update_session(session_id, state)
-        for word in confirm.split(" "):
-            yield _sse_event("delta", word + " ")
-        yield _sse_event("done", "")
-        return
-
     # --- Platform-creation flow: chat bridges to the product state machine ---
-    # Routing contract lives in platform_chat_flow.should_handle_platform_message:
-    # explicit commands always enter; free-text intent only when the env gate
-    # is on; exact approve uses the regex door (chat LLM when keyed for
-    # other phrasing, regex fallback on miss). Kit-configurator vocabulary
-    # never enters.
-    try:
-        # NOTE on emission: card events (blueprint/generation) already carry
-        # the full summary and the frontend renders it from the card. Do NOT
-        # also word-stream the same summary as `delta` tokens — the UI appends
-        # deltas to the card bubble, which doubled every blueprint text
-        # ("Blueprint drafted... Blueprint drafted..."). `info` has no card
-        # renderer, so info replies stream as deltas only.
-
-        # R1: a pasted cerebrum-builds session link resumes THAT build, from
-        # where it stopped. Checked first so it can never fall through to a
-        # fresh generation or a new draft.
-        attached = platform_chat_flow.attach_from_link(state, user_message)
-        if attached is not None:
-            state.chat_history.append({"role": "assistant", "content": attached["summary"]})
-            state.updated_at = datetime.utcnow()
-            update_session(session_id, state)
-            async for ev in _yield_platform_result(attached):
+    # Typed Floor actions are dispatched deterministically; free text goes to
+    # the Floor chat LLM (a typed decision) or, with no LLM, to an honest
+    # pointer at the controls. Nothing reads the user's words to pick an
+    # action. PLATFORM_CHAT_FLOW_ENABLED=0 keeps the legacy configurator.
+    if action is FloorAction.CHAIN or (
+        action is None and not platform_chat_flow.platform_chat_enabled()
+    ):
+        pass  # legacy kit-chain generator below
+    else:
+        try:
+            async for ev in _platform_turn(session_id, state, user_message, action, value):
                 yield ev
             return
-
-        # Feature-list edits stay deterministic (checkbox exclusions send
-        # "remove capability X") so the Approve button cannot depend on the
-        # model understanding a refinement command.
-        if platform_chat_flow.has_pending_blueprint(state):
-            refined = platform_chat_flow.refine_from_chat(state, user_message)
-            if refined:
-                state.chat_history.append({"role": "assistant", "content": refined["summary"]})
-                state.updated_at = datetime.utcnow()
-                update_session(session_id, state)
-                async for ev in _yield_platform_result(refined):
-                    yield ev
-                return
-
-        # continue / resume is a resume door, not a new draft. Handle it
-        # before the running-build swallow and before the LLM — after
-        # takeover the blueprint is approved, so the model used to refuse
-        # start_coder ("no blueprint pending") while 22/28 artifacts sat
-        # on disk.
-        if (
-            platform_chat_flow.is_resume_request(user_message)
-            or platform_chat_flow.is_pilot_request(user_message)
-        ) and (
-            platform_chat_flow.has_pending_blueprint(state)
-            or platform_chat_flow.is_generation_resumable(state)
-            or platform_chat_flow.is_generation_complete(state)
-            or platform_chat_flow.is_generation_terminal_failure(state)
-            or platform_chat_flow.is_handoff_awaiting_n3(state)
-        ):
-            if (
-                platform_chat_flow.has_pending_blueprint(state)
-                or platform_chat_flow.is_generation_resumable(state)
-                or platform_chat_flow.is_generation_terminal_failure(state)
-                or (
-                    platform_chat_flow.is_generation_complete(state)
-                    and not platform_chat_flow.is_pilot_ready(state)
-                )
-            ):
-                try:
-                    require_remaining(getattr(state, "user_id", None), "generation")
-                except TrialLimitExceeded as exc:
-                    yield _sse_event("error", exc.detail["message"])
-                    yield _sse_event("done", "")
-                    return
-            result = platform_chat_flow.start_or_resume_coder(state)
-            if not result.get("already_running") and not result.get("already_complete"):
-                require_within_limit(getattr(state, "user_id", None), "generation")
-            state.chat_history.append({"role": "assistant", "content": result["summary"]})
-            state.updated_at = datetime.utcnow()
-            update_session(session_id, state)
-            async for ev in _yield_platform_result(result):
-                yield ev
-            return
-
-        # Once the feature list is approved, the coding agent owns the floor.
-        # Do not re-draft or leak into the kit-chain generator mid-build.
-        # continue/resume is handled above so a dead worker thread can restart.
-        if platform_chat_flow.has_running_build(state):
-            result = platform_chat_flow.running_build_reply(state)
-            state.chat_history.append({"role": "assistant", "content": result["summary"]})
-            state.updated_at = datetime.utcnow()
-            update_session(session_id, state)
-            async for ev in _yield_platform_result(result):
-                yield ev
-            return
-
-        # A terminal RUN_FAILED / rework-exhausted workspace must not swallow
-        # a new brief as a same-hash resume. Draft a new product instead;
-        # continue/resume (handled above) starts a fresh workspace.
-        if (
-            platform_chat_flow.is_generation_terminal_failure(state)
-            and platform_chat_flow.should_handle_platform_message(user_message)
-            and not platform_chat_flow.is_resume_request(user_message)
-            and not platform_chat_flow.is_pilot_request(user_message)
-            and not platform_chat_flow.is_approval(user_message)
-            and not platform_chat_flow.has_pending_blueprint(state)
-        ):
-            result = platform_chat_flow.draft_from_chat(state, user_message)
-            state.chat_history.append({"role": "assistant", "content": result["summary"]})
-            state.updated_at = datetime.utcnow()
-            update_session(session_id, state)
-            async for ev in _yield_platform_result(result):
-                yield ev
-            return
-
-        llm_result = None
-        if platform_chat_llm.should_orchestrate(state, user_message):
-            decision = await asyncio.to_thread(
-                platform_chat_llm.try_decide, state, user_message
+        except Exception as exc:  # honest failure, stay in chat
+            logger.exception("Platform flow failed")
+            message = (
+                "Platform flow hit a blocker: "
+                f"{exc}. Nothing was generated; refine the brief or check the factory logs."
             )
-            if decision:
-                decision = platform_chat_llm.coerce_explicit_approval(
-                    decision, state, user_message
-                )
-                decision = platform_chat_llm.enforce_elicitation_cap(
-                    decision, state, user_message
-                )
-                if decision.get("action") == "start_coder":
-                    try:
-                        require_remaining(getattr(state, "user_id", None), "generation")
-                    except TrialLimitExceeded as exc:
-                        yield _sse_event("error", exc.detail["message"])
-                        yield _sse_event("done", "")
-                        return
-                llm_result = platform_chat_llm.apply_decision(state, user_message, decision)
-                if (
-                    decision.get("action") == "start_coder"
-                    and llm_result is not None
-                    and llm_result.get("ok") is not False
-                    and not llm_result.get("already_running")
-                    and not llm_result.get("already_complete")
-                    and llm_result.get("sse") != "error"
-                ):
-                    require_within_limit(getattr(state, "user_id", None), "generation")
-
-        if llm_result is not None:
-            state.chat_history.append({"role": "assistant", "content": llm_result["summary"]})
+            state.chat_history.append({"role": "assistant", "content": message})
             state.updated_at = datetime.utcnow()
             update_session(session_id, state)
-            async for ev in _yield_platform_result(llm_result):
-                yield ev
-            return
-
-        if platform_chat_flow.has_pending_blueprint(state) and platform_chat_flow.is_approval(user_message):
-            # Exact Approve gate (skipped the LLM) or LLM-down fallback.
-            try:
-                require_remaining(getattr(state, "user_id", None), "generation")
-            except TrialLimitExceeded as exc:
-                yield _sse_event("error", exc.detail["message"])
-                yield _sse_event("done", "")
-                return
-            result = platform_chat_flow.approve_and_generate(state)
-            if (
-                result.get("ok")
-                and not result.get("already_running")
-                and result.get("sse") != "error"
-            ):
-                require_within_limit(getattr(state, "user_id", None), "generation")
-            if result.get("ok") and not result.get("sse"):
-                result = {**result, "sse": "generation"}
-            state.chat_history.append({"role": "assistant", "content": result["summary"]})
-            state.updated_at = datetime.utcnow()
-            update_session(session_id, state)
-            async for ev in _yield_platform_result(result):
-                yield ev
-            return
-
-        if platform_chat_flow.has_pending_blueprint(state):
-            if not platform_chat_flow.should_handle_platform_message(user_message):
-                # A blueprint is pending and the message is neither an
-                # approval, a refinement command, nor a new platform brief.
-                # Stay IN the platform flow — falling through to the legacy
-                # kit-chain generator here made a pending retail blueprint
-                # end in "Generated chain failed validation" (the LLM invents
-                # block ids the registry rejects; the refusal is correct, the
-                # routing was not).
-                guidance = (
-                    "A blueprint is drafted and waiting. Approve the feature "
-                    "list to start the coding agent, refine it ('add capability X', "
-                    "'remove capability X', 'rename product to Y'), or describe a "
-                    "different platform to start over."
-                )
-                state.chat_history.append({"role": "assistant", "content": guidance})
-                state.updated_at = datetime.utcnow()
-                update_session(session_id, state)
-                for word in guidance.split(" "):
-                    yield _sse_event("delta", word + " ")
-                yield _sse_event("done", "")
-                return
-
-        if platform_chat_flow.should_handle_platform_message(user_message):
-            result = platform_chat_flow.draft_from_chat(state, user_message)
-            state.chat_history.append({"role": "assistant", "content": result["summary"]})
-            state.updated_at = datetime.utcnow()
-            update_session(session_id, state)
-            yield _sse_event("blueprint", json.dumps(result))
+            yield _sse_event("error", message)
             yield _sse_event("done", "")
             return
-    except Exception as exc:  # honest failure, stay in chat
-        logger.exception("Platform flow failed")
-        message = (
-            "Platform flow hit a blocker: "
-            f"{exc}. Nothing was generated; refine the brief or check the factory logs."
-        )
-        state.chat_history.append({"role": "assistant", "content": message})
-        state.updated_at = datetime.utcnow()
-        update_session(session_id, state)
-        yield _sse_event("error", message)
-        yield _sse_event("done", "")
-        return
 
     update_session(session_id, state)
 
@@ -587,22 +321,174 @@ async def _yield_platform_result(result: dict) -> AsyncGenerator[str, None]:
     yield _sse_event("done", "")
 
 
-def _chat_starts_generation(state: SessionState, message: str) -> bool:
-    """True when this chat turn will start or resume a factory generate."""
-    if platform_chat_flow.has_pending_blueprint(state) and platform_chat_flow.is_approval(
-        message
-    ):
-        return True
-    if (
-        platform_chat_flow.is_resume_request(message)
-        or platform_chat_flow.is_pilot_request(message)
-    ) and (
+async def _platform_turn(
+    session_id: str,
+    state: SessionState,
+    user_message: str,
+    action: Optional[FloorAction],
+    value: Optional[str],
+) -> AsyncGenerator[str, None]:
+    """One platform-flow turn. Card events (blueprint/generation) carry their
+    own summary; only ``info`` replies stream as deltas."""
+
+    def _record(result):
+        state.chat_history.append({"role": "assistant", "content": result["summary"]})
+        state.updated_at = datetime.utcnow()
+        update_session(session_id, state)
+
+    # R1: a pasted cerebrum-builds session link resumes THAT build, from
+    # where it stopped -- a URL is structure, not prose.
+    attached = platform_chat_flow.attach_from_link(state, user_message)
+    if attached is not None:
+        _record(attached)
+        async for ev in _yield_platform_result(attached):
+            yield ev
+        return
+
+    if action is not None:
+        async for ev in _typed_action(session_id, state, user_message, action, value, _record):
+            yield ev
+        return
+
+    # Free text. Once the feature list is approved the coding agent owns
+    # the floor: a running build answers with its status.
+    if platform_chat_flow.has_running_build(state):
+        result = platform_chat_flow.running_build_reply(state)
+        _record(result)
+        async for ev in _yield_platform_result(result):
+            yield ev
+        return
+
+    llm_result = None
+    if platform_chat_llm.should_orchestrate(state, user_message):
+        decision = await asyncio.to_thread(platform_chat_llm.try_decide, state, user_message)
+        if decision:
+            decision = platform_chat_llm.enforce_elicitation_cap(decision, state, user_message)
+            # Free text never starts a build (apply_decision answers a
+            # start_coder with a pointer at the typed Approve/Continue), so
+            # nothing on this path spends a generation.
+            llm_result = platform_chat_llm.apply_decision(state, user_message, decision)
+    if llm_result is not None:
+        _record(llm_result)
+        async for ev in _yield_platform_result(llm_result):
+            yield ev
+        return
+
+    # No chat LLM answered. The Factory does not guess an action from the
+    # words: the Floor's controls perform them.
+    guidance = (
+        "Use the Floor controls: Draft turns your brief into a feature list; "
+        "Approve starts the coding agent; Continue resumes a build; the "
+        "feature-list editor, rename and grade controls change a pending "
+        "blueprint. Free-text conversation needs the Floor chat model, which "
+        "is not configured on this deployment."
+    )
+    result = {"sse": "info", "ok": True, "summary": guidance, "stream_delta": True}
+    _record(result)
+    async for ev in _yield_platform_result(result):
+        yield ev
+
+
+async def _typed_action(session_id, state, user_message, action, value, _record):
+    """Dispatch a typed Floor action. Deterministic; no model, no prose."""
+    if action in REFINEMENT_ACTIONS:
+        refined = platform_chat_flow.apply_refinement(state, action, value)
+        if refined is None:
+            refined = {
+                "sse": "info",
+                "ok": False,
+                "summary": "There is no pending blueprint to change. Draft one first.",
+            }
+        _record(refined)
+        async for ev in _yield_platform_result(refined):
+            yield ev
+        return
+
+    if action is FloorAction.DRAFT:
+        if not (user_message or "").strip():
+            result = {"sse": "info", "ok": False, "summary": "Draft needs a brief."}
+            _record(result)
+            async for ev in _yield_platform_result(result):
+                yield ev
+            return
+        result = platform_chat_flow.draft_from_chat(state, user_message)
+        _record(result)
+        yield _sse_event("blueprint", json.dumps(result))
+        yield _sse_event("done", "")
+        return
+
+    if action is FloorAction.APPROVE:
+        if not platform_chat_flow.has_pending_blueprint(state):
+            result = {"sse": "info", "ok": False, "summary": "There is no feature list waiting for approval."}
+            _record(result)
+            async for ev in _yield_platform_result(result):
+                yield ev
+            return
+        try:
+            require_remaining(getattr(state, "user_id", None), "generation")
+        except TrialLimitExceeded as exc:
+            yield _sse_event("error", exc.detail["message"])
+            yield _sse_event("done", "")
+            return
+        result = platform_chat_flow.approve_and_generate(state)
+        if result.get("ok") and not result.get("already_running") and result.get("sse") != "error":
+            require_within_limit(getattr(state, "user_id", None), "generation")
+        if result.get("ok") and not result.get("sse"):
+            result = {**result, "sse": "generation"}
+        _record(result)
+        async for ev in _yield_platform_result(result):
+            yield ev
+        return
+
+    # CONTINUE / RUN_PILOT: a resume door, never a new draft.
+    resumable = (
         platform_chat_flow.has_pending_blueprint(state)
         or platform_chat_flow.is_generation_resumable(state)
         or platform_chat_flow.is_generation_complete(state)
         or platform_chat_flow.is_generation_terminal_failure(state)
-    ):
-        return True
+        or platform_chat_flow.is_handoff_awaiting_n3(state)
+    )
+    if not resumable:
+        result = {"sse": "info", "ok": False, "summary": "There is no build to continue. Draft a platform first."}
+        _record(result)
+        async for ev in _yield_platform_result(result):
+            yield ev
+        return
+    spends = (
+        platform_chat_flow.has_pending_blueprint(state)
+        or platform_chat_flow.is_generation_resumable(state)
+        or platform_chat_flow.is_generation_terminal_failure(state)
+        or (
+            platform_chat_flow.is_generation_complete(state)
+            and not platform_chat_flow.is_pilot_ready(state)
+        )
+    )
+    if spends:
+        try:
+            require_remaining(getattr(state, "user_id", None), "generation")
+        except TrialLimitExceeded as exc:
+            yield _sse_event("error", exc.detail["message"])
+            yield _sse_event("done", "")
+            return
+    result = platform_chat_flow.start_or_resume_coder(state)
+    if not result.get("already_running") and not result.get("already_complete"):
+        require_within_limit(getattr(state, "user_id", None), "generation")
+    _record(result)
+    async for ev in _yield_platform_result(result):
+        yield ev
+
+
+def _chat_starts_generation(state: SessionState, action: Optional[FloorAction]) -> bool:
+    """True when this request's typed action will start or resume a build."""
+    if action is FloorAction.APPROVE:
+        return platform_chat_flow.has_pending_blueprint(state)
+    if action in RUN_ACTIONS:
+        return (
+            platform_chat_flow.has_pending_blueprint(state)
+            or platform_chat_flow.is_generation_resumable(state)
+            or platform_chat_flow.is_generation_complete(state)
+            or platform_chat_flow.is_generation_terminal_failure(state)
+        )
     return False
 
 
@@ -624,10 +510,24 @@ async def chat(
         choice = chosen_vertical(body.vertical)
         state.product_design.vertical = None if choice == NO_VERTICAL else choice
         update_session(state.session_id, state)
-    if _chat_starts_generation(state, body.message):
+    # The declared country/currency, and the stored blueprint kept carrying
+    # exactly that pair on EVERY request -- a blueprint drafted mid-chat
+    # picks it up before an approve starts the build.
+    from ..factory.locale_choice import apply_locale_choice, sync_blueprint_locale
+
+    if body.country is not None or body.currency is not None:
+        apply_locale_choice(state.product_design, body.country, body.currency)
+        update_session(state.session_id, state)
+    elif sync_blueprint_locale(state.product_design):
+        update_session(state.session_id, state)
+    try:
+        action = parse_action(body.action)
+    except FloorActionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if _chat_starts_generation(state, action):
         assert_entitled(principal)
     return StreamingResponse(
-        _stream_response(state.session_id, body.message),
+        _stream_response(state.session_id, body.message, action, body.value),
         media_type="text/event-stream",
     )
 

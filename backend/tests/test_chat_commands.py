@@ -1,61 +1,55 @@
-"""Tests for natural-language command parsing in the chat router."""
+"""The legacy configurator's settings are TYPED requests, never chat words.
+
+The chat router used to parse "set lora rank 64", "use domain legal",
+"set hnsw to accurate", "list blocks" ... out of the user's message with
+regexes. That parser is gone: POST /v1/sessions/{id}/config takes the same
+fields as a typed SessionConfig, and GET .../config/optional-blocks lists the
+primitives. A chat message containing those words changes nothing.
+"""
+
+from __future__ import annotations
 
 import pytest
-from app.routers.chat import _parse_command, _apply_command
-from app.models.session import SessionState
+
+from app.core.session_store import create_session, get_session
+from app.routers import chat as chat_router
 
 
-@pytest.mark.parametrize(
-    "message, expected_command, expected_args",
-    [
-        ("set domain to medical", "set_domain", {"domain": "medical"}),
-        ("use domain legal", "set_domain", {"domain": "legal"}),
-        ("domain is finance", "set_domain", {"domain": "finance"}),
-        ("set model to Llama-3.1-8B", "set_model", {"model": "Llama-3.1-8B"}),
-        ("use model Mistral-7B", "set_model", {"model": "Mistral-7B"}),
-        ("lora rank 64", "set_lora_rank", {"lora_rank": 64}),
-        ("set learning rate to 2e-4", "set_learning_rate", {"learning_rate": 2e-4}),
-        ("set vector db to chroma", "set_vector_db", {"vector_db": "Chroma"}),
-        ("set hnsw to accurate", "set_hnsw_preset", {"hnsw_preset": "accurate"}),
-    ],
-)
-def test_parse_command(message, expected_command, expected_args):
-    command, args = _parse_command(message)
-    assert command == expected_command
-    assert args == expected_args
+def test_the_chat_router_parses_no_configurator_commands():
+    assert not hasattr(chat_router, "_parse_command")
+    assert not hasattr(chat_router, "_apply_command")
 
 
-def test_parse_command_no_match():
-    command, args = _parse_command("hello world")
-    assert command is None
-    assert args is None
-
-
-def test_apply_command_updates_state():
-    state = SessionState(session_id="sess_test", user_id="anonymous")
-    _apply_command(state, "set_domain", {"domain": "medical"})
-    assert state.config.domain == "medical"
-
-    _apply_command(state, "set_model", {"model": "Mistral-7B"})
-    assert state.config.ai_config.base_model == "Mistral-7B"
-
-    _apply_command(state, "set_lora_rank", {"lora_rank": 16})
-    assert state.config.ai_config.lora_rank == 16
-
-    _apply_command(state, "set_learning_rate", {"learning_rate": 1e-4})
-    assert state.config.ai_config.learning_rate == 1e-4
+def test_optional_blocks_are_a_typed_request(client):
+    session = create_session(session_id="sess_zorblat_blocks", user_id="anonymous")
+    res = client.get(f"/v1/sessions/{session.session_id}/config/optional-blocks")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["session_id"] == session.session_id
+    assert isinstance(body["optional_blocks"], list)
 
 
 @pytest.mark.parametrize(
     "message",
-    [
-        "what blocks are available",
-        "list blocks",
-        "available blocks",
-        "show blocks",
-    ],
+    ["set lora rank to 64", "use domain zorblat", "set hnsw to accurate", "list blocks"],
 )
-def test_parse_list_blocks_command(message):
-    command, args = _parse_command(message)
-    assert command == "list_blocks"
-    assert args == {}
+def test_configurator_words_in_chat_change_no_setting(client, message, monkeypatch):
+    from app.factory import platform_chat_llm
+
+    monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: False)
+    session = create_session(session_id="sess_zorblat_cfg", user_id="anonymous")
+    before = session.config.model_dump()
+    res = client.post(f"/v1/sessions/{session.session_id}/chat", json={"message": message})
+    assert res.status_code == 200, res.text
+    assert "event: command" not in res.text
+    assert get_session(session.session_id).config.model_dump() == before
+
+
+def test_the_mock_chain_is_built_from_available_blocks_not_words():
+    from app.core.chain_generator import _mock_response
+
+    blocks = [{"name": "pdf"}, {"name": "ocr"}, {"name": "chat"}]
+    plain = _mock_response("zorblat", "zorblat_domain", blocks)
+    worded = _mock_response("always scan this image, rule: urgent", "zorblat_domain", blocks)
+    assert plain["chain"] == worded["chain"]
+    assert plain["rules"] == worded["rules"] == []

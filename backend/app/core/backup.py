@@ -179,42 +179,57 @@ def _sanitize_dump_err(text: str, url: str) -> str:
     return " ".join(redacted.split())[:240]
 
 
+#: Schema of the structured accounts snapshot written next to (or instead of) a
+#: pg_dump: one JSON document, rows as typed values per table.
+ACCOUNTS_SNAPSHOT_SCHEMA = "accounts_snapshot.v1"
+ACCOUNTS_SNAPSHOT_NAME = "accounts.json"
+
+
+def _json_value(value: Any) -> Any:
+    """A row value as JSON: native for null/bool/number/str, ISO text otherwise."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).hex()
+    return str(value)
+
+
 def snapshot_postgres_via_sqlalchemy(url: str, dest: Path) -> None:
-    """Logical SQL dump that does not depend on pg_dump matching server version.
+    """Structured accounts snapshot that does not depend on pg_dump.
 
     Neon is Postgres 18; python:3.11-slim's postgresql-client is older. pg_dump
     then exits 1 ('server version mismatch') and /ready reported last_backup
     failed even though the accounts DB was reachable. SQLAlchemy already talks
-    to that DB for auth.
+    to that DB for auth, so it reads every table and writes ONE JSON document
+    (``accounts_snapshot.v1``): table -> columns + rows of typed values. The
+    restore reads it with json.load -- no SQL text is written or parsed.
     """
+    import json
+
     import sqlalchemy as sa
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     engine = sa.create_engine(_sqlalchemy_accounts_url(url), pool_pre_ping=True)
     try:
-        insp = sa.inspect(engine)
-        tables = insp.get_table_names()
-        with dest.open("w", encoding="utf-8") as out, engine.connect() as conn:
-            out.write("-- cerebrumdev accounts dump (sqlalchemy fallback)\nBEGIN;\n")
-            for table in tables:
-                cols = [c["name"] for c in insp.get_columns(table)]
-                if not cols:
+        meta = sa.MetaData()
+        meta.reflect(bind=engine)
+        tables: Dict[str, Any] = {}
+        with engine.connect() as conn:
+            for name, table in meta.tables.items():
+                columns = [c.name for c in table.columns]
+                if not columns:
                     continue
-                col_list = ", ".join('"' + c + '"' for c in cols)
-                rows = conn.execute(sa.text('SELECT ' + col_list + ' FROM "' + table + '"'))
-                for row in rows:
-                    vals: List[str] = []
-                    for v in row:
-                        if v is None:
-                            vals.append("NULL")
-                        elif isinstance(v, bool):
-                            vals.append("TRUE" if v else "FALSE")
-                        elif isinstance(v, (int, float)) and not isinstance(v, bool):
-                            vals.append(str(v))
-                        else:
-                            vals.append("'" + str(v).replace("'", "''") + "'")
-                    out.write('INSERT INTO "' + table + '" (' + col_list + ') VALUES (' + ', '.join(vals) + ');\n')
-            out.write("COMMIT;\n")
+                rows = [
+                    [_json_value(v) for v in row]
+                    for row in conn.execute(sa.select(*table.columns))
+                ]
+                tables[name] = {"columns": columns, "rows": rows}
+        dest.write_text(
+            json.dumps({"schema": ACCOUNTS_SNAPSHOT_SCHEMA, "tables": tables}),
+            encoding="utf-8",
+        )
     finally:
         engine.dispose()
 
@@ -254,14 +269,14 @@ def snapshot_postgres(url: str, dest: Path) -> Path:
             dest.unlink(missing_ok=True)
         except OSError:
             pass
-    sql_dest = dest.with_suffix(".sql")
+    json_dest = dest.with_name(ACCOUNTS_SNAPSHOT_NAME)
     try:
-        snapshot_postgres_via_sqlalchemy(url, sql_dest)
+        snapshot_postgres_via_sqlalchemy(url, json_dest)
     except Exception as exc:  # noqa: BLE001 — surface both failures
-        raise RuntimeError(f"{dump_err}; sqlalchemy fallback failed: {exc}") from exc
-    if not sql_dest.is_file() or sql_dest.stat().st_size == 0:
-        raise RuntimeError(f"{dump_err}; sqlalchemy fallback wrote an empty dump")
-    return sql_dest
+        raise RuntimeError(f"{dump_err}; structured snapshot failed: {exc}") from exc
+    if not json_dest.is_file() or json_dest.stat().st_size == 0:
+        raise RuntimeError(f"{dump_err}; structured snapshot is empty")
+    return json_dest
 
 
 def verify_sqlite_snapshot(path: Path) -> Dict[str, int]:
@@ -311,7 +326,14 @@ def create_backup(
             try:
                 dumped = snapshot_postgres(pg_url, staging / "accounts.dump")
                 result.included.append(dumped.name)
-                result.dump_method = "sqlalchemy" if dumped.suffix == ".sql" else "pg_dump"
+                if dumped.name != ACCOUNTS_SNAPSHOT_NAME:
+                    # Every archive carries the structured snapshot, so the
+                    # restore API never has to read a pg_dump.
+                    snapshot_postgres_via_sqlalchemy(pg_url, staging / ACCOUNTS_SNAPSHOT_NAME)
+                    result.included.append(ACCOUNTS_SNAPSHOT_NAME)
+                result.dump_method = (
+                    "structured" if dumped.name == ACCOUNTS_SNAPSHOT_NAME else "pg_dump"
+                )
             except Exception as exc:  # noqa: BLE001
                 result.error = f"accounts dump failed: {exc}"
                 return result

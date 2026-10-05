@@ -260,9 +260,8 @@ def create_canonical_document(
         report.collection_id, report.computed_content_hash, normalization_version
     )
 
-    parser_truncated = any(
-        "truncated" in w.lower() for w in (report.warnings or [])
-    )
+    # The parser's typed truncation flag, never a search of its warning prose.
+    parser_truncated = bool(report.parser_truncated)
 
     chunking_status = ChunkingStatus.NOT_REQUESTED
     chunks: List[RagCanonicalChunk] = []

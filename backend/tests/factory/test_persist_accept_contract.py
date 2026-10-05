@@ -156,10 +156,13 @@ def test_system_brief_and_oneshot_name_the_persist_halt():
 def test_product_probe_and_writer_probe_both_isolate_storage():
     assert PERSIST_ISOLATE_NEEDLE in ROUND_TRIP_PROBE
     assert 'tempfile.mkdtemp(prefix="writer-gate-")' in BEHAVIOUR_PROBE
-    # A missing persist table is a typed halt, decided by the exception's
-    # class (a database error), not by sentences in stderr.
+    # A missing persist table is a typed halt the probe emits (kind
+    # "persist"), decided by the exception's class -- not a phrase in stderr.
+    from app.factory.build.writer_behaviour import HALT_SENTENCES, KIND_PERSIST
+
     assert '_halt("persist"' in BEHAVIOUR_PROBE
     assert "_db_error_types()" in BEHAVIOUR_PROBE
+    assert HALT_SENTENCES[KIND_PERSIST]
 
 
 def test_factory_generate_body_is_pure_dispatch_not_no_block_bound():
@@ -212,9 +215,13 @@ def _write_persist_workspace(tmp_path: Path, specs: dict, *, persist_handlers=Tr
             _handler_module(cid, spec.get("block_ids") or [], body, "test", entity=entity),
             encoding="utf-8",
         )
+        # A real (parseable) route: persist_accept reads routes.py's syntax
+        # tree, so the fixture must be Python, not an indented fragment.
         routes.append(
+            f"\n\ndef _route_{name}(payload):\n"
             f'    save = lambda record: store.save("{entity}", record)\n'
             f"    stored = save(payload)\n"
+            f"    return stored\n"
         )
     (tmp_path / "app" / "routes.py").write_text(
         "from app import store\n" + "".join(routes), encoding="utf-8"
