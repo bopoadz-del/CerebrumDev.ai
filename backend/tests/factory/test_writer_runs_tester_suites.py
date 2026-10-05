@@ -205,3 +205,9 @@ def test_tester_rework_item_carries_the_recheck_command_and_failing_tests():
     item = _tester_recheck_item(_Verdict())
     assert SELF_CHECK_COMMAND in item
     assert "FIELDS" in item
+    # Typed: a recheck item, never counted among the findings.
+    from app.factory.build.product_suites import finding_items, recheck_items
+
+    work = (_Verdict.findings[0], item)
+    assert recheck_items(work) == (item,)
+    assert finding_items(work) == (_Verdict.findings[0],)

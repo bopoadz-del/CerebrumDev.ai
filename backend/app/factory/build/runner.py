@@ -184,6 +184,7 @@ def _tester_recheck_item(verdict: Any) -> str:
     Every finding row already names the capability and field it refused."""
     from app.factory.build import failure_owner
     from app.factory.build.brief_gates import PRODUCT_GATE_CHECK
+    from app.factory.build.product_suites import RECHECK_TAG
     from app.factory.build.writer_behaviour import SELF_CHECK_COMMAND
 
     nodes = [
@@ -199,7 +200,7 @@ def _tester_recheck_item(verdict: Any) -> str:
         else ""
     )
     return (
-        f"[{PRODUCT_GATE_CHECK}] the suites that failed are on disk (Factory-"
+        f"{RECHECK_TAG} [{PRODUCT_GATE_CHECK}] the suites that failed are on disk (Factory-"
         f"owned; TESTER re-stamps them from your app/models.py): run "
         f"`{SELF_CHECK_COMMAND}`{rerun} before declaring done. A payload "
         "\"built from its own schema\" uses the model's FIELDS -- declare in "

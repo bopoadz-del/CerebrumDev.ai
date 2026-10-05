@@ -19,3 +19,26 @@ DOMAIN_SUITE = "tests/test_domain_acceptance.py"
 
 #: In the order the self-check runs them.
 PRODUCT_SUITES = (SMOKE_SUITE, ROUTES_SUITE, DOMAIN_SUITE, CONTRACT_TEST)
+
+
+#: A work-list item's KIND. The work list the writer reads is text, so the kind
+#: is the item's leading tag: a finding item is ``[<check>] ...`` (or the raw
+#: finding row); the re-check item -- the exact command to re-run the checks
+#: that failed -- is ``[recheck] ...``. ``recheck`` is reserved: no gate check
+#: carries that id. Readers split a work list with these two helpers, never by
+#: matching the item's wording.
+RECHECK_KIND = "recheck"
+RECHECK_TAG = f"[{RECHECK_KIND}]"
+
+
+def is_recheck(item: str) -> bool:
+    return str(item).startswith(RECHECK_TAG)
+
+
+def finding_items(work_list) -> tuple:
+    """The work list's finding items, in order (every non-recheck item)."""
+    return tuple(i for i in work_list if not is_recheck(i))
+
+
+def recheck_items(work_list) -> tuple:
+    return tuple(i for i in work_list if is_recheck(i))
