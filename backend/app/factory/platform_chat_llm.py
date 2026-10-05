@@ -35,8 +35,19 @@ from typing import Any, Dict, List, Optional
 
 from app.core.llm_config import get_llm_config
 from app.factory import platform_chat_flow
-from app.factory.floor_actions import REFINEMENT_ACTIONS, FloorActionError, parse_action
+from app.factory.floor_actions import (
+    REFINEMENT_ACTIONS,
+    FloorAction,
+    FloorActionError,
+    parse_action,
+)
+from app.factory.locale_choice import intake_state, shaped_proposal
 from app.factory.product_architect import LlmSoftMiss
+
+#: Refinements the model may apply itself. The vertical is the user's typed
+#: intake: from the model it is only ever a PROPOSAL (``intake``) the user
+#: confirms -- never a refinement that stores.
+_MODEL_REFINEMENTS = frozenset(REFINEMENT_ACTIONS - {FloorAction.SET_VERTICAL})
 from app.factory.product_architect import _llm_json_call as _architect_llm_json_call
 
 logger = logging.getLogger(__name__)
@@ -100,7 +111,10 @@ operation (sites, rooms, vehicles, staff); anything that should happen \
 automatically, or a specialist assistant they want; where they operate \
 (the country) and the currency they work in -- these decide tax, VAT, \
 payroll and regulatory rules, so never assume them for anything that \
-touches money; their own formulas or \
+touches money; the BUILD LEVEL they want -- prototype (done when the code \
+passes), light, pilot, or production (the full acceptance floor) -- which the \
+build cannot start without, so ask it whenever the session facts say it is \
+not chosen; their own formulas or \
 rules of thumb. Keep drawing the brief out while they are still answering: each round goes deeper than the last, never repeats what they have told you, and stops guessing on their behalf. Do NOT stop because the brief reads well -- a platform built on your assumptions is their rework. The customer ends the questions, not you: the moment they say build now / just build it / go / start / skip / you decide / enough, call draft_platform on that turn and ask nothing more. Never \
 ask_user when a blueprint is pending or a coding run exists. The session \
 facts say how many rounds of questions remain; at zero you must draft.
@@ -126,9 +140,16 @@ call start_coder to open a pilot cycle. Do not call a code-cycle SUCCESS \
 draft_platform (new product); do not treat that brief as a resume.
 - refine_blueprint: the user wants to change the pending blueprint. Set \
 "refine" to {"op": ONE OF add_capability | remove_capability | rename | \
-set_vertical | set_rigor | list_capabilities, "value": the capability id, \
-the new product name, the vertical, or the grade (prototype | light | \
-standard | production); "" for list_capabilities}.
+list_capabilities, "value": the capability id or the new product name; "" \
+for list_capabilities}. The vertical, country, currency and build level are \
+NOT refinements: propose them in "intake".
+- On EVERY action, "intake" carries what the user SAID in this conversation \
+about their vertical (only if they named one), country (2-letter code), \
+currency (3-letter code) and build level (only one of prototype | light | \
+pilot | production, and only if they chose it in so many words -- never \
+from how their business sounds). Leave a field "" when they have not said \
+it. The Floor shows your proposal with Confirm / Change buttons; it stores \
+nothing until the user presses Confirm.
 - reply: questions, chit-chat, or a pending blueprint with no confirmation. \
 Set "message" to a short grounded reply. Tell them they can confirm to start \
 the coding agent. Do not pretend a build started.
@@ -149,7 +170,7 @@ user named that is NOT attachable (not in the store, or not cleared) in \
 "missing_connectors" by its plain name, and tell the user plainly that it \
 will ship as a marked placeholder until it is built — never as working.
 
-Return ONLY JSON: {"action": "...", "brief": "", "refine": {"op": "", "value": ""}, "message": "", "connectors": [], "missing_connectors": []}.
+Return ONLY JSON: {"action": "...", "brief": "", "refine": {"op": "", "value": ""}, "message": "", "connectors": [], "missing_connectors": [], "intake": {"vertical": "", "country": "", "currency": "", "build_level": ""}}.
 """
 
 
@@ -187,10 +208,26 @@ def should_orchestrate(state: Any, message: str) -> bool:
     return True
 
 
+def _intake_facts(pd: Any) -> str:
+    """The user's typed intake as the model may describe it: declared values
+    are the user's; anything unset is to be ASKED, never assumed."""
+    if pd is None:
+        return ""
+    declared = intake_state(pd)["declared"]
+    shown = ", ".join(
+        f"{k}={v}" if v else f"{k}=NOT DECLARED"
+        for k, v in declared.items()
+    )
+    line = f"Declared intake: {shown}."
+    if not declared.get("build_level"):
+        line += " The build cannot start until the user chooses a build level."
+    return line
+
+
 def _session_facts(state: Any) -> str:
     pd = getattr(state, "product_design", None)
     if not pd or not getattr(pd, "blueprint", None):
-        return "Session: no pending blueprint. start_coder is forbidden."
+        return "Session: no pending blueprint. start_coder is forbidden. " + _intake_facts(pd)
     bp = pd.blueprint or {}
     caps = bp.get("capabilities") or []
     cap_ids = ", ".join(str(c.get("id") or "") for c in caps if isinstance(c, dict))
@@ -199,6 +236,7 @@ def _session_facts(state: Any) -> str:
         f"Pending blueprint: {'yes' if pending else 'no'}.",
         f"Product: {bp.get('product_name')} (vertical={bp.get('vertical')}).",
         f"Capabilities: {cap_ids or '(none)'}.",
+        _intake_facts(pd),
     ]
     if getattr(pd, "generation", None):
         gen = pd.generation or {}
@@ -553,6 +591,7 @@ def decide(state: Any, message: str) -> Dict[str, Any]:
         "message": str(data.get("message") or "").strip(),
         "connectors": _str_list(data.get("connectors")),
         "missing_connectors": _str_list(data.get("missing_connectors")),
+        "intake": data.get("intake") if isinstance(data.get("intake"), dict) else {},
     }
 
 
@@ -612,6 +651,7 @@ def enforce_elicitation_cap(
         "message": "",
         "connectors": list(decision.get("connectors") or []),
         "missing_connectors": list(decision.get("missing_connectors") or []),
+        "intake": dict(decision.get("intake") or {}),
         "coerced": True,
     }
 
@@ -773,8 +813,37 @@ def _kit_notice(state: Any) -> str:
     return KIT_NOTICE
 
 
+def record_intake_proposal(state: Any, decision: Dict[str, Any]) -> None:
+    """Keep what the model proposed for the user's intake, as a PROPOSAL.
+
+    The typed fields (vertical, country, currency, build level) are not
+    touched here: only the user's typed ``confirm_intake`` stores them. A new
+    proposal replaces the previous one; an empty one leaves it in place.
+    """
+    pd = getattr(state, "product_design", None)
+    if pd is None:
+        return
+    raw = dict(decision.get("intake") or {})
+    refine = decision.get("refine") or {}
+    if refine.get("op") == FloorAction.SET_VERTICAL.value and refine.get("value"):
+        raw.setdefault("vertical", refine.get("value"))
+    proposal = shaped_proposal(raw)
+    if proposal:
+        pd.intake_proposal = proposal
+
+
 def apply_decision(state: Any, message: str, decision: Dict[str, Any]) -> Dict[str, Any]:
-    """Execute a decided Floor action against the session product state."""
+    """Execute a decided Floor action against the session product state, and
+    hand the Floor the intake line (declared fields + any pending proposal)."""
+    record_intake_proposal(state, decision)
+    result = _apply_decision(state, message, decision)
+    pd = getattr(state, "product_design", None)
+    if pd is not None and isinstance(result, dict):
+        result["intake"] = intake_state(pd)
+    return result
+
+
+def _apply_decision(state: Any, message: str, decision: Dict[str, Any]) -> Dict[str, Any]:
     action = decision.get("action")
 
     if action == "start_coder":
@@ -836,7 +905,16 @@ def apply_decision(state: Any, message: str, decision: Dict[str, Any]) -> Dict[s
         refined = None
         try:
             op = parse_action(refine.get("op"))
-            if op in REFINEMENT_ACTIONS:
+            if op is FloorAction.SET_VERTICAL:
+                # Proposed (record_intake_proposal), not applied: the user
+                # confirms the vertical on the Floor.
+                return {
+                    "sse": "info",
+                    "ok": True,
+                    "summary": "Confirm the proposed vertical on the Floor to use it.",
+                    "stream_delta": True,
+                }
+            if op in _MODEL_REFINEMENTS:
                 refined = platform_chat_flow.apply_refinement(state, op, refine.get("value"))
         except FloorActionError:
             refined = None
@@ -849,7 +927,7 @@ def apply_decision(state: Any, message: str, decision: Dict[str, Any]) -> Dict[s
             "ok": True,
             "summary": (
                 "I could not apply that change. Use the feature-list editor, "
-                "rename or grade controls on the Floor, or Approve to build."
+                "rename or build-level controls on the Floor, or Approve to build."
             ),
             "stream_delta": True,
         }

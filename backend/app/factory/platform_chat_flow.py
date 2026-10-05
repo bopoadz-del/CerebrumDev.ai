@@ -1,4 +1,4 @@
-﻿"""Chat-driven platform creation flow.
+"""Chat-driven platform creation flow.
 
 Bridges free-text chat messages onto the EXISTING session product state
 machine (routers/session_product.py). No parallel machinery: the same
@@ -50,9 +50,9 @@ from .floor_actions import (
     VALUE_REQUIRED,
     FloorAction,
     FloorActionError,
-    parse_rigor,
+    parse_level,
 )
-from .locale_choice import sync_blueprint_locale
+from .locale_choice import confirm_intake, intake_state, sync_blueprint_intake
 from .blocks_source import resolve_blocks_root
 from .paths import factory_outputs_root
 from .product_architect import (
@@ -138,9 +138,87 @@ _RESULT_ACTION = {
     FloorAction.REMOVE_CAPABILITY: "remove_capability",
     FloorAction.RENAME: "rename_product",
     FloorAction.SET_VERTICAL: "set_vertical",
-    FloorAction.SET_RIGOR: "set_rigor",
     FloorAction.LIST_CAPABILITIES: "list_capabilities",
 }
+
+
+def _level_bar_sentence(level: str) -> str:
+    """What the chosen level asks of the build, read from its bar."""
+    from app.factory.build.build_level import BARS, BuildLevel
+
+    bar = BARS[BuildLevel(level)]
+    if not bar.reaches_pilot:
+        return (
+            f"{level} — the build is done when the code passes (CODE_GREEN); "
+            "the pilot suite and the Store gate do not run."
+        )
+    reach = "the build climbs to the Store gate (pilot suite, then acceptance)"
+    thin = (
+        "; a templates-only pass counts as a failure"
+        if bar.thin_success_is_failure
+        else "; a pass on Factory-template handlers still counts"
+    )
+    floor = (
+        "; every acceptance check is enforced, the security scan included."
+        if bar.full_floor
+        else "; the security scan is advisory, every other check enforced."
+    )
+    return f"{level} — {reach}{thin}{floor}"
+
+
+def apply_intake_action(
+    state: Any, action: FloorAction, value: Optional[str] = None
+) -> Dict[str, Any]:
+    """The user's TYPED intake on the Confirm / Change line. ``set_build_level``
+    (Change) puts the chosen level on the proposal; only ``confirm_intake``
+    (Confirm) stores the proposal as the session's typed fields. Works before
+    any blueprint exists. Refused once the blueprint is approved: the level is
+    part of the frozen blueprint hashed at approval, never added afterwards."""
+    pd = state.product_design
+    if pd.blueprint_approved or has_running_build(state):
+        return {
+            "sse": "info",
+            "ok": False,
+            "summary": (
+                "The blueprint is approved: its intake, build level included, "
+                "is frozen with it. Draft a new platform to build at another level."
+            ),
+            "intake": intake_state(pd),
+        }
+    if action is FloorAction.SET_BUILD_LEVEL:
+        try:
+            level = parse_level(value).value
+        except FloorActionError as exc:
+            return {"sse": "info", "ok": False, "summary": str(exc), "intake": intake_state(pd)}
+        pd.intake_proposal = {**(pd.intake_proposal or {}), "build_level": level}
+        summary = (
+            "Proposed build level " + _level_bar_sentence(level)
+            + " Press Confirm to use it."
+        )
+    elif action is FloorAction.CONFIRM_INTAKE:
+        stored = confirm_intake(pd)
+        if not stored:
+            return {
+                "sse": "info",
+                "ok": False,
+                "summary": "There is no proposed intake to confirm.",
+                "intake": intake_state(pd),
+            }
+        parts = [f"{k.replace('_', ' ')} {v}" for k, v in stored.items()]
+        summary = "Confirmed: " + ", ".join(parts) + "."
+        if stored.get("build_level"):
+            summary += " Build level " + _level_bar_sentence(stored["build_level"])
+    else:
+        raise FloorActionError(f"{action.value} is not an intake action")
+    result: Dict[str, Any] = {
+        "sse": "info",
+        "ok": True,
+        "summary": summary,
+        "intake": intake_state(pd),
+    }
+    if pd.blueprint:
+        result["blueprint"] = pd.blueprint
+    return result
 
 
 def apply_refinement(
@@ -175,20 +253,9 @@ def apply_refinement(
         args["name"] = value
     elif action is FloorAction.SET_VERTICAL:
         args["vertical"] = value
-    elif action is FloorAction.SET_RIGOR:
-        try:
-            args["rigor"] = parse_rigor(value).value
-        except FloorActionError as exc:
-            return {
-                "ok": False,
-                "refined": False,
-                "action": _RESULT_ACTION[action],
-                "summary": str(exc),
-                "blueprint": pd.blueprint,
-            }
     action = _RESULT_ACTION[action]  # the body below speaks the wire names
 
-    sync_blueprint_locale(pd)  # the user's declared country/currency, never a guess
+    sync_blueprint_intake(pd)  # the user's declared locale and build level, never a guess
     bp = ProductBlueprint.model_validate(pd.blueprint)
     caps = [c.model_dump(mode="json") for c in bp.capabilities]
     cap_ids = {c["id"] for c in caps}
@@ -257,35 +324,6 @@ def apply_refinement(
             "refined": True,
             "action": action,
             "summary": f"Vertical set to '{vertical}'.",
-            "blueprint": pd.blueprint,
-            "yaml": blueprint_to_yaml(bp),
-        }
-
-    elif action == "set_rigor":
-        rigor = args["rigor"]
-        bp.rigor = rigor
-        pd.blueprint = bp.model_dump(mode="json")
-        pd.plan = None  # the bar changed; re-plan and re-stamp the harness
-        pd.generation = None
-        from app.factory.build.acceptance_floor import is_production_grade
-
-        if is_production_grade(bp):
-            bar = (
-                f"{rigor} — a production-grade build: the universal checks plus "
-                "the security scan and anything your brief declares (retrieval, "
-                "connectors) are enforced."
-            )
-        else:
-            bar = (
-                f"{rigor} — a disposable/test build: the universal 'does it work' "
-                "checks stay enforced, but the security scan is advisory. The gate "
-                "still enforces whatever your brief actually asks for."
-            )
-        return {
-            "ok": True,
-            "refined": True,
-            "action": action,
-            "summary": f"Build grade set to {bar}",
             "blueprint": pd.blueprint,
             "yaml": blueprint_to_yaml(bp),
         }
@@ -499,7 +537,7 @@ def approve_and_generate(
     if not pd.blueprint:
         raise ValueError("no blueprint drafted — describe the platform first")
 
-    sync_blueprint_locale(pd)  # the user's declared country/currency, never a guess
+    sync_blueprint_intake(pd)  # the user's declared locale and build level, never a guess
     bp = ProductBlueprint.model_validate(pd.blueprint)
     pd.blueprint_approved = True
     gated = _compile_and_lint_approved(state, bp)
@@ -556,31 +594,14 @@ def approve_and_generate(
     # download, so the runner engine gets its own honest message.
     if result.get("engine") == "runner":
         caps = len((pd.plan or {}).get("capabilities", []) or [])
-        from app.factory.build.auto_pilot import factory_auto_pilot_enabled
+        from app.factory.build.build_level import start_expectation
 
-        if factory_auto_pilot_enabled():
-            expect = (
-                "This is a Store-green run: code cycle, then a pilot cycle "
-                "(pytest -m pilot and WRITER rework) on the same workspace. "
-                "Watch it here — Finished / Download ready unlocks only when "
-                "the platform is pilot-ready."
-            )
-            takeover = (
-                f"{trigger_line}Build started for {result['product_id']}: the coding agent "
-                "has taken over the floor and is "
-                f"writing {caps} capability(ies) against the real block contracts. "
-            )
-        else:
-            expect = (
-                "This is a code-cycle pass (pytest -m 'not pilot'). "
-                "A SUCCESS here is a prototype, not pilot-ready. "
-                "The download will be labeled as a code-cycle prototype."
-            )
-            takeover = (
-                f"{trigger_line}Build started for {result['product_id']}: the coding agent "
-                "has taken over the floor and is "
-                f"writing {caps} capability(ies) against the real block contracts. "
-            )
+        expect = start_expectation(bp)
+        takeover = (
+            f"{trigger_line}Build started for {result['product_id']}: the coding agent "
+            "has taken over the floor and is "
+            f"writing {caps} capability(ies) against the real block contracts. "
+        )
         return {
             "ok": True,
             "generation": pd.generation,
@@ -1107,7 +1128,7 @@ def reseed_and_ingest_n3(
     if pd is None or not getattr(pd, "blueprint", None):
         raise ValueError("no blueprint — draft and approve before n3_reseed")
 
-    sync_blueprint_locale(pd)  # the user's declared country/currency, never a guess
+    sync_blueprint_intake(pd)  # the user's declared locale and build level, never a guess
     bp = ProductBlueprint.model_validate(pd.blueprint)
     out = _generation_output_dir(state, output_root)
     if out is None:
@@ -1204,7 +1225,7 @@ def start_fresh_generation(
         reply["already_running"] = True
         return reply
 
-    sync_blueprint_locale(pd)  # the user's declared country/currency, never a guess
+    sync_blueprint_intake(pd)  # the user's declared locale and build level, never a guess
     bp = ProductBlueprint.model_validate(pd.blueprint)
     pd.blueprint_approved = True
     if not pd.plan:
@@ -1395,7 +1416,7 @@ def resume_generation(
             state, output_root=output_root, triggered_by=resume_by
         )
 
-    sync_blueprint_locale(pd)  # the user's declared country/currency, never a guess
+    sync_blueprint_intake(pd)  # the user's declared locale and build level, never a guess
     bp = ProductBlueprint.model_validate(pd.blueprint)
     pd.blueprint_approved = True
     if not pd.plan:
@@ -1502,8 +1523,26 @@ def resume_pilot_cycle(
     pd = state.product_design
     if not pd or not pd.blueprint:
         raise ValueError("no blueprint drafted — describe the platform first")
-    sync_blueprint_locale(pd)  # the user's declared country/currency, never a guess
+    sync_blueprint_intake(pd)  # the user's declared locale and build level, never a guess
     bp = ProductBlueprint.model_validate(pd.blueprint)
+    from app.factory.build.build_level import bar_for
+
+    bar = bar_for(bp)
+    if bar is not None and not bar.reaches_pilot:
+        # The level is the single input: a prototype is DONE at CODE_GREEN.
+        # Climbing further is a different bar, so it is the user's to raise.
+        return {
+            "ok": True,
+            "sse": "info",
+            "summary": (
+                f"This build's level is {bar.level.value}: it is done at "
+                "CODE_GREEN and no pilot cycle opens. The level is frozen with "
+                "the approved blueprint; draft a new platform at light, pilot "
+                "or production to climb to the Store gate."
+            ),
+            "stream_delta": True,
+            "already_complete": True,
+        }
     pd.blueprint_approved = True
     if not pd.plan:
         pd.plan = plan_blueprint(bp, blocks_root=_blocks_root()).to_dict()

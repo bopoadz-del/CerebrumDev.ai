@@ -29,12 +29,15 @@ from ..core.llm_throttle import require_llm_rate
 from ..core.trial_limits import TrialLimitExceeded, require_remaining, require_within_limit
 from ..factory import platform_chat_flow, platform_chat_llm
 from ..factory.floor_actions import (
+    INTAKE_ACTIONS,
     REFINEMENT_ACTIONS,
     RUN_ACTIONS,
     FloorAction,
     FloorActionError,
     parse_action,
+    require_build_level,
 )
+from ..factory.locale_choice import intake_state
 from ..models.session import SessionState
 
 logger = logging.getLogger(__name__)
@@ -53,8 +56,9 @@ class ChatMessage(BaseModel):
     currency: Optional[str] = None
     #: What a Floor control asked the Factory to DO (app.factory.floor_actions:
     #: approve, continue, run_pilot, draft, add/remove_capability, rename,
-    #: set_vertical, set_rigor, list_capabilities) and its value. Typed --
-    #: the Factory never decides an action from the words in ``message``.
+    #: set_vertical, set_build_level, confirm_intake, list_capabilities) and
+    #: its value. Typed -- the Factory never decides an action from the words
+    #: in ``message``.
     action: Optional[str] = None
     value: Optional[str] = None
 
@@ -309,6 +313,10 @@ async def _yield_platform_result(result: dict) -> AsyncGenerator[str, None]:
         else:
             sse = "info"
     summary = result.get("summary") or ""
+    if result.get("intake") is not None:
+        # The Floor's intake line: the declared typed fields and any pending
+        # proposal, as their own event so no card has to carry them.
+        yield _sse_event("intake", json.dumps(result["intake"]))
     if sse in {"blueprint", "generation"}:
         yield _sse_event(sse, json.dumps(result))
     elif sse == "error":
@@ -379,8 +387,8 @@ async def _platform_turn(
     guidance = (
         "Use the Floor controls: Draft turns your brief into a feature list; "
         "Approve starts the coding agent; Continue resumes a build; the "
-        "feature-list editor, rename and grade controls change a pending "
-        "blueprint. Free-text conversation needs the Floor chat model, which "
+        "feature-list editor and rename change a pending blueprint; the "
+        "intake line sets the build level, vertical, country and currency. Free-text conversation needs the Floor chat model, which "
         "is not configured on this deployment."
     )
     result = {"sse": "info", "ok": True, "summary": guidance, "stream_delta": True}
@@ -391,6 +399,23 @@ async def _platform_turn(
 
 async def _typed_action(session_id, state, user_message, action, value, _record):
     """Dispatch a typed Floor action. Deterministic; no model, no prose."""
+    if action in INTAKE_ACTIONS:
+        result = platform_chat_flow.apply_intake_action(state, action, value)
+        _record(result)
+        async for ev in _yield_platform_result(result):
+            yield ev
+        return
+
+    if action in RUN_ACTIONS:
+        # No build without the user's chosen level -- no default, no guess.
+        refused = require_build_level(state.product_design)
+        if refused is not None:
+            refused = {**refused, "intake": intake_state(state.product_design)}
+            _record(refused)
+            async for ev in _yield_platform_result(refused):
+                yield ev
+            return
+
     if action in REFINEMENT_ACTIONS:
         refined = platform_chat_flow.apply_refinement(state, action, value)
         if refined is None:
@@ -480,6 +505,8 @@ async def _typed_action(session_id, state, user_message, action, value, _record)
 
 def _chat_starts_generation(state: SessionState, action: Optional[FloorAction]) -> bool:
     """True when this request's typed action will start or resume a build."""
+    if action in RUN_ACTIONS and require_build_level(state.product_design) is not None:
+        return False  # refused before anything starts: no level chosen
     if action is FloorAction.APPROVE:
         return platform_chat_flow.has_pending_blueprint(state)
     if action in RUN_ACTIONS:
@@ -513,12 +540,12 @@ async def chat(
     # The declared country/currency, and the stored blueprint kept carrying
     # exactly that pair on EVERY request -- a blueprint drafted mid-chat
     # picks it up before an approve starts the build.
-    from ..factory.locale_choice import apply_locale_choice, sync_blueprint_locale
+    from ..factory.locale_choice import apply_locale_choice, sync_blueprint_intake
 
     if body.country is not None or body.currency is not None:
         apply_locale_choice(state.product_design, body.country, body.currency)
         update_session(state.session_id, state)
-    elif sync_blueprint_locale(state.product_design):
+    elif sync_blueprint_intake(state.product_design):
         update_session(state.session_id, state)
     try:
         action = parse_action(body.action)

@@ -10,9 +10,9 @@ import {
   type BuildStatus,
   type ChatEvent,
   type DeclaredLocale,
+  type IntakeState,
   type ProductDesign,
   type TypedFloorAction,
-  RIGOR_LEVELS,
 } from './api/factory'
 import { FactoryCodeCliStatus, useFactoryCodeCliHonesty } from './factoryReadinessView'
 import {
@@ -38,6 +38,7 @@ import {
 import { LevelGradeStrip } from './levelGradeView'
 import { VerticalPicker } from './verticalPicker'
 import { LocalePicker } from './localePicker'
+import { IntakeLine } from './intakeLine'
 import { displayProductName, humanizeProductId, latestBlueprintIn } from './productDisplay'
 
 interface Capability {
@@ -56,8 +57,8 @@ interface ChatMsg {
   blueprint?: {
     product_name?: string
     vertical?: string
-    /** Declared build grade: prototype | light | standard | production. */
-    rigor?: string
+    /** The build level the user chose: prototype | light | pilot | production. */
+    build_level?: string | null
     summary?: string
     capabilities?: Capability[]
     drafting_mode?: string
@@ -248,23 +249,6 @@ export function BlueprintCard({
             >
               rename
             </button>{' '}
-            ·{' '}
-            <label>
-              Grade:{' '}
-              <select
-                data-testid="bp-rigor"
-                aria-label="Build grade"
-                disabled={busy}
-                value={blueprint.rigor ?? 'production'}
-                onChange={(e) => onRefine({ action: 'set_rigor', value: e.target.value })}
-              >
-                {RIGOR_LEVELS.map((level) => (
-                  <option key={level} value={level}>
-                    {level}
-                  </option>
-                ))}
-              </select>
-            </label>
           </div>
         </>
       )}
@@ -428,6 +412,11 @@ function coderTakeoverNote(build: BuildStatus | null): string | null {
         'inside the Store-built image. This is a code-green prototype, not a failed build.'
       return finished ? `${finished}. ${pending}` : pending
     }
+    if (build.build_level?.stop_gate === 'CODE') {
+      // The user chose prototype: CODE_GREEN is this build's finish line.
+      const done = `Built to ${build.build_level.build_level}: done at CODE_GREEN — the pilot suite and the Store gate do not run at this level.`
+      return finished ? `${finished}. ${done}` : done
+    }
     if (finished) {
       return (
         finished +
@@ -556,9 +545,12 @@ export function Floor({
   // Sent only when the user changed it, so a choice made another way (the
   // typed "vertical is ..." command) is never cleared by an untouched picker.
   const [verticalDirty, setVerticalDirty] = useState(false)
+  // The intake line: what the user declared and what the chat proposed.
+  const [intake, setIntake] = useState<IntakeState>({ declared: {}, proposal: null })
   const pickVertical = useCallback((v: string) => {
     setVertical(v)
     setVerticalDirty(true)
+    setIntake((prev) => ({ ...prev, declared: { ...prev.declared, vertical: v || null } }))
   }, [])
   const syncVertical = useCallback((v: string) => setVertical(v), [])
   // The country/currency the user declares (typed fields, shape-checked).
@@ -568,6 +560,14 @@ export function Floor({
   const pickLocale = useCallback((next: DeclaredLocale) => {
     setLocale(next)
     setLocaleDirty(true)
+    setIntake((prev) => ({
+      ...prev,
+      declared: {
+        ...prev.declared,
+        country: next.country || null,
+        currency: next.currency || null,
+      },
+    }))
   }, [])
   const syncLocale = useCallback((next: DeclaredLocale) => setLocale(next), [])
   const [busy, setBusy] = useState(false)
@@ -616,6 +616,24 @@ export function Floor({
           const seeded = design.generation?.build
           if (seeded) setCoderBuild((prev) => preferHonestBuild(seeded, prev))
         }
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [sessionId])
+
+  // The session's saved intake (declared fields + any pending proposal).
+  useEffect(() => {
+    let cancelled = false
+    Promise.resolve()
+      .then(() => product.verticals(sessionId))
+      .then((res) => {
+        if (cancelled || !res) return
+        if (res.intake) setIntake(res.intake)
+        if (res.chosen) setVertical(res.chosen)
+        if (res.country || res.currency)
+          setLocale({ country: res.country || '', currency: res.currency || '' })
       })
       .catch(() => {})
     return () => {
@@ -705,6 +723,13 @@ export function Floor({
               copy[copy.length - 1] = { ...last, text: last.text + token }
               return copy
             })
+            return
+          }
+          if (ev.event === 'intake') {
+            const d = (typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data) as IntakeState | null
+            if (d && typeof d === 'object' && d.declared) {
+              setIntake({ declared: d.declared, proposal: d.proposal ?? null })
+            }
             return
           }
           if (ev.event === 'blueprint') {
@@ -1174,7 +1199,7 @@ export function Floor({
           )}
           {coderSucceeded && (
             <div className="card-actions">
-              {!coderPilotReady && (
+              {!coderPilotReady && liveCoderBuild?.build_level?.stop_gate !== 'CODE' && (
                 <button
                   type="button"
                   data-testid="continue-to-pilot"
@@ -1279,19 +1304,28 @@ export function Floor({
           {newSessionError && <div className="error-box">{newSessionError}</div>}
         </div>
       )}
-      <VerticalPicker
-        sessionId={sessionId}
-        value={vertical}
-        onChange={pickVertical}
-        onLoaded={syncVertical}
-        onLocaleLoaded={syncLocale}
+      <IntakeLine
+        intake={intake}
+        onTyped={(typed) => void sendTyped(typed)}
         disabled={busy || coderBuilding || accessPaused}
-      />
-      <LocalePicker
-        country={locale.country}
-        currency={locale.currency}
-        onChange={pickLocale}
-        disabled={busy || coderBuilding || accessPaused}
+        editControls={
+          <>
+            <VerticalPicker
+              sessionId={sessionId}
+              value={vertical}
+              onChange={pickVertical}
+              onLoaded={syncVertical}
+              onLocaleLoaded={syncLocale}
+              disabled={busy || coderBuilding || accessPaused}
+            />
+            <LocalePicker
+              country={locale.country}
+              currency={locale.currency}
+              onChange={pickLocale}
+              disabled={busy || coderBuilding || accessPaused}
+            />
+          </>
+        }
       />
       <form
         className="composer"
