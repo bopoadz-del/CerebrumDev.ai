@@ -26,6 +26,9 @@ from typing import Any, Dict, Iterable, List, Optional
 FACTORY = "FACTORY"
 ENVIRONMENT = "ENVIRONMENT"
 PRODUCT = "PRODUCT"
+#: A writer test that contradicts the declared placeholder contract. The
+#: writer regenerates it; never a product failure, never a rework round.
+TEST_DEFECT = "TEST_DEFECT"
 
 _BUILD_DIR = Path(__file__).resolve().parent
 
@@ -136,6 +139,23 @@ def _is_product_failure(row: Dict[str, str]) -> bool:
     return _asserts_a_comparison(str(row.get("text") or ""))
 
 
+def _is_test_defect(row: Dict[str, str], factory_files: Iterable[str]) -> bool:
+    """A WRITER-authored test that asserted, and was answered the typed
+    refusal of a capability whose connectors are DECLARED placeholders.
+
+    Read from typed data only: the product's own refusal record for this
+    test (``placeholder_refusals``, from beside the JUnit report) and the
+    row's kind. The declared contract is the Factory's stamped test, so a
+    test demanding otherwise is wrong, not the product.
+    """
+    rel = str(row.get("file") or "").replace("\\", "/")
+    return (
+        bool(row.get("placeholder_refusals"))
+        and _row_kind(row) == "failure"
+        and rel not in set(factory_files)
+    )
+
+
 def generator_location(test_name: str, test_file: str) -> str:
     """``factory/build/<module>.py:<line>`` that emits this test, best effort."""
     base = Path(test_file or "").name
@@ -181,9 +201,17 @@ def classify(
     factory_files = {str(f).replace("\\", "/") for f in (factory_test_files or ())}
     behavior = {str(f).replace("\\", "/") for f in (behavior_test_files or ())}
     failing = _failing(verdict)
-    product_owned, factory_owned = [], []
+    product_owned, factory_owned, test_defects = [], [], []
     for row in failing:
         rel = str(row.get("file") or "").replace("\\", "/")
+        if _is_test_defect(row, factory_files):
+            test_defects.append(
+                {
+                    "nodeid": row.get("nodeid") or row.get("name"),
+                    "capabilities": list(row.get("placeholder_refusals") or []),
+                }
+            )
+            continue
         # A row outside the factory's own test files is product-owned by
         # definition. A row inside them is the factory's ONLY when the test
         # code itself broke, not when the product failed the test.
@@ -213,7 +241,8 @@ def classify(
         # still owes a fix, so the caller can name it in the note and halt.
         return {"owner": PRODUCT, "tests": [r.get("nodeid") or r.get("name") for r in product_owned],
                 "generator": "", "reason": reason,
-                "factory_owned": [r.get("nodeid") or r.get("name") for r in factory_owned]}
+                "factory_owned": [r.get("nodeid") or r.get("name") for r in factory_owned],
+                "test_defects": test_defects}
     if factory_owned:
         first = factory_owned[0]
         return {
@@ -221,7 +250,14 @@ def classify(
             "tests": [r.get("nodeid") or r.get("name") for r in factory_owned],
             "generator": generator_location(str(first.get("name") or ""), str(first.get("file") or "")),
             "reason": reason,
+            "test_defects": test_defects,
         }
+    if test_defects:
+        # Nothing the product did is wrong: only writer tests that demanded
+        # a live answer the declared contract forbids. The writer regenerates
+        # those tests; this is never a product failure.
+        return {"owner": TEST_DEFECT, "tests": [d["nodeid"] for d in test_defects],
+                "generator": "", "reason": reason, "test_defects": test_defects}
     out = {"owner": PRODUCT, "tests": [r.get("nodeid") or r.get("name") for r in failing],
            "generator": "", "reason": reason}
     if not failing:
@@ -231,7 +267,7 @@ def classify(
     return out
 
 
-def failure_names(verdict: Any) -> List[str]:
+def failure_names(verdict: Any, exclude: Iterable[str] = ()) -> List[str]:
     """Stable keys for G5's same-failure-twice rule, carrying the failure SHAPE.
 
     D3 (live 2026-09-29): G5 keyed on the nodeid alone, so a test that failed
@@ -243,10 +279,14 @@ def failure_names(verdict: Any) -> List[str]:
     ``failure``: they simply will not match a new ``[error]`` key, which costs
     at most one extra rework round -- never a false halt.
     """
+    # ``exclude``: test defects (classify) -- a writer test the declared
+    # contract contradicts is not a product failure, so it never counts
+    # toward the same-failure-twice rule.
+    skip = set(exclude or ())
     keys = []
     for row in _failing(verdict):
         nodeid = row.get("nodeid") or row.get("name")
-        if nodeid:
+        if nodeid and nodeid not in skip:
             keys.append(f"{nodeid} [{_row_kind(row)}]")
     if keys:
         return sorted(set(keys))
