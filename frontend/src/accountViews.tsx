@@ -545,6 +545,11 @@ function AdminOps() {
   const [msg, setMsg] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [hygiene, setHygiene] = useState<{
+    repo_size_kb?: number | null
+    last_run?: { at?: string; archived?: number; errors?: number; live_build_branches?: number } | null
+    detail?: string
+  } | null>(null)
 
   function saveKey(k: string) {
     setKey(k)
@@ -579,6 +584,11 @@ function AdminOps() {
       setEffective(d.effective || {})
       if (Array.isArray(d.provider_options)) setProviders(d.provider_options)
       setOpen(true)
+      try {
+        setHygiene(await adminFetch('/v1/admin/builds-hygiene'))
+      } catch {
+        setHygiene(null)
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'failed to load')
     } finally {
@@ -672,6 +682,21 @@ function AdminOps() {
           <button type="button" className="danger" disabled={busy} onClick={() => void reboot()}>
             Reboot Factory
           </button>
+          {hygiene && (
+            <p className="dim" data-testid="admin-builds-hygiene">
+              cerebrum-builds:{' '}
+              <strong className="mono">
+                {hygiene.repo_size_kb != null
+                  ? `${(hygiene.repo_size_kb / 1024).toFixed(1)} MB`
+                  : hygiene.detail || 'size unknown'}
+              </strong>
+              {hygiene.last_run
+                ? ` · last hygiene ${hygiene.last_run.at}: ${hygiene.last_run.archived ?? 0} archived, ` +
+                  `${hygiene.last_run.live_build_branches ?? 0} live build branches` +
+                  (hygiene.last_run.errors ? `, ${hygiene.last_run.errors} errors` : '')
+                : ' · no hygiene run recorded yet'}
+            </p>
+          )}
         </>
       )}
       {msg && <p className="dim note">{msg}</p>}

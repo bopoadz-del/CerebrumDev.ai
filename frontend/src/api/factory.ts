@@ -568,6 +568,13 @@ export type BuildStatus = {
   phase_trail?: PhaseTrailEntry[]
   /** F3: exact location + named reason of the failure, if any. */
   failure?: BuildFailure | null
+  /** A FAILED build is still a product: never certified, never green. */
+  certified?: boolean
+  /** FAILED(gate, check, finding), read once from the run's terminal event. */
+  failed?: { gate: string; check: string; finding: string } | null
+  failed_label?: string | null
+  /** One line: what the next Continue will try to fix. */
+  next_continue?: string
   /** The first failure of a run that went on to SUCCEED -- history, not an alert. */
   recovered_failure?: BuildFailure | null
   /** Client's delivery choice + repo URL when github_repo was delivered. */

@@ -76,6 +76,10 @@ class ProductDesignState(BaseModel):
     #: country?, currency?, build_level?}. A proposal only: it becomes the
     #: typed fields above solely through the typed ``confirm_intake`` action.
     intake_proposal: Optional[Dict[str, str]] = None
+    #: The platform's identity (``plt_<16 hex>``), minted ONCE at the first
+    #: approval and never derived from a name. ``build/<platform_id>`` on
+    #: cerebrum-builds is this platform's one branch of record, forever.
+    platform_id: Optional[str] = None
 
 
 class SessionState(BaseModel):

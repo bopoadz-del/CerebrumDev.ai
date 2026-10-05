@@ -63,6 +63,7 @@ from .product_architect import (
     session_domain_from_blueprint,
 )
 from .build.coder_session import NAMED_BLOCKER_CLI, CodeCliUnavailable
+from .build.platform_identity import ensure_platform_id, platform_id_of
 
 # --- Routing ---------------------------------------------------------------
 #
@@ -572,6 +573,7 @@ def approve_and_generate(
             quota_account_id=getattr(state, "user_id", None),
             tenant_identity=getattr(state, "user_id", None),
             brief=str(getattr(getattr(state, "product_design", None), "brief", "") or "").strip(),
+            platform_id=ensure_platform_id(state.product_design),
         )
     except CodeCliUnavailable as exc:
         return _cli_unavailable_reply(pd, exc)
@@ -1203,13 +1205,13 @@ def reseed_and_ingest_n3(
 def start_fresh_generation(
     state: Any,
     output_root: Optional[Path] = None,
-    triggered_by: str = "regex_fresh",
+    triggered_by: str = "start_over",
 ) -> Dict[str, Any]:
-    """Start a new auto-pilot cycle on a new workspace after a terminal failure.
+    """A new workspace for the platform -- reached ONLY through start_over().
 
-    Same blueprint hash is allowed — the previous RUN_FAILED / rework-
-    exhausted ledger is not a resume source. The new dir gets a reset
-    rework budget so #287 auto-pilot and #288 payload contracts can run.
+    The old head is already tagged when this runs. The platform keeps its
+    one branch: the fresh run's phases are pushed onto build/<platform_id>
+    (phase-forward), so the branch's history holds both runs.
     """
     pd = state.product_design
     if not pd or not pd.blueprint:
@@ -1247,15 +1249,11 @@ def start_fresh_generation(
             "build": st,
         }
 
-    from app.factory.build_jobs import next_fresh_output, reattach_point
+    from app.factory.build_jobs import next_fresh_output
 
     prior = _generation_output_dir(state, output_root)
     base = prior or _session_output(state.session_id, bp.product_id, output_root)
-    # G2: a failed run whose workspace is intact and whose COLLECTOR/CLONER/
-    # WRITER passed is RE-ENTERED, not rebuilt. start_runner_build records
-    # "RESUMED workspace=... phase=..." in that ledger.
-    phase, _why = reattach_point(base) if prior else (None, "no prior run")
-    out = Path(base) if phase is not None else next_fresh_output(base)
+    out = next_fresh_output(base) if prior else Path(base)
     prior_hash = (pd.generation or {}).get("inputs_hash")
     try:
         result = generate_product(
@@ -1266,6 +1264,8 @@ def start_fresh_generation(
             quota_account_id=getattr(state, "user_id", None),
             tenant_identity=getattr(state, "user_id", None),
             brief=str(getattr(getattr(state, "product_design", None), "brief", "") or "").strip(),
+            platform_id=ensure_platform_id(state.product_design),
+            start_over=True,
         )
     except CodeCliUnavailable as exc:
         return _cli_unavailable_reply(pd, exc)
@@ -1286,10 +1286,9 @@ def start_fresh_generation(
     prior_dir = str(prior) if prior else None
     new_dir = result.get("output_dir")
     summary = (
-        f"Starting a fresh build for {result['product_id']} on a new workspace. "
-        "The previous run failed (rework exhausted or gates still red) and "
-        "will not be resumed — the rework budget is reset. This is not a "
-        "same-hash resume."
+        f"Started over: a fresh build of {result['product_id']} on a new "
+        "workspace. The previous run's head is kept as an archive tag on the "
+        "platform's branch -- nothing was deleted."
     )
     return {
         "ok": True,
@@ -1306,6 +1305,161 @@ def start_fresh_generation(
         "summary": summary,
         "build": result.get("build"),
     }
+
+
+#: The typed reason Continue answers when a failed platform has neither a
+#: workspace on this host nor a branch of record to re-enter.
+NOTHING_TO_RESUME = "NOTHING_TO_RESUME"
+
+
+def resume_failed_platform(
+    state: Any,
+    output_root: Optional[Path] = None,
+    triggered_by: str = "continue",
+) -> Dict[str, Any]:
+    """Continue / Build again / Rebuild with new intake on a FAILED platform.
+
+    One platform = one branch, forever: the failed run is RESUMED in its own
+    workspace at its first non-green phase, with the rework budget reset
+    (start_runner_build records the reset; the runner rule counts from it).
+    It is never replaced by a fresh workspace -- that is Start over only. A
+    workspace this host no longer holds is re-entered from the platform's
+    branch of record (restored from its archive tag if it was archived).
+    """
+    from app.factory.build.platform_identity import branch_of_record, platform_id_of
+
+    pd = state.product_design
+    if not pd or not pd.blueprint:
+        raise ValueError("no blueprint drafted — describe the platform first")
+    sync_blueprint_intake(pd)  # the user's declared locale and build level, never a guess
+    bp = ProductBlueprint.model_validate(pd.blueprint)
+    pd.blueprint_approved = True
+    if not pd.plan:
+        pd.plan = plan_blueprint(bp, blocks_root=_blocks_root()).to_dict()
+
+    prior = _generation_output_dir(state, output_root)
+    if prior is None or not Path(prior).is_dir():
+        pid = platform_id_of(pd)
+        from app.factory.build.builds_push import builds_token
+
+        if pid and builds_token(os.environ):
+            reply = attach_from_link(state, branch_of_record(pid), output_root=output_root)
+            if reply is not None:
+                return reply
+        return {
+            "ok": False,
+            "sse": "info",
+            "refused": NOTHING_TO_RESUME,
+            "summary": (
+                "This platform's workspace is not on this host and it has no "
+                "branch of record to re-enter. Press Start over to build it again "
+                "from the approved feature list; the old run is kept, not deleted."
+            ),
+            "awaiting_action": "start_over",
+            "stream_delta": True,
+        }
+
+    live = _live_build_thread(bp.product_id)
+    if live is not None:
+        reply = running_build_reply(state)
+        reply["already_running"] = True
+        return reply
+
+    before = _generation_status(state, output_root) or {}
+    try:
+        result = generate_product(
+            bp,
+            Path(prior),
+            blocks_root=_blocks_root(),
+            cycle=_resume_cycle(state, output_root),
+            quota_account_id=getattr(state, "user_id", None),
+            tenant_identity=getattr(state, "user_id", None),
+            brief=str(getattr(pd, "brief", "") or "").strip(),
+            platform_id=ensure_platform_id(pd),
+        )
+    except CodeCliUnavailable as exc:
+        return _cli_unavailable_reply(pd, exc)
+    _record_generation(pd, result, triggered_by=triggered_by, resumed=True)
+    pd.last_error = None
+    failed = before.get("failed") or {}
+    target = failed.get("check") or "the failing check"
+    summary = (
+        f"Resuming {bp.product_id} on its own branch at {failed.get('gate') or 'the failing phase'} "
+        f"with a fresh rework budget — the writer is sent {target}. "
+        "Phases that already passed are not rerun."
+    )
+    return {
+        "ok": True,
+        "sse": "generation",
+        "generation": pd.generation,
+        "plan": pd.plan,
+        "triggered_by": triggered_by,
+        "resumed": True,
+        "fresh": False,
+        "output_dir": result.get("output_dir"),
+        "stream_delta": False,
+        "summary": summary,
+        "build": result.get("build"),
+    }
+
+
+def start_over(
+    state: Any,
+    output_root: Optional[Path] = None,
+    triggered_by: str = "start_over",
+) -> Dict[str, Any]:
+    """The typed Floor action "Start over": the ONLY door to a fresh workspace.
+
+    First the platform's current head is tagged ``archive/<platform_id>/<date>``
+    (nothing is deleted) and the tag is recorded in the run's ledger; only then
+    is a fresh workspace created. A tag that cannot be written stops here --
+    no fresh workspace without the old head kept."""
+    from app.factory.build.builds_push import builds_token
+
+    pd = state.product_design
+    if not pd or not pd.blueprint:
+        raise ValueError("no blueprint drafted — describe the platform first")
+    pid = ensure_platform_id(pd)
+    archived = None
+    if builds_token(os.environ):
+        from app.factory.build.platform_branch import builds_remote, tag_head_for_archive
+
+        try:
+            archived = tag_head_for_archive(builds_remote(), pid)
+        except Exception as exc:  # noqa: BLE001 -- a reply, and nothing is created
+            return {
+                "ok": False,
+                "sse": "info",
+                "summary": (
+                    f"Start over stopped before anything changed: the current "
+                    f"head could not be tagged for safekeeping ({exc})."
+                ),
+                "stream_delta": True,
+            }
+    prior = _generation_output_dir(state, output_root)
+    if prior is not None and Path(prior).is_dir():
+        from app.factory.build.ledger import BuildLedger, EventKind
+
+        ledger = BuildLedger(Path(prior) / "build_ledger.jsonl")
+        if ledger.exists():
+            ledger.append(
+                EventKind.NOTE,
+                detail=(
+                    f"START OVER: head kept as {archived.tag}@{archived.sha[:7]}"
+                    if archived
+                    else "START OVER: no branch head to keep"
+                ),
+                payload={
+                    "start_over": True,
+                    "archived_tag": archived.tag if archived else None,
+                    "archived_sha": archived.sha if archived else None,
+                },
+            )
+    reply = start_fresh_generation(state, output_root=output_root, triggered_by=triggered_by)
+    reply["archived"] = (
+        {"tag": archived.tag, "sha": archived.sha} if archived else None
+    )
+    return reply
 
 
 def attach_from_link(
@@ -1333,6 +1487,22 @@ def attach_from_link(
     if not branch:
         return None
 
+    from app.factory.build.platform_identity import platform_id_from_branch
+
+    archived_pid = platform_id_from_branch(branch)
+    if archived_pid:
+        # Continue on an archived platform: recreate its branch from the
+        # newest archive tag before attaching (no-op when the branch exists).
+        from app.factory.build.builds_push import builds_token
+
+        if builds_token(os.environ):
+            from app.factory.build.platform_branch import builds_remote, restore_branch
+
+            try:
+                restore_branch(builds_remote(), archived_pid)
+            except Exception as exc:  # noqa: BLE001 -- a reply, not a crash
+                return {"ok": False, "sse": "info", "stream_delta": True,
+                        "summary": f"Could not restore {branch} from its archive tag: {exc}"}
     session_id = branch.split("/", 1)[1].split("-", 1)[0]
     parent = (
         Path(output_root) / "attached"
@@ -1346,6 +1516,12 @@ def attach_from_link(
 
     bp = ProductBlueprint.model_validate(got.blueprint)
     pd = state.product_design
+    from app.factory.build.platform_identity import platform_id_from_branch
+
+    adopted = platform_id_from_branch(branch)
+    if adopted:
+        # The branch IS the platform: a pasted platform branch carries its id.
+        pd.platform_id = adopted
     pd.blueprint = got.blueprint
     pd.blueprint_approved = True
     if got.plan:
@@ -1365,6 +1541,7 @@ def attach_from_link(
             attach_branch=got.branch,
             attach_sha=got.sha,
             attach_passed=got.passed,
+            platform_id=platform_id_of(pd),
         )
     except CodeCliUnavailable as exc:
         return _cli_unavailable_reply(pd, exc)
@@ -1409,11 +1586,9 @@ def resume_generation(
             state, output_root=output_root, triggered_by=triggered_by
         )
     if is_generation_terminal_failure(state, output_root):
-        resume_by = (
-            "chat_llm" if triggered_by == "chat_llm" else "regex_fresh"
-        )
-        return start_fresh_generation(
-            state, output_root=output_root, triggered_by=resume_by
+        # One platform = one branch: a failed run is resumed, never replaced.
+        return resume_failed_platform(
+            state, output_root=output_root, triggered_by=triggered_by
         )
 
     sync_blueprint_intake(pd)  # the user's declared locale and build level, never a guess
@@ -1455,6 +1630,7 @@ def resume_generation(
             quota_account_id=getattr(state, "user_id", None),
             tenant_identity=getattr(state, "user_id", None),
             brief=str(getattr(getattr(state, "product_design", None), "brief", "") or "").strip(),
+            platform_id=ensure_platform_id(state.product_design),
         )
     except CodeCliUnavailable as exc:
         return _cli_unavailable_reply(pd, exc)
@@ -1574,6 +1750,7 @@ def resume_pilot_cycle(
             quota_account_id=getattr(state, "user_id", None),
             tenant_identity=getattr(state, "user_id", None),
             brief=str(getattr(getattr(state, "product_design", None), "brief", "") or "").strip(),
+            platform_id=ensure_platform_id(state.product_design),
         )
     except CodeCliUnavailable as exc:
         return _cli_unavailable_reply(pd, exc)
@@ -1692,11 +1869,9 @@ def start_or_resume_coder(
     if adopted is not None:
         return adopted
     if is_generation_terminal_failure(state, output_root):
-        fresh_by = (
-            "chat_llm" if triggered_by == "chat_llm" else "regex_fresh"
-        )
-        return start_fresh_generation(
-            state, output_root=output_root, triggered_by=fresh_by
+        # One platform = one branch: a failed run is resumed, never replaced.
+        return resume_failed_platform(
+            state, output_root=output_root, triggered_by=triggered_by
         )
     if is_generation_resumable(state):
         resume_by = (

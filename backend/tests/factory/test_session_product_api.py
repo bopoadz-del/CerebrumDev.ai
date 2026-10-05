@@ -421,9 +421,16 @@ def test_failed_build_downloads_as_is_only_when_asked(client, tmp_path):
     assert "EXPORTED-AS-IS.md" in names, "the as-is marker must ship in the zip"
     note = zf.read("EXPORTED-AS-IS.md").decode("utf-8")
     assert "suite is red" in note, "the marker names the gate that rejected it"
-    assert "MANIFEST.json" not in names, (
-        "an as-is zip must carry NO certification manifest -- it failed"
-    )
+    # Owner rule (2026-10-05): a failed build is still a product. Its zip
+    # carries a MANIFEST.json that says so -- certified:false and the exact
+    # failing gate/check/finding -- never a certification claim.
+    import json as _json
+
+    manifest = _json.loads(zf.read("MANIFEST.json"))
+    assert manifest["certified"] is False
+    assert manifest["failed"]["gate"] == "TESTER"
+    assert "suite is red" in manifest["failed"]["finding"]
+    assert "release_tag" not in manifest and "ci_run" not in manifest
     # The in-house exclusions still hold: same is_exported() filter.
     assert "docs/writer_prompt.txt" not in names
     assert "README.md" in names

@@ -948,8 +948,8 @@ export function Floor({
   const [rerunError, setRerunError] = useState<string | null>(null)
   async function rerunWriter() {
     // The failed run's honest next action is a retry: POST /product/generate
-    // resumes the failed workspace at its stopped phase, or opens a fresh
-    // __runN when the ledger is terminal -- the server decides which.
+    // resumes the platform's own workspace at its stopped phase with a fresh
+    // rework budget. A fresh workspace is only ever the typed Start over.
     setRerunBusy(true)
     setRerunError(null)
     try {
@@ -1259,6 +1259,16 @@ export function Floor({
               </button>
             </div>
           )}
+          {coderFailed && liveCoderBuild?.failed_label && (
+            <p className="muted" data-testid="floor-failed-label">
+              {liveCoderBuild.failed_label}
+            </p>
+          )}
+          {coderFailed && liveCoderBuild?.next_continue && (
+            <p className="muted" data-testid="floor-next-continue">
+              {liveCoderBuild.next_continue}
+            </p>
+          )}
           {coderFailed && (
             <div className="card-actions">
               <span className="status-pill status-pill-failed" data-testid="floor-failed-pill">
@@ -1285,6 +1295,16 @@ export function Floor({
               </button>
               <button type="button" className="ghost" onClick={goPlatforms}>
                 Open Your Platforms
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                data-testid="floor-start-over"
+                title="Build this platform again from the approved feature list on a fresh workspace. The current head is kept as an archive tag; nothing is deleted."
+                disabled={busy || rerunBusy || accessPaused}
+                onClick={() => void sendTyped({ action: 'start_over' })}
+              >
+                Start over
               </button>
               {onNewSession && (
                 <button

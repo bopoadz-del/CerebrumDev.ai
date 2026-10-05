@@ -83,6 +83,17 @@ from app.factory.build.authority import BUILD_PHASES, BuildRole
 LEDGER_SCHEMA = "build_ledger.v1"
 
 
+#: NOTE payload key a Floor resume ("Continue", "Build again", a pasted
+#: branch link) writes before re-entering a failed run: the runner rule's
+#: rework budget counts rounds from the latest such marker, so a resumed
+#: platform gets its budget back while its history stays in the ledger.
+REWORK_BUDGET_RESET = "rework_budget_reset"
+
+#: NOTE payload keys recording a platform's identity and its branch of record.
+PLATFORM_ID_KEY = "platform_id"
+PLATFORM_BRANCH_KEY = "platform_branch"
+
+
 class EventKind(str, Enum):
     RUN_STARTED = "RUN_STARTED"
     PHASE_STARTED = "PHASE_STARTED"

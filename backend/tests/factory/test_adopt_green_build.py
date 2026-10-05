@@ -70,4 +70,4 @@ def test_the_continue_door_tries_adoption_before_rebuilding():
     from app.factory import platform_chat_flow as f
 
     src = inspect.getsource(f.start_or_resume_coder)
-    assert src.index("_adopt_green_build") < src.index("start_fresh_generation")
+    assert src.index("_adopt_green_build") < src.index("resume_failed_platform")

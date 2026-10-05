@@ -196,6 +196,44 @@ def build_manifest(
     }
 
 
+def failed_export_manifest(
+    status: Dict[str, Any],
+    *,
+    product_id: str,
+    platform_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """The MANIFEST.json a FAILED build ships with on "Download as-is".
+
+    A failed build is still a product, but never a certified one: the
+    manifest names the exact failing gate, check and finding, the acceptance
+    score (k/N), the level it was built to, and ``certified: false``. It makes
+    no store, acceptance or pilot claim."""
+    from app.factory.build.failure_record import (
+        acceptance_score,
+        failed_label,
+        failure_triple,
+    )
+
+    triple = status.get("failed") or failure_triple({}, status.get("failure")) or {
+        "gate": "unknown",
+        "check": str(status.get("state") or "unknown"),
+        "finding": str(status.get("detail") or ""),
+    }
+    return {
+        "schema": MANIFEST_SCHEMA,
+        "product_id": product_id,
+        "platform_id": platform_id,
+        "certified": False,
+        "build_state": status.get("state"),
+        "failed": dict(triple),
+        "failed_label": failed_label(triple),
+        "acceptance": acceptance_score(status),
+        "build_level": status.get("build_level"),
+        "advisory_checks": list(status.get("advisory_checks") or []),
+        "next_continue": status.get("next_continue") or "",
+    }
+
+
 def write_export_manifest(product_root: Path | str, manifest: Dict[str, Any]) -> Path:
     root = Path(product_root)
     path = root / MANIFEST_FILENAME

@@ -38,6 +38,11 @@ class FloorAction(str, Enum):
     #: session's typed fields; the model's proposal alone stores nothing.
     CONFIRM_INTAKE = "confirm_intake"
     LIST_CAPABILITIES = "list_capabilities"
+    #: The ONLY action that gives a platform a fresh workspace. It first tags
+    #: the platform's current head ``archive/<platform_id>/<date>`` and records
+    #: it in the ledger; nothing is deleted. Continue (and every other run
+    #: action) resumes the platform's one branch instead.
+    START_OVER = "start_over"
     #: The legacy kit-chain configurator (chain suggestion over the user's
     #: documents) -- reached by this typed action, never by kit vocabulary.
     CHAIN = "chain"
@@ -64,7 +69,9 @@ VALUE_REQUIRED = frozenset(
 )
 
 #: Actions that start or resume the coding agent.
-RUN_ACTIONS = frozenset({FloorAction.APPROVE, FloorAction.CONTINUE, FloorAction.RUN_PILOT})
+RUN_ACTIONS = frozenset(
+    {FloorAction.APPROVE, FloorAction.CONTINUE, FloorAction.RUN_PILOT, FloorAction.START_OVER}
+)
 
 
 #: The committed, shared action spec (repo-relative). The SPA, its browser e2e
