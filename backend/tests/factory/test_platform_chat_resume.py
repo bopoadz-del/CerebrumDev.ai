@@ -105,7 +105,9 @@ def test_successful_generation_is_not_resumable(tmp_path):
 
 
 def test_start_coder_on_approved_incomplete_resumes_not_pending_error(tmp_path, monkeypatch):
-    """The live Floor reply was 'no blueprint pending'. start_coder must resume."""
+    """The live Floor reply was 'no blueprint pending'. A resumable run is
+    resumed -- by the typed Continue action (owner ruling: the chat model's
+    start_coder decision never builds; it points at the Continue control)."""
     state = _state_with_approved_run(tmp_path)
     captured = {}
 
@@ -124,11 +126,15 @@ def test_start_coder_on_approved_incomplete_resumes_not_pending_error(tmp_path, 
         }
 
     monkeypatch.setattr(platform_chat_flow, "generate_product", fake_generate)
-    result = platform_chat_llm.apply_decision(
+    pointer = platform_chat_llm.apply_decision(
         state, "continue", {"action": "start_coder"}
     )
+    assert pointer.get("awaiting_action") == "continue"
+    assert "no blueprint" not in (pointer.get("summary") or "").lower()
+    assert not captured, "the model's start_coder decision must not build"
+
+    result = platform_chat_flow.start_or_resume_coder(state)
     assert "no blueprint" not in (result.get("summary") or "").lower()
-    assert "pending" not in (result.get("summary") or "").lower() or result.get("resumed")
     assert result.get("resumed") is True
     assert captured["output_dir"] == state.product_design.generation["output_dir"]
     assert state.product_design.generation["inputs_hash"] == "231361dfa711same"
