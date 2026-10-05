@@ -301,11 +301,17 @@ def test_query_adapter_creates_missing_table_instead_of_records_error():
 
 
 def test_document_engine_parse_adapter_stubs_pdf_libs():
-    src = emit_document_engine_parse("def parse(self, data):\n    return data\n")
+    # The stub covers the modules the code reads PdfReader from, decided on
+    # the syntax tree; a module that reads PdfReader from nowhere is untouched
+    # whatever it is called.
+    plain = "def parse(self, data):\n    return data\n"
+    assert emit_document_engine_parse(plain) == plain
+    assert emit_runtime_module("document_engine", plain) == plain
+    reader = "from PyPDF2 import PdfReader\n\ndef parse(self, data):\n    return PdfReader(data)\n"
+    src = emit_document_engine_parse(reader)
     assert DOC_PARSE_UNWIRED_MARKER in src
-    for name in ("pypdf", "PyPDF2", "pdfplumber"):
-        assert name in src
-    assert emit_runtime_module("document_engine", "def parse(self, data):\n    return data\n") == src
+    assert "for _pdf_name in ('PyPDF2',):" in src
+    assert emit_runtime_module("zorblat_docs", reader) == src
 
 
 def test_unrepaired_veterinary_domain_json_still_refused():
