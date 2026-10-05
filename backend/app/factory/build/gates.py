@@ -784,11 +784,14 @@ def gate_tester_contract(ctx: GateContext) -> GateResult:
     product, plus a one-record round-trip per capability (R1e) -- rather
     than the same suite runner with a different marker.
     """
+    from app.factory.build.brief_gates import SUITE_CHECK, declare_check
     from app.factory.build.product_gate import gate_product
 
     if (ctx.cycle or "code").strip().lower() == "pilot":
         return gate_product(ctx)
-    return gate_suite_green(ctx)
+    # The verdict names the brief check it measures, so the runner can tell
+    # a failure the brief defined from one the Factory invented.
+    return declare_check(gate_suite_green(ctx), SUITE_CHECK)
 
 
 def gate_store_ops_authorised(ctx: GateContext) -> GateResult:

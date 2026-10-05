@@ -1,7 +1,7 @@
 # GATES.md — Platform Build Gates (canonical)
 
 The gate checklist every platform build must pass before it is pushed,
-and the improvement loop that runs after every build.
+and the rule that decides whether a gate may fail a build at all.
 
 **Canonical home**: this file, in the Factory (`bopoadz-del/CerebrumDev.ai`).
 **Binding on**: every writer (human or AI) building a platform product
@@ -68,11 +68,17 @@ product repo carries the gate artifacts and fails otherwise.
 
 ---
 
-## Post-run improvement loop (every build)
+## A gate exists only if a brief can turn it on
 
-1. **Gates**: every failure this run that a gate would have caught is added here (PR to the Factory).
-2. **Store**: the block/pattern that would have prevented it is updated in Cerebrum-Blocks, at a new pinned commit.
-3. **Product**: the product repo re-vendors at the new commit and regenerates its lock.
+A gate failure the brief never defined means the GATE is wrong, not the
+product: the gate goes advisory immediately, with the reason in the ledger,
+and no patch is written. A gate exists only if a brief can turn it on.
+
+Enforcement: the build runner classifies every round's failures as
+brief-defined or factory-invented BEFORE any writer dispatch. A
+factory-invented failure is recorded as an advisory ledger event (check id +
+reason) and never reaches the writer; a round whose failures are all
+factory-invented ends with no writer round spent.
 
 ### Run history (latest first)
 
