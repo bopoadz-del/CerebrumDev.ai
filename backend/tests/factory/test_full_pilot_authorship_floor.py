@@ -853,7 +853,12 @@ def test_lettings_draft_writes_residential_lettings_domain(monkeypatch):
 
     drafted = client.post(
         "/v1/sessions/sess_lettings_domain/product/draft",
-        json={"brief": "build a platform for residential lettings"},
+        # The vertical is the Floor's structured hint; the brief's prose is
+        # not parsed for one.
+        json={
+            "brief": "build a platform for residential lettings",
+            "vertical_hint": "residential_lettings",
+        },
     )
     assert drafted.status_code == 200, drafted.text
     assert drafted.json()["blueprint"]["product_id"] == "residential-lettings"

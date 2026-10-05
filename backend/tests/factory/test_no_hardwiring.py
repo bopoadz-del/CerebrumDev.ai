@@ -102,18 +102,31 @@ class _Blueprint:
     summary = "Track zorblats."
 
 
-@pytest.mark.parametrize("cap_id, owes_rag", [
-    ("storage_management", False),  # "rag" inside "storage" is not a token
-    ("leverage_tracker", False),
-    ("fragment_index", False),
-    ("rag", True),
-    ("zorblat_rag_answers", True),
-    ("rag-search", True),
-])
-def test_a_rag_surface_is_a_whole_token_of_the_capability_id(cap_id, owes_rag):
-    compiled = compile_brief(_Blueprint(), _Plan(_Cap(cap_id, ["database"])), store_ids={"database"})
-    assert inventory_needs_rag(compiled) is owes_rag
+def _store_root(tmp_path, reads_by_block):
+    """An invented Store: each block's block.json declares the given reads."""
+    import json
 
+    root = tmp_path / "store"
+    for bid, reads in reads_by_block.items():
+        d = root / "block_registry" / bid
+        d.mkdir(parents=True)
+        (d / "block.json").write_text(json.dumps({"id": bid, "reads": reads}), encoding="utf-8")
+    return root
+
+
+@pytest.mark.parametrize("cap_id, block_id, owes_rag", [
+    ("zorblat_rag_answers", "zorblat_ledger", False),  # "rag" in the name decides nothing
+    ("storage_management", "zorblat_index", True),     # the bound block retrieves
+    ("rag", "zorblat_ledger", False),
+])
+def test_a_rag_surface_follows_what_the_bound_block_declares(tmp_path, monkeypatch, cap_id, block_id, owes_rag):
+    root = _store_root(tmp_path, {
+        "zorblat_index": [{"kind": "database", "scope": "vector"}],
+        "zorblat_ledger": [{"kind": "database", "scope": "sql"}],
+    })
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(root))
+    compiled = compile_brief(_Blueprint(), _Plan(_Cap(cap_id, [block_id])), store_ids={block_id})
+    assert inventory_needs_rag(compiled) is owes_rag
 
 # --- the word-list form ---------------------------------------------------------
 
@@ -170,3 +183,134 @@ def test_protocol_members_are_interfaces_and_the_same_body_elsewhere_is_a_stub(t
     bad = subprocess.run([sys.executable, str(script)], cwd=tmp_path,
                          capture_output=True, text=True, check=False)
     assert bad.returncode == 1 and "pkg/impl.py" in bad.stdout and "iface.py" not in bad.stdout
+
+
+# --- the phrase-match form --------------------------------------------------------
+
+
+@pytest.mark.parametrize("src", [
+    'def f(message: str):\n    return "zorblat refused" in message\n',
+    'def f(out: str):\n    return out.lower().startswith("zorblat")\n',
+    'import re\ndef f(log: str):\n    return re.search("zorblat failed", log)\n',
+    'def f(detail: str):\n    return detail == "zorblat went wrong"\n',
+    'def f(e):\n    return "zorblat" in str(e)\n',
+    # A phrase check inside a code template the Factory emits is still code.
+    'TEMPLATE = """\nimport sys\n\ndef check(text: str):\n    return "zorblat" in text\n\n\nprint(1)\n"""\n',
+])
+def test_a_single_phrase_used_as_a_decision_on_text_is_caught(src):
+    assert _gate().phrase_matches(src), src
+
+
+@pytest.mark.parametrize("src", [
+    '"""A docstring may say zorblat failed."""\n',
+    '# a comment may say "zorblat" in message\nx = 1\n',
+    'def f(p: str):\n    return p.endswith(".py") or "/" in p\n',
+    'def f(rec: dict):\n    return rec.get("zorblat")\n',
+    'def f(kind: str):\n    return kind == "zorblat"\n',  # one token: closed vocabulary
+])
+def test_prose_paths_keys_and_closed_vocabulary_are_not_phrases(src):
+    assert _gate().phrase_matches(src) == [], src
+
+
+# -- group C: prose and log signals became typed ---------------------------
+
+
+def test_a_model_call_closes_on_a_typed_field_not_a_sentence():
+    from types import SimpleNamespace
+
+    from app.factory.build.model_call import CLOSED, MODEL_CALL_STATE
+    from app.factory.build_jobs import _open_model_call_note
+
+    opened = SimpleNamespace(detail="zorblat started", payload={"model_call": True})
+    worded = SimpleNamespace(detail="zorblat session finished", payload={})
+    closed = SimpleNamespace(detail="", payload={MODEL_CALL_STATE: CLOSED})
+    # The words of a NOTE close nothing; the typed field does.
+    assert _open_model_call_note([opened, worded]) is opened
+    assert _open_model_call_note([opened, closed]) is None
+
+
+def test_a_provenance_stamp_is_classified_by_exact_vocabulary():
+    from app.factory.build.authorship import (
+        TEMPLATED_SOURCE,
+        factory_grounded_sources,
+        is_factory_grounded_source,
+        is_templated_source,
+    )
+
+    for stamp in factory_grounded_sources():
+        assert is_factory_grounded_source(stamp)
+    assert is_templated_source(TEMPLATED_SOURCE)
+    # A stamp that merely CONTAINS the words is not one of the Factory's.
+    assert not is_factory_grounded_source("zorblat factory-grounded thing")
+    assert not is_templated_source("zorblat deterministic template copy")
+
+
+def test_a_named_blocker_is_read_by_position():
+    from app.factory.build.coder_session import named_blocker_of
+
+    assert named_blocker_of("ZORBLAT_BLOCKER: the reason, with a colon: here") == "ZORBLAT_BLOCKER"
+    assert named_blocker_of("no blocker token in this sentence") == ""
+
+
+def test_an_unreachable_github_is_typed_at_the_raise_site():
+    from app.factory.build import n3_store_gate as n3
+    from app.factory.build.builds_push import BuildsPushError
+
+    assert n3.is_infrastructure_error(BuildsPushError("zorblat", unreachable=True))
+    # The old message words carry no meaning on their own.
+    assert not n3.is_infrastructure_error(BuildsPushError("GitHub API down: HTTP 401"))
+
+
+def test_failure_ownership_parses_the_failing_assert_as_code():
+    from app.factory.build.failure_owner import _asserts_a_comparison
+
+    assert _asserts_a_comparison(">       assert zorblat(x) == quux\nE   AssertionError")
+    assert _asserts_a_comparison(">   assert ok, (key, got, want)")
+    assert not _asserts_a_comparison(">   assert False, 'zorblat broke'")
+    assert not _asserts_a_comparison("prose saying assert x == y without source")
+
+
+# -- samples follow declarations; source questions go to the parser --------
+
+
+def test_a_field_name_alone_implies_no_sample_shape():
+    """Only what a field declares shapes its sample. Names that used to imply
+    an address, a time, a status, a channel or an id imply nothing."""
+    from app.factory.build.roles_handlers import _sample_value
+
+    for name in ("zorblat_email", "zorblat_at", "zorblat_date", "zorblat_time",
+                 "zorblat_status", "zorblat_channel", "zorblat_id", "is_zorblat"):
+        assert _sample_value({"name": name, "type": "str"}) == "sample", name
+    assert "@" in _sample_value({"name": "quux", "type": "str", "format": "email"})
+    assert _sample_value({"name": "quux", "type": "time"}) == "10:00:00"
+    assert _sample_value({"name": "quux", "type": "str", "allowed_values": ["b", "c"]}) == "b"
+
+
+def test_source_questions_are_answered_by_the_syntax_tree():
+    """A word in a comment or a string is not the code it names."""
+    from app.factory.build.offline_adapters import (
+        _defines,
+        _import_is_guarded,
+        _references_module,
+        _tree,
+    )
+    from app.factory.build.roles_handlers import _dotted_mentions, _persists_directly
+    from app.factory.build.workflow_accept import handler_has_prepared_event_bus_step
+
+    prose = '"""import zorblat_mod; def zorblat_fn(): store.save(x)"""\n# zorblat_mod.helper\n'
+    assert not _references_module(prose, "zorblat_mod")
+    assert not _defines(prose, "zorblat_fn")
+    assert not _persists_directly(prose)
+    assert _references_module("import zorblat_mod.helper\n", "zorblat_mod")
+    assert _defines("def zorblat_fn():\n    pass\n", "zorblat_fn")
+    code, words = _dotted_mentions("import app.core.zorblat\nX = 'app.core.quux'\n")
+    assert "app.core.zorblat" in code and "app.core.quux" in words
+    # An import that is the whole body of an ImportError guard stays; one
+    # that shares its try body with other statements does not count.
+    guarded = "try:\n    from zorblat_pkg import thing\nexcept ImportError:\n    thing = None\n"
+    shared = "try:\n    from zorblat_pkg import thing\n    use(thing)\nexcept ImportError:\n    thing = None\n"
+    assert _import_is_guarded(_tree(guarded), 2)
+    assert not _import_is_guarded(_tree(shared), 2)
+    # The prepared-step keys must be BOUND in code, not mentioned in text.
+    mention = "# 'topic' 'message' payload={ channel='mcp' action='publish' 'event_bus'\n"
+    assert handler_has_prepared_event_bus_step(mention) is False

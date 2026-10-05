@@ -70,20 +70,25 @@ def _all_signals() -> frozenset:
     )
 
 
-def _binds_a_retrieving_block(blueprint: Any) -> bool:
-    """True when a capability binds a Store block that declares the retrieval
-    read -- decided by what the Store's signed manifests say, never by the
-    words of the brief or the name of a block."""
-    bound = {
-        str(b)
-        for cap in (getattr(blueprint, "capabilities", None) or [])
-        for b in (getattr(cap, "block_ids", None) or [])
-    }
+def binds_retrieving_block(block_ids: Any, store_root: Any = None) -> bool:
+    """True when any of ``block_ids`` is a Store block whose own signed
+    block.json declares the retrieval read -- decided by what the Store's
+    manifests say, never by the words of a brief or the name of a block."""
+    bound = {str(b).strip() for b in (block_ids or ()) if str(b).strip()}
     if not bound:
         return False
     from app.factory.store_kits import blocks_declaring_read
 
-    return bool(bound & blocks_declaring_read(*RETRIEVAL_READ))
+    return bool(bound & blocks_declaring_read(*RETRIEVAL_READ, store_root=store_root))
+
+
+def _binds_a_retrieving_block(blueprint: Any) -> bool:
+    """True when a capability binds a retrieving Store block."""
+    return binds_retrieving_block(
+        b
+        for cap in (getattr(blueprint, "capabilities", None) or [])
+        for b in (getattr(cap, "block_ids", None) or [])
+    )
 
 
 def brief_signals(blueprint: Any) -> frozenset:

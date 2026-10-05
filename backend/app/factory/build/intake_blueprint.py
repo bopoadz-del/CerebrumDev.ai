@@ -231,8 +231,13 @@ def reconstruct_intake_from_chat(
     turns: Sequence[Mapping[str, Any]],
     *,
     use_llm: bool = False,
+    vertical_hint: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Replay intake chat through the architect, then stamp provenance.
+
+    The vertical is the user's typed choice -- ``vertical_hint``, else the
+    ``vertical`` field the Floor recorded on the customer's turn -- never
+    read from the brief's words.
 
     Lettings golden chat reconstructs the golden YAML roster — proof the
     compiler is honest, not a second capability list.
@@ -244,7 +249,8 @@ def reconstruct_intake_from_chat(
     brief = _turn_text(user)
     if not brief.strip():
         raise IntakeBlueprintError("golden chat has no customer brief")
-    bp = draft_blueprint_from_brief(brief, use_llm=use_llm)
+    chosen = vertical_hint or (user.get("vertical") if isinstance(user, Mapping) else None)
+    bp = draft_blueprint_from_brief(brief, use_llm=use_llm, vertical_hint=chosen or None)
     plan = plan_blueprint(bp)
     pack = synthesize_domain_pack(bp, plan)
     return intake_from_product_blueprint(

@@ -193,7 +193,7 @@ def _posix_shell():
         return None
     try:
         probe = subprocess.run(
-            [found, "-c", "echo posix-ok"],
+            [found, "-c", "exit 0"],
             capture_output=True,
             text=True,
             errors="replace",
@@ -201,7 +201,8 @@ def _posix_shell():
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    return found if "posix-ok" in (probe.stdout or "") else None
+    # The shell RAN when it exits 0 -- the launcher with no distro does not.
+    return found if probe.returncode == 0 else None
 
 
 @pytest.mark.skipif(
@@ -223,6 +224,8 @@ def test_a_backup_restores_with_its_rows(tmp_path):
     env = dict(os.environ)
     env["STORAGE_PATH"] = str(storage)
     env["DATABASE_URL"] = ""
+    if shutil.which("sqlite3") is None:
+        pytest.skip("the sqlite3 CLI is not on this runner")
     out = subprocess.run(
         [bash, str(SCRIPT), str(tmp_path / "backups")],
         cwd=str(ROOT),
@@ -231,8 +234,6 @@ def test_a_backup_restores_with_its_rows(tmp_path):
         errors="replace",
         env=env,
     )
-    if out.returncode != 0 and "sqlite3" in (out.stderr or ""):
-        pytest.skip("the sqlite3 CLI is not on this runner")
     assert out.returncode == 0, out.stdout + out.stderr
     printed = out.stdout.strip().splitlines()
     assert printed, "backup.sh printed no path"

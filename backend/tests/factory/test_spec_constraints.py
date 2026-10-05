@@ -49,20 +49,22 @@ def test_a_vocabulary_field_samples_from_its_own_vocabulary():
     assert _sample_value(field) in field["allowed_values"]
 
 
-def test_an_email_field_samples_an_address_not_the_word_sample():
+def test_a_declared_email_field_samples_an_address():
     """Live winery-hospitality zip: club_waitlist.guest_email='sample'
-    failed the writer's 'must be a valid email' check. The field name is
-    the constraint vocabulary cannot express."""
-    assert "@" in _sample_value({"name": "guest_email", "type": "str"})
-    assert "@" in _sample_value({"name": "email", "type": "str", "format": "email"})
+    failed the writer's 'must be a valid email' check. The declaration
+    (type or format ``email``) carries that constraint -- never the name."""
+    assert "@" in _sample_value({"name": "zorblat", "type": "email"})
+    assert "@" in _sample_value({"name": "zorblat", "type": "str", "format": "email"})
+    # A name implies nothing the spec did not declare.
+    assert _sample_value({"name": "guest_email", "type": "str"}) == "sample"
     assert _sample_value({"name": "tasting_note", "type": "str"}) == "sample"
 
 
-def test_appointment_time_fields_sample_iso_not_the_word_sample():
-    """Live veterinary-care: scheduled_time='sample' is not a time."""
-    assert _sample_value({"name": "scheduled_time", "type": "str"}) == "10:00:00"
-    assert _sample_value({"name": "appointment_date", "type": "str"}) == "2026-09-03"
-    assert _sample_value({"name": "created_at", "type": "str"}) == "2026-09-03T10:00:00"
+def test_a_declared_temporal_field_samples_iso_not_the_word_sample():
+    """Live veterinary-care: scheduled_time='sample' is not a time. The spec
+    declares the type or format; the name decides nothing."""
+    assert _sample_value({"name": "zorblat", "type": "time"}) == "10:00:00"
+    assert _sample_value({"name": "zorblat", "type": "date"}) == "2026-09-03"
     assert _sample_value({"name": "visit", "type": "datetime"}) == "2026-09-03T10:00:00"
     assert _sample_value({"name": "when", "type": "str", "format": "datetime"}) == (
         "2026-09-03T10:00:00"
@@ -72,23 +74,25 @@ def test_appointment_time_fields_sample_iso_not_the_word_sample():
         _sample_value({"name": "listing_uid", "type": "uuid"})
         == "00000000-0000-4000-8000-000000000001"
     )
-    assert _sample_value({"name": "service_type", "type": "str"}) == "sample"
     assert _sample_value({"name": "duration_minutes", "type": "int", "min": 1}) == 1
+    # Names alone: neutral samples.
+    assert _sample_value({"name": "scheduled_time", "type": "str"}) == "sample"
+    assert _sample_value({"name": "created_at", "type": "str"}) == "sample"
+    assert _sample_value({"name": "service_type", "type": "str"}) == "sample"
 
 
-def test_channel_fields_sample_a_store_known_value_not_the_word_sample():
-    """Live sess_67fe60f7: automated_reminders schema sample was channel=sample."""
-    from app.factory.build.block_inputs import STORE_NOTIFICATION_CHANNELS
-
-    assert _sample_value({"name": "channel", "type": "str"}) != "sample"
-    assert _sample_value({"name": "channel", "type": "str"}) in STORE_NOTIFICATION_CHANNELS
-    assert _sample_value({"name": "notify_channel", "type": "str"}) != "sample"
+def test_a_declared_vocabulary_samples_a_store_deliverable_value():
+    """Live sess_67fe60f7: automated_reminders schema sample was channel=sample.
+    A declared vocabulary that holds a Store-deliverable channel samples it,
+    whatever the field is called; an undeclared field samples neutrally."""
     assert _sample_value(
-        {"name": "channel", "type": "str", "allowed_values": ["sms", "email"]}
+        {"name": "zorblat", "type": "str", "allowed_values": ["sms", "email"]}
     ) == "email"
     assert _sample_value(
-        {"name": "channel", "type": "str", "allowed_values": ["sms", "push"]}
+        {"name": "zorblat", "type": "str", "allowed_values": ["sms", "push"]}
     ) == "sms"
+    assert _sample_value({"name": "channel", "type": "str"}) == "sample"
+    assert _sample_value({"name": "notify_channel", "type": "str"}) == "sample"
 
 
 def test_coder_route_that_saves_the_handle_envelope_is_rewritten_to_payload():
@@ -134,7 +138,7 @@ def test_the_dataclass_default_is_itself_valid():
     assert _field_default({"name": "s", "type": "str", "allowed_values": ["a", "b"]}) == "'a'"
     assert _field_default({"name": "n", "type": "int", "min": 3}) == "3"
     assert _field_default({"name": "n", "type": "int"}) == "0"
-    assert _field_default({"name": "scheduled_time", "type": "str"}) == "'10:00:00'"
+    assert _field_default({"name": "zorblat", "type": "time"}) == "'10:00:00'"
 
 
 def test_datetime_typed_field_renders_as_compilable_str():

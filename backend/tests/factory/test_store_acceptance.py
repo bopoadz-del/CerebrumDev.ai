@@ -598,17 +598,59 @@ def test_rag_roundtrip_hit_fails_closed_against_an_echo_only_stub(tmp_path):
     never silently drift from what every generated product actually ships.
     """
     check_fn, ns = _load_check_rag_roundtrip_hit(tmp_path)
-    ns["_has_rag_surface"] = lambda: True
+    ns["RETRIEVES"] = True
     status, detail = check_fn(_EchoOnlyHttp())
     assert status == "FAIL", f"echo-only stub must not pass rag_roundtrip_hit, got: {status} {detail}"
 
 
 def test_rag_roundtrip_hit_passes_against_real_retrieval(tmp_path):
     check_fn, ns = _load_check_rag_roundtrip_hit(tmp_path)
-    ns["_has_rag_surface"] = lambda: True
+    ns["RETRIEVES"] = True
     status, detail = check_fn(_RealRetrievalHttp())
     assert status == "PASS", f"genuine plant->retrieve must pass, got: {status} {detail}"
 
+
+
+def test_rag_roundtrip_hit_skips_only_when_no_bound_block_retrieves(tmp_path):
+    """Applicability is the rendered contract (RETRIEVES), not a word search
+    over the product's files, ids or routes."""
+    check_fn, ns = _load_check_rag_roundtrip_hit(tmp_path)
+    ns["RETRIEVES"] = False
+    status, _ = check_fn(_RealRetrievalHttp())
+    assert status == "SKIP"
+
+
+class _EchoUnderAnotherNameHttp(_EchoOnlyHttp):
+    """Echoes the query back under a field name no list would contain."""
+
+    def request(self, method, path, json=None, headers=None, **_kw):
+        body = json or {}
+        if path == "/v1/rag/query":
+            return _EchoResp(200, {"zorblat_said": body.get("query")})
+        return super().request(method, path, json=json, headers=headers)
+
+
+def test_an_echo_under_any_field_name_still_fails(tmp_path):
+    check_fn, ns = _load_check_rag_roundtrip_hit(tmp_path)
+    ns["RETRIEVES"] = True
+    status, detail = check_fn(_EchoUnderAnotherNameHttp())
+    assert status == "FAIL", detail
+
+
+def test_a_prefixed_contract_route_the_product_declares_is_found_by_shape(tmp_path):
+    """The product mounted the contract's RAG routes under a prefix and declared
+    them in its committed openapi.json: found by path segments, not words."""
+    check_fn, ns = _load_check_rag_roundtrip_hit(tmp_path)
+    ns["RETRIEVES"] = True
+    docs = tmp_path / "docs"
+    docs.mkdir(parents=True, exist_ok=True)
+    (docs / "openapi.json").write_text(json.dumps({"paths": {
+        "/v1/zorblat/rag/ingest": {"post": {}},
+        "/v1/zorblat/rag/query": {"post": {}},
+        "/v1/zorblat/other": {"post": {}},
+    }}), encoding="utf-8")
+    routes = ns["_contract_routes"](ns["RAG_INGEST_PATHS"])
+    assert "/v1/zorblat/rag/ingest" in routes and "/v1/zorblat/other" not in routes
 
 # -- F3: the security scan's VERDICT is on the floor, not just its presence -----
 
@@ -653,3 +695,47 @@ def test_audit_clean_passes_only_when_the_scan_ran_and_is_clean(tmp_path, monkey
     monkeypatch.setenv("STORE_AUDIT_CLEAN", "1")
     check_fn, _ = _load_named_check(tmp_path, "check_audit_clean")
     assert check_fn()[0] == "PASS"
+
+
+def test_the_stamped_harness_judges_authorship_without_factory_code(tmp_path):
+    """A delivered product carries no Factory package; the harness's
+    authorship_floor must still decide from the product's own stamps."""
+    import subprocess
+    import sys
+    import textwrap
+
+    from app.factory.build.authorship import AGENT_SOURCE_PREFIXES
+    from app.factory.build.store_acceptance import render_acceptance_script
+
+    harness = render_acceptance_script(None)
+    assert "app.factory" not in harness
+    product = tmp_path / "product"
+    (product / "scripts").mkdir(parents=True)
+    (product / "scripts" / "acceptance.py").write_text(harness, encoding="utf-8")
+    actions = product / "app" / "actions"
+    actions.mkdir(parents=True)
+    for i in range(5):
+        (actions / f"zorblat_{i}.py").write_text(
+            f'"""Written by the factory WRITER role ({AGENT_SOURCE_PREFIXES[0]} x)."""\n',
+            encoding="utf-8",
+        )
+    probe = textwrap.dedent(
+        """
+        import importlib.util, sys
+        spec = importlib.util.spec_from_file_location("acc", "scripts/acceptance.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        print(*mod.check_authorship_floor())
+        """
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", probe], cwd=product, capture_output=True, text=True,
+        env={
+            "PATH": "",
+            "SYSTEMROOT": __import__("os").environ.get("SYSTEMROOT", ""),
+            "PYTHONIOENCODING": "utf-8",
+        },
+        encoding="utf-8",
+    )
+    assert out.returncode == 0, out.stderr[-600:]
+    assert out.stdout.startswith("PASS"), out.stdout

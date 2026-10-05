@@ -37,6 +37,10 @@ AUTH_REL = Path("app") / "auth.py"
 #: graded on thirteen checks nothing ever told it about -- see
 #: app/factory/build/acceptance_floor.py.
 from app.factory.build.acceptance_floor import advisory_ids as _floor_advisory_ids
+from app.factory.build.authorship import AGENT_SOURCE_EXACT as _AGENT_SOURCE_EXACT
+from app.factory.build.authorship import AGENT_SOURCE_PREFIXES as _AGENT_SOURCE_PREFIXES
+from app.factory.build.authorship import FULL_PILOT_MIN_AUTHORED_ACTIONS as _FULL_PILOT_MIN_AUTHORED
+from app.factory.build.authorship import _WRITER_ROLE_STAMP_RE as _AUTHOR_STAMP_RE
 from app.factory.build.acceptance_floor import check_ids as _floor_check_ids
 
 ACCEPTANCE_CHECK_NAMES: tuple[str, ...] = _floor_check_ids()
@@ -852,6 +856,15 @@ def render_acceptance_script(blueprint: Any = None) -> str:
     one — byte-for-byte what it was before brief-driven applicability existed."""
     names = ", ".join(repr(n) for n in ACCEPTANCE_CHECK_NAMES)
     advisory = ", ".join(repr(n) for n in sorted(_floor_advisory_ids(blueprint)))
+    from app.factory.build.acceptance_floor import brief_signals
+    from app.factory.build.writer_phases import RAG_INGEST_PATHS, RAG_QUERY_PATHS
+
+    # Decided here, from the build's declared contract: does a capability bind
+    # a block whose signed manifest declares the retrieval read, and which
+    # routes does the platform contract give the RAG surface.
+    retrieves = "retrieval" in brief_signals(blueprint)
+    rag_ingest = list(RAG_INGEST_PATHS)
+    rag_query = list(RAG_QUERY_PATHS)
     return _with_deploy_time_settings(f'''#!/usr/bin/env python3
 """Store-green acceptance — ≥12 measured checks. Presence-only is a fail.
 
@@ -877,6 +890,12 @@ CHECKS = [{names}]
 # Reported and scored, never a veto -- same source as CHECKS (the floor file).
 ADVISORY = [{advisory}]
 REQUIRED = {ACCEPTANCE_REQUIRED}
+# The build's retrieval contract, rendered by the Factory from its blueprint:
+# whether a capability binds a block that declares the vector-store read, and
+# the platform's RAG routes. Never inferred from names or words at run time.
+RETRIEVES = {retrieves!r}
+RAG_INGEST_PATHS = {rag_ingest!r}
+RAG_QUERY_PATHS = {rag_query!r}
 
 
 def _token() -> str:
@@ -1025,44 +1044,6 @@ def _required_and_enum(cap_id: str) -> Tuple[Optional[str], Optional[Tuple[str, 
     return required, enum
 
 
-def _has_rag_surface() -> bool:
-    for rel in (
-        ROOT / "docs" / "rag" / "dual_rag.json",
-        ROOT / "docs" / "coder_receipt.json",
-    ):
-        if not rel.is_file():
-            continue
-        try:
-            blob = rel.read_text(encoding="utf-8").lower()
-        except OSError:
-            continue
-        if "rag" in blob:
-            return True
-    try:
-        from app.models import MODELS
-
-        if any("rag" in str(k).lower() for k in MODELS):
-            return True
-    except Exception:
-        pass
-    try:
-        from app.jobs import CAPABILITIES
-
-        for item in CAPABILITIES or []:
-            ident = item.get("id") if isinstance(item, dict) else item
-            if "rag" in str(ident).lower():
-                return True
-    except Exception:
-        pass
-    main = ROOT / "app" / "main.py"
-    routes = ROOT / "app" / "routes.py"
-    text = ""
-    for path in (main, routes):
-        if path.is_file():
-            text += path.read_text(encoding="utf-8")
-    return bool(re.search(r"/v1/(steward/)?rag|/v1/dual_rag", text))
-
-
 def check_no_token_401(http: _Http) -> Tuple[str, str]:
     cap = _first_cap()
     if not cap:
@@ -1131,55 +1112,28 @@ def check_ui_served_200(http: _Http) -> Tuple[str, str]:
     return "FAIL", "GET / was 200 but not served UI (content-type=%s)" % ctype
 
 
-def _declared_v1_paths(match) -> List[str]:
-    """POST-able /v1 paths the PRODUCT declares, filtered by ``match``.
-
-    The plant/query paths used to be a hand-kept list, and four of the eight
-    named one product's routes (/v1/steward/rag/*, /v1/dual_rag_estate_docs).
-    Any product that calls its retrieval surface something else -- which is
-    every product with a different brief -- failed with "plant did not
-    accept" while having working retrieval. openapi.json is committed and
-    current (the floor requires it), so the product declares its own routes
-    and this reads them.
-    """
-    doc_path = ROOT / "docs" / "openapi.json"
+def _contract_routes(contract: List[str]) -> List[str]:
+    """The contract's routes, plus every POST route the PRODUCT declares in its
+    committed openapi.json whose path ends with the same segments -- the same
+    route mounted under a prefix. Matched by path shape, never by words."""
+    out = list(contract)
+    tails = [[s for s in str(p).split("/") if s][1:] for p in contract]
     try:
-        doc = json.loads(doc_path.read_text(encoding="utf-8"))
+        doc = json.loads((ROOT / "docs" / "openapi.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return []
-    out = []
+        return out
     for path, ops in (doc.get("paths") or {{}}).items():
-        name = str(path)
-        if not name.startswith("/v1/"):
+        if not isinstance(ops, dict) or "post" not in {{str(k).lower() for k in ops}}:
             continue
-        if not isinstance(ops, dict) or "post" not in {{k.lower() for k in ops}}:
-            continue
-        if match(name.lower()):
-            out.append(name)
+        segs = [s for s in str(path).split("/") if s]
+        if any(tail and segs[-len(tail):] == tail for tail in tails) and path not in out:
+            out.append(path)
     return out
 
 
-def _rag_ingest_paths() -> List[str]:
-    declared = _declared_v1_paths(
-        lambda n: ("ingest" in n or "upload" in n or "index" in n or "add" in n)
-        and ("rag" in n or "doc" in n or "knowledge" in n or "corpus" in n or "ingest" in n)
-    )
-    # The product declares its routes; the platform contract is the only
-    # fallback. No product's routes are listed here.
-    return declared + [k for k in ("/v1/rag/ingest",) if k not in declared]
-
-
-def _rag_query_paths() -> List[str]:
-    declared = _declared_v1_paths(
-        lambda n: ("query" in n or "search" in n or "ask" in n or "retriev" in n)
-        and ("rag" in n or "doc" in n or "knowledge" in n or "corpus" in n or "query" in n)
-    )
-    return declared + [k for k in ("/v1/rag/query",) if k not in declared]
-
-
 def check_rag_roundtrip_hit(http: _Http) -> Tuple[str, str]:
-    if not _has_rag_surface():
-        return "SKIP", "no-rag-surface"
+    if not RETRIEVES:
+        return "SKIP", "no capability binds a block that declares the retrieval read"
     # The nonce identifies the planted content and MUST NEVER be sent as part
     # of the query request itself -- a prior version queried the exact phrase
     # it POSTed (and even resent the planted "text" in the query body), so any
@@ -1190,7 +1144,7 @@ def check_rag_roundtrip_hit(http: _Http) -> Tuple[str, str]:
     nonce = uuid.uuid4().hex[:12]
     absent_nonce = uuid.uuid4().hex[:12]
     marker = "ACCEPTANCE-PLANT-%s the reorder threshold procedure" % nonce
-    ingest_paths = _rag_ingest_paths()
+    ingest_paths = _contract_routes(RAG_INGEST_PATHS)
     planted = False
     for path in ingest_paths:
         resp = http.request(
@@ -1204,40 +1158,40 @@ def check_rag_roundtrip_hit(http: _Http) -> Tuple[str, str]:
             break
     if not planted:
         return "FAIL", "RAG surface present but plant did not accept"
-    query_paths = _rag_query_paths()
+    query_paths = _contract_routes(RAG_QUERY_PATHS)
 
-    def _content_hit(resp: Any, needle: str) -> bool:
-        # Only fields that are supposed to carry RETRIEVED content count --
-        # never the raw response text (which can just be a request echo) and
-        # never a field named "query"/"q" (which IS the request echoed back).
+    def _content_hit(resp: Any, needle: str, sent: Dict[str, Any]) -> bool:
+        # Retrieved content only: every top-level field whose value is exactly
+        # something the request sent is the request echoed back and is
+        # dropped, then the rest of the answer is searched. No field name is
+        # assumed -- an endpoint that only echoes has nothing left to search.
         if resp.status_code != 200:
             return False
         try:
             data = resp.json()
         except Exception:
             return False
+        if isinstance(data, list):
+            return needle in json.dumps(data).lower()
         if not isinstance(data, dict):
             return False
-        for key in ("hits", "results", "items", "matches", "chunks", "answer", "citations"):
-            val = data.get(key)
-            if val is None:
-                continue
-            if needle in json.dumps(val).lower():
-                return True
-        return False
+        echoed = {{json.dumps(v, sort_keys=True) for v in sent.values()}}
+        kept = {{
+            k: v for k, v in data.items()
+            if json.dumps(v, sort_keys=True) not in echoed
+        }}
+        return needle in json.dumps(kept).lower()
 
     positive_hit = False
     negative_leak = False
     for path in query_paths:
-        pos_resp = http.request(
-            "post", path, json={{"q": marker, "query": marker}}, headers=_auth(),
-        )
-        if _content_hit(pos_resp, nonce.lower()):
+        pos_sent = {{"q": marker, "query": marker}}
+        pos_resp = http.request("post", path, json=pos_sent, headers=_auth())
+        if _content_hit(pos_resp, nonce.lower(), pos_sent):
             positive_hit = True
-        neg_resp = http.request(
-            "post", path, json={{"q": absent_nonce, "query": absent_nonce}}, headers=_auth(),
-        )
-        if _content_hit(neg_resp, absent_nonce.lower()):
+        neg_sent = {{"q": absent_nonce, "query": absent_nonce}}
+        neg_resp = http.request("post", path, json=neg_sent, headers=_auth())
+        if _content_hit(neg_resp, absent_nonce.lower(), neg_sent):
             negative_leak = True
         if positive_hit or negative_leak:
             break
@@ -1863,13 +1817,17 @@ def check_cross_tenant_404(http: _Http) -> Tuple[str, str]:
 
 
 def check_authorship_floor() -> Tuple[str, str]:
-    from app.factory.build.authorship import (  # type: ignore
-        agent_written_handler_ids_in_workspace,
-        full_pilot_authorship_from,
-    )
-
-    # Prefer in-tree provenance so the product can judge itself without the
-    # factory. Fall back to counting action modules tagged agent-written.
+    # Judge the product by the product. The WRITER's docstring stamp is the
+    # one signal, and its vocabulary is the Factory's canonical one
+    # (the Factory's authorship module) RENDERED in here at stamp time: a
+    # delivered product never carries the Factory package, and importing it
+    # failed this line on every honest build (2026-10-04, ModuleNotFoundError;
+    # it only ever passed when a writer had copied Factory code into the
+    # product).
+    stamp_re = re.compile({_AUTHOR_STAMP_RE.pattern!r})
+    agent_prefixes = {tuple(_AGENT_SOURCE_PREFIXES)!r}
+    agent_exact = {sorted(_AGENT_SOURCE_EXACT)!r}
+    floor_min = {_FULL_PILOT_MIN_AUTHORED}
     receipt = {{}}
     for rel in ("docs/coder_receipt.json", "docs/build_provenance.json"):
         path = ROOT / rel
@@ -1878,41 +1836,25 @@ def check_authorship_floor() -> Tuple[str, str]:
                 receipt.update(json.loads(path.read_text(encoding="utf-8")))
             except (OSError, ValueError):
                 pass
-    # No receipt means no receipt -- not "authored nothing". The factory
-    # record (docs/coder_receipt.json, docs/build_provenance.json) is
-    # internal and does not ship, so asking it here would fail every
-    # delivered product. The stamp in each handler's own docstring is what
-    # this check is ABOUT, it is in the tree, and it is what the floor line
-    # asks the writer for. Judge the product by the product.
-    floor = None
-    if receipt:
+    actions = ROOT / "app" / "actions"
+    authored = 0
+    for path in (sorted(actions.glob("*.py")) if actions.is_dir() else []):
         try:
-            floor = full_pilot_authorship_from(receipt, ROOT)
-        except Exception:
-            floor = None
-    if floor is not None:
-        if floor.meets_floor:
-            return "PASS", "need≥%s action_py=%s cli=%s" % (
-                floor.need,
-                floor.action_py,
-                len(floor.cli_authored_ids),
-            )
-        return "FAIL", "below floor need≥%s action_py=%s" % (floor.need, floor.action_py)
-    # ONE source of truth for "the coding agent wrote this": the WRITER's own
-    # docstring stamp, read by the factory's canonical detector. A private
-    # substring list here drifted behind the writer -- it still looked for the
-    # pre-CodeWhale markers (CODER_MODEL / coding agent / coder CLI), so every
-    # CodeWhale-authored product counted authored=0 while shipping ten stamped
-    # handlers (live 2026-10-01, automotive_aiops: acceptance 20/21, and this
-    # line was the 1). No receipt ships with a delivered product, so this is
-    # the path every real product takes -- judge the product by its own stamp.
-    authored = len(agent_written_handler_ids_in_workspace(ROOT))
+            head = path.read_text(encoding="utf-8", errors="replace")[:4000]
+        except OSError:
+            continue
+        match = stamp_re.search(head)
+        if not match:
+            continue
+        source = match.group(1).strip()
+        if source.startswith(tuple(agent_prefixes)) or source.lower() in agent_exact:
+            authored += 1
     n_required = receipt.get("n_required") or receipt.get("n_required_capabilities")
     try:
         n_required = int(n_required) if n_required is not None else None
     except (TypeError, ValueError):
         n_required = None
-    need = 5 if n_required is None else min(5, max(1, int(n_required)))
+    need = floor_min if not n_required or n_required <= 0 else min(floor_min, max(1, n_required))
     if authored >= need:
         return "PASS", "authored=%s need≥%s" % (authored, need)
     return "FAIL", "authored=%s below need≥%s" % (authored, need)

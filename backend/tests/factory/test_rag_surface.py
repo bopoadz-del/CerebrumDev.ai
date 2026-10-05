@@ -147,10 +147,12 @@ def test_keep_path_skips_when_quoted_steward_routes_already_landed(tmp_path):
 def test_keep_path_skips_non_rag_inventory(tmp_path):
     from app.factory.build.brief_compiler import compile_brief
 
+    # No bound block declares the retrieval read, so there is no RAG surface
+    # to plant -- whatever the capability is called.
     compiled = compile_brief(
         _Blueprint(),
-        _Plan(_Cap("patient_records_management", ["vector_search"], "REUSE")),
-        store_ids={"vector_search"},
+        _Plan(_Cap("patient_records_management", ["database"], "REUSE")),
+        store_ids={"database"},
     )
     assert emit_factory_grounded_rag_surface(tmp_path, compiled) == []
     assert not (tmp_path / RAG_ROUTES_REL).exists()

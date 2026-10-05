@@ -29,7 +29,9 @@ ENVIRONMENT = "ENVIRONMENT"
 PRODUCT = "PRODUCT"
 
 _BUILD_DIR = Path(__file__).resolve().parent
-_FAILED_LINE = re.compile(r"^(?:FAILED|ERROR)\s+(\S+?\.py)(?:::(\S+))?")
+_FAILED_LINE = re.compile(r"^(FAILED|ERROR)\s+(\S+?\.py)(?:::(\S+))?")
+#: pytest's short-summary status token -> the failure SHAPE.
+_STATUS_KIND = {"FAILED": "failure", "ERROR": "error"}
 
 
 def _failing(verdict: Any) -> List[Dict[str, str]]:
@@ -42,7 +44,7 @@ def _failing(verdict: Any) -> List[Dict[str, str]]:
         text = str(line)
         m = _FAILED_LINE.match(text)
         if m:
-            name = (m.group(2) or "").split("::")[-1]
+            name = (m.group(3) or "").split("::")[-1]
             # Keep the "- <ExcType>: ..." tail: it is the only signal in the
             # fallback path of whether the product failed an assertion (its
             # fault) or the test code itself broke (the factory's).
@@ -52,10 +54,13 @@ def _failing(verdict: Any) -> List[Dict[str, str]]:
             # G5 must not collapse (D3): a stripped stub that errors at import
             # and a real assertion carry the same nodeid but are not the same
             # failure.
-            kind = "error" if text.lstrip().upper().startswith("ERROR") else "failure"
-            out.append({"file": m.group(1), "nodeid": m.group(1) + ("::" + m.group(2) if m.group(2) else ""),
+            kind = _STATUS_KIND[m.group(1)]
+            # pytest's summary tail is "<ExcType>: <message>": the class is
+            # the token before the first colon, read by position.
+            exc_type = tail.strip().partition(":")[0].strip()
+            out.append({"file": m.group(2), "nodeid": m.group(2) + ("::" + m.group(3) if m.group(3) else ""),
                         "name": name, "innermost": "", "message": tail.strip(), "text": text,
-                        "kind": kind})
+                        "kind": kind, "exc_type": exc_type})
     return out
 
 
@@ -65,6 +70,59 @@ def _row_kind(row: Dict[str, str]) -> str:
     no kind (older ledgers), which keeps the pre-D3 behaviour for those."""
     kind = str(row.get("kind") or "").strip().lower()
     return kind if kind in ("error", "failure") else "failure"
+
+
+def _exc_type(row: Dict[str, str]) -> str:
+    """The failure's exception class: the typed field, else the token pytest
+    puts first in a failure message (``<ExcType>: <detail>``), by position."""
+    typed = str(row.get("exc_type") or "").strip()
+    if typed:
+        return typed
+    return str(row.get("message") or "").partition(":")[0].strip()
+
+
+def _is_assertion_failure(row: Dict[str, str]) -> bool:
+    """The failure's exception class is AssertionError."""
+    return _exc_type(row) == AssertionError.__name__
+
+
+def _message_is_a_comparison_tuple(row: Dict[str, str]) -> bool:
+    """The assertion's message is a ``(key, got, want)`` tuple -- read as a
+    Python literal, not pattern-matched."""
+    import ast
+
+    detail = str(row.get("message") or "").partition(":")[2].strip()
+    try:
+        value = ast.literal_eval(detail)
+    except (ValueError, SyntaxError):
+        return False
+    return isinstance(value, tuple) and len(value) >= 2
+
+
+def _asserts_a_comparison(text: str) -> bool:
+    """Did the failing ``assert`` COMPARE a value (``==``/``!=``) or carry a
+    ``(key, got, want)`` message? pytest prints the failing statement as
+    source (``>   assert ...``); it is parsed as Python, never pattern-matched."""
+    import ast
+
+    for line in (text or "").splitlines():
+        stripped = line.lstrip()
+        if not stripped.startswith(">"):
+            continue
+        try:
+            tree = ast.parse(stripped[1:].strip())
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assert):
+                continue
+            if isinstance(node.msg, ast.Tuple):
+                return True
+            if isinstance(node.test, ast.Compare) and any(
+                isinstance(op, (ast.Eq, ast.NotEq)) for op in node.test.ops
+            ):
+                return True
+    return False
 
 
 def _is_product_failure(row: Dict[str, str]) -> bool:
@@ -86,8 +144,7 @@ def _is_product_failure(row: Dict[str, str]) -> bool:
     innermost = str(row.get("innermost") or "")
     if innermost.startswith("app/") or "/app/" in innermost:
         return True
-    blob = " ".join(str(row.get(k) or "") for k in ("message", "text"))
-    if "AssertionError" not in blob:
+    if not _is_assertion_failure(row):
         return False
     # An AssertionError is the product's doing only when the assertion COMPARED
     # product output to an expected value -- the generated round-trip and route
@@ -97,10 +154,9 @@ def _is_product_failure(row: Dict[str, str]) -> bool:
     # factory itself wrote broken (``assert False, 'broken on purpose'``)
     # carries neither -- that is a broken test, the factory's, not the
     # product's, and it must halt with no rework (test_g_series_rework_loop).
-    message = str(row.get("message") or "")
-    if re.search(r"\([^()]*,[^()]*\)", message):  # a (key, got, want) tuple
+    if _message_is_a_comparison_tuple(row):
         return True
-    return bool(re.search(r"assert\b[^\n]*[=!]=", blob))  # a compared assertion
+    return _asserts_a_comparison(str(row.get("text") or ""))
 
 
 def generator_location(test_name: str, test_file: str) -> str:
@@ -156,11 +212,10 @@ def classify(
         # code itself broke, not when the product failed the test.
         if behavior:
             innermost = str(row.get("innermost") or "")
-            blob = " ".join(str(row.get(k) or "") for k in ("message", "text", "nodeid"))
             is_product = (
                 innermost.startswith("app/")
                 or "/app/" in innermost
-                or (rel in behavior and "AssertionError" in blob)
+                or (rel in behavior and _is_assertion_failure(row))
             )
         else:
             is_product = _is_product_failure(row)

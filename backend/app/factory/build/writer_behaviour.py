@@ -42,6 +42,7 @@ module attributes are patched too.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from typing import TYPE_CHECKING, Optional
@@ -66,6 +67,29 @@ CONTRACT_HALT = "every capability wrote a payload its blocks refuse"
 #: Probe / Floor text when import, Alembic, or sqlite DDL crashes the probe.
 SCHEMA_SQL_HALT = "workspace schema or migration failed"
 
+#: Typed record kinds the probe emits (closed vocabulary, compared by equality).
+KIND_SCHEMA = "schema"
+KIND_PERSIST = "persist"
+KIND_F11 = "f11"
+KIND_CONTRACT = "contract"
+KIND_ROUNDTRIP = "roundtrip"
+KIND_F1 = "f1"
+
+#: The canonical sentence per halt kind, rendered INTO the probe so the probe
+#: and the host share one source.
+HALT_SENTENCES = {
+    KIND_SCHEMA: SCHEMA_HALT,
+    "persist": "persist entity missing from migrated schema",
+    KIND_F11: F11_HALT,
+    KIND_CONTRACT: CONTRACT_HALT,
+    KIND_ROUNDTRIP: "no capability could read back a record it stored",
+    "migration": SCHEMA_SQL_HALT,
+    "import": "workspace does not import",
+    "boot": "workspace does not boot",
+    "crash": "workspace probe crashed",
+    "no_models": "no capabilities to probe (app.models.MODELS is empty)",
+}
+
 #: Runs inside the generated workspace. Prints one finding per line to
 #: stderr and exits non-zero; a clean run exits 0 and prints nothing.
 BEHAVIOUR_PROBE = r'''
@@ -75,10 +99,48 @@ os.environ["STORAGE_PATH"] = tempfile.mkdtemp(prefix="writer-gate-")
 os.environ.setdefault("PLATFORM_TOKEN", "dev-local-token")
 sys.path.insert(0, os.getcwd())
 
-findings = []
+findings = []          # (kind, text)
 schema_misses = []
+persist_misses = []
 f11_misses = []
 roundtrip_misses = []
+
+# The probe speaks in TYPED records, one JSON object per line: the host reads
+# each record's kind and never searches the text for words. HALTS (the
+# canonical sentence per halt kind) is rendered in from the host module so the
+# two sides cannot drift.
+HALTS = {}
+
+
+def _record(level, kind, text):
+    stream = sys.stdout if level == "miss" else sys.stderr
+    stream.write(json.dumps({"gate_record": level, "kind": kind, "text": text}) + "\n")
+
+
+def _halt(kind, entries=()):
+    _record("halt", kind, HALTS.get(kind, kind))
+    for k, text in entries:
+        _record("finding", k, text)
+    raise SystemExit(1)
+
+
+def _exc_text(exc):
+    """``Type: message`` for an exception. A SQLAlchemy error wraps the
+    database's own error as ``.orig`` and appends the SQL statement to its
+    message; the underlying error is the reason, the echoed DDL is not."""
+    orig = getattr(exc, "orig", None)
+    return "%s: %s" % (type(exc).__name__, orig if orig is not None else exc)
+
+
+def _db_error_types():
+    import sqlite3
+    roots = [sqlite3.Error]
+    try:
+        from sqlalchemy.exc import SQLAlchemyError
+        roots.append(SQLAlchemyError)
+    except ImportError:
+        pass
+    return tuple(roots)
 
 # Baked in by _render_probe() from app.factory.build.block_obligations, so
 # the probe can name a missing precondition without importing the factory
@@ -91,17 +153,10 @@ try:
     from app.main import app
     from fastapi.testclient import TestClient
 except Exception as exc:
-    sys.stderr.write(
-        "GATE-FINDING: workspace does not import: %s: %s\n"
-        % (type(exc).__name__, exc)
-    )
-    raise SystemExit(1)
+    _halt("import", [("import", _exc_text(exc))])
 
 if not MODELS:
-    sys.stderr.write(
-        "GATE-FINDING: no capabilities to probe (app.models.MODELS is empty)\n"
-    )
-    raise SystemExit(1)
+    _halt("no_models")
 
 
 def _ann(cls, name):
@@ -204,7 +259,7 @@ def _rows(entity):
 # lifespan, leaving a schema-less database and "no such table" for every
 # capability. Explicit upgrade_head() first for workspaces whose startup
 # does not own the migration. ImportError is the JSON-store fixture path
-# (no Alembic). A real migration/SQL failure is a GATE-FINDING — never
+# (no Alembic). A real migration/SQL failure is a typed halt record — never
 # swallowed, never left as unmarked sqlite stderr.
 try:
     from app.migrations import upgrade_head
@@ -214,19 +269,13 @@ if upgrade_head is not None:
     try:
         upgrade_head()
     except Exception as exc:
-        sys.stderr.write(
-            "GATE-FINDING: workspace schema or migration failed: %s: %s\n"
-            % (type(exc).__name__, exc)
-        )
-        raise SystemExit(1)
+        _halt("migration", [("migration", _exc_text(exc))])
 
 def _probe_excepthook(typ, exc, tb):
     if issubclass(typ, SystemExit):
         return sys.__excepthook__(typ, exc, tb)
-    sys.stderr.write(
-        "GATE-FINDING: workspace probe crashed: %s: %s\n"
-        % (getattr(typ, "__name__", typ), exc)
-    )
+    _record("halt", "crash", HALTS.get("crash", "crash"))
+    _record("finding", "crash", _exc_text(exc))
     return sys.__excepthook__(typ, exc, tb)
 
 sys.excepthook = _probe_excepthook
@@ -261,41 +310,45 @@ contract_misses = []
 #
 # Classified, never guessed: each class is decided by the block's literal
 # answer plus the payload the coder actually passed.
-_REFUSAL_MARKERS = (
-    "required", "unknown action", "unknown field", "not found",
-    "access denied", "no input files", "invalid", "missing",
-)
+def _default_action(block_id):
+    """The action dispatch supplies when a handler passes none (the product's
+    own rendered map), or None when the block has no default."""
+    try:
+        from app.block_inputs import default_block_action
+        return default_block_action(block_id)
+    except Exception:
+        return None
 
 
 def _classify_refusal(block_id, payload, action, answer):
     """Name the mismatch, or return None when the answer is not a refusal."""
+    # A refusal is a TYPED answer: an error envelope whose kind is not
+    # "unavailable" (a provider that is down is not the coder's contract).
+    # Store blocks carry error_kind since Cerebrum-Blocks #137.
     if not isinstance(answer, dict):
         return None
-    text = str(answer.get("error") or "")
-    # Block error literals use both conventions -- "Team not found" and
-    # "file_not_found" are the same class of answer, and the underscored one
-    # slipped every marker until a test caught it. Match on both spellings.
-    low = text.lower()
-    flat = low.replace("_", " ")
-    if not any(m in low or m in flat for m in _REFUSAL_MARKERS):
+    if answer.get("status") != "error" and answer.get("ok") is not False:
         return None
+    if answer.get("error_kind") == "unavailable":
+        return None
+    text = str(answer.get("error") or "")
     data = payload if isinstance(payload, dict) else {}
     inner = data.get("input") if isinstance(data.get("input"), dict) else {}
 
-    # (a) the action travelled inside the payload instead of as the keyword
-    if "unknown action" in low or "unknown field" in low:
-        if "action" in data or "action" in inner:
-            return (
-                "%s: the action travelled inside the payload; app/dispatch.py "
-                "routes payload keys into the block's record and reads the "
-                "operation only from the action= keyword. Answered %r "
-                "(CONTRACT: unknown action)" % (block_id, text[:90])
-            )
-        if action is None:
-            return (
-                "%s: called with no action= keyword. Answered %r "
-                "(CONTRACT: unknown action)" % (block_id, text[:90])
-            )
+    # (a) the action travelled inside the payload instead of as the keyword --
+    # decided by the payload's structure, not by the words of the refusal.
+    if "action" in data or "action" in inner:
+        return (
+            "%s: the action travelled inside the payload; app/dispatch.py "
+            "routes payload keys into the block's record and reads the "
+            "operation only from the action= keyword. Answered %r "
+            "(CONTRACT: unknown action)" % (block_id, text[:90])
+        )
+    if action is None and _default_action(block_id) is None:
+        return (
+            "%s: called with no action= keyword. Answered %r "
+            "(CONTRACT: unknown action)" % (block_id, text[:90])
+        )
 
     # (b) the record is one level too deep for a block that reads it flat.
     # input_keys_read_by_block is harvested from source, not declared --
@@ -366,11 +419,7 @@ try:
     client_cm = TestClient(app)
     client = client_cm.__enter__()
 except Exception as exc:
-    sys.stderr.write(
-        "GATE-FINDING: workspace does not boot: %s: %s\n"
-        % (type(exc).__name__, exc)
-    )
-    raise SystemExit(1)
+    _halt("boot", [("boot", _exc_text(exc))])
 targets = []
 
 
@@ -407,16 +456,18 @@ def _record_matches(record, body):
 
 
 def _listed_records(payload):
-    """Pull the record list out of whatever shape the list route answers."""
+    """Pull the record list out of whatever shape the list route answers --
+    by shape, never by a guessed key: a bare list, or every list of records
+    (objects) the answer carries at its top level."""
     if isinstance(payload, list):
         return payload
     if not isinstance(payload, dict):
         return []
-    for key in ("items", "records", "results", "data", "rows"):
-        value = payload.get(key)
-        if isinstance(value, list):
-            return value
-    return []
+    out = []
+    for value in payload.values():
+        if isinstance(value, list) and value and all(isinstance(v, dict) for v in value):
+            out.extend(value)
+    return out
 
 
 def _check_round_trip(cap_id, cls, body):
@@ -449,7 +500,7 @@ def _check_round_trip(cap_id, cls, body):
         got = client.get("/v1/" + cap_id, headers=AUTH)
     except Exception as exc:
         findings.append(
-            "%s: GET raised %s: %s" % (cap_id, type(exc).__name__, exc)
+            ("probe_error", "%s: GET raised %s: %s" % (cap_id, type(exc).__name__, exc))
         )
         return
     if got.status_code in (404, 405):
@@ -482,8 +533,9 @@ for cap_id, cls in MODELS.items():
     try:
         resp = client.post("/v1/" + cap_id, json=body, headers=AUTH)
     except Exception as exc:
-        schema_misses.append(
-            "%s: POST raised %s: %s" % (cap_id, type(exc).__name__, exc)
+        target = persist_misses if isinstance(exc, _db_error_types()) else schema_misses
+        target.append(
+            "%s: POST raised %s" % (cap_id, _exc_text(exc))
         )
         continue
     if resp.status_code != 200:
@@ -532,28 +584,15 @@ for _cap_id, _cls in targets:
             % (_cap_id, ", ".join(_never))
         )
 
-persist_misses = [
-    m for m in schema_misses
-    if "no such table" in m.lower() or "OperationalError" in m
-]
 if persist_misses:
     # Isolated schema refusals may continue; a missing persist table is
-    # the photographed Veterinary Care Platform class and must halt.
-    sys.stderr.write(
-        "GATE-FINDING: persist entity missing from migrated schema\n"
-        + "".join("GATE-FINDING: %s\n" % f for f in persist_misses)
-    )
-    raise SystemExit(1)
+    # the photographed Veterinary Care Platform class and must halt. Decided
+    # by the exception's class (a database error), not its message.
+    _halt("persist", [("persist", m) for m in persist_misses])
 if not targets:
     # Every capability failed schema (or never reached a probeable
-    # state). Isolated schema misses do not take this path. Always emit
-    # the canonical sentence first so the host cannot map this halt to F1.
-    sys.stderr.write(
-        "GATE-FINDING: no capability accepted its own schema\n"
-        + "".join("GATE-FINDING: %s\n" % f for f in findings)
-        + "".join("GATE-FINDING: %s\n" % f for f in schema_misses)
-    )
-    raise SystemExit(1)
+    # state). Isolated schema misses do not take this path.
+    _halt("schema", list(findings) + [("schema", m) for m in schema_misses])
 
 # -- phase 2: every block call fails --------------------------------------
 import app.dispatch as _dispatch
@@ -589,7 +628,7 @@ for cap_id, cls in targets:
     try:
         resp = client.post("/v1/" + cap_id, json=body, headers=AUTH)
     except Exception as exc:
-        findings.append("%s: POST raised under forced failure: %s" % (cap_id, exc))
+        findings.append(("probe_error", "%s: POST raised under forced failure: %s" % (cap_id, exc)))
         continue
     data = resp.json() if resp.content else {}
     if _calls["n"] == 0:
@@ -608,7 +647,7 @@ for cap_id, cls in targets:
     after = _rows(entity)
     if before is None or after is None:
         findings.append(
-            "%s: cannot read entity %r — persistence was never checked" % (cap_id, entity)
+            ("unreadable", "%s: cannot read entity %r — persistence was never checked" % (cap_id, entity))
         )
     elif after > before:
         misses.append(
@@ -619,89 +658,41 @@ for cap_id, cls in targets:
         honest += 1
 
 if findings:
-    sys.stderr.write("".join("GATE-FINDING: %s\n" % f for f in findings))
+    for _kind, _text in findings:
+        _record("finding", _kind, _text)
     raise SystemExit(1)
 _f11_caps = set(m.split(":", 1)[0] for m in f11_misses)
 if f11_misses and all(cid in _f11_caps for cid, _cls in targets):
     # Every probed capability declared unused BLOCK_IDS. Isolated F11
     # (below) continues so a mixed workspace can still ship a zip.
-    sys.stderr.write(
-        "GATE-FINDING: a capability declares block(s) it never invokes\n"
-        + "".join("GATE-FINDING: %s\n" % f for f in f11_misses)
-    )
-    raise SystemExit(1)
+    _halt("f11", [("f11", m) for m in f11_misses])
 _rt_caps = set(m.split(":", 1)[0] for m in roundtrip_misses)
 if roundtrip_misses and all(cid in _rt_caps for cid, _cls in targets):
     # Nothing the product was told survived. That is residential-lettings
     # exactly, and it is the bar "boots and passes its own tests" never
     # reached. Isolated misses (below) record and continue.
-    sys.stderr.write(
-        "GATE-FINDING: no capability could read back a record it stored\n"
-        + "".join("GATE-FINDING: %s\n" % f for f in roundtrip_misses)
-    )
-    raise SystemExit(1)
+    _halt("roundtrip", [("roundtrip", m) for m in roundtrip_misses])
 _contract_caps = set(m.split(":", 1)[0] for m in contract_misses)
 if contract_misses and all(cid in _contract_caps for cid, _cls in targets):
     # Every probed capability wrote a payload its own blocks refuse. That is
     # the residential-lettings shape exactly: a zip that boots and cannot
     # persist. Isolated contract misses (below) continue so a mixed
     # workspace can still ship.
-    sys.stderr.write(
-        "GATE-FINDING: every capability wrote a payload its blocks refuse\n"
-        + "".join("GATE-FINDING: %s\n" % f for f in contract_misses)
-    )
-    raise SystemExit(1)
+    _halt("contract", [("contract", m) for m in contract_misses])
 if misses and honest == 0:
     # Every block-reaching capability lied. Same as LotDesk: the WRITER
     # produced nothing honest to ship. Isolated misses (below) continue.
-    sys.stderr.write("".join("GATE-FINDING: %s\n" % f for f in misses))
+    for _m in misses:
+        _record("finding", "f1", _m)
     raise SystemExit(1)
 # Isolated F1, F11, contract and schema refusals: record, do not halt.
-recorded = (
-    list(misses) + list(schema_misses) + list(f11_misses)
-    + list(contract_misses) + list(roundtrip_misses)
-)
-if recorded:
-    sys.stdout.write("".join("GATE-MISS: %s\n" % m for m in recorded))
+for _kind, _misses in (
+    ("f1", misses), ("schema", schema_misses), ("f11", f11_misses),
+    ("contract", contract_misses), ("roundtrip", roundtrip_misses),
+):
+    for _m in _misses:
+        _record("miss", _kind, _m)
 '''
-
-
-def _is_schema_line(line: str) -> bool:
-    """True when a probe line is a schema refusal, not an F1 lie."""
-    return any(
-        token in line
-        for token in (
-            SCHEMA_HALT,
-            SCHEMA_SQL_HALT,
-            "workspace does not import",
-            "workspace does not boot",
-            "workspace probe crashed",
-            "refused a payload",
-            "own declared constraints",
-            "baseline POST",
-            "POST raised",
-        )
-    )
-
-
-_SQL_COL_RE = re.compile(
-    r"^[A-Za-z_][\w]*\s+"
-    r"(TEXT|INTEGER|REAL|BLOB|NUMERIC|FLOAT|BOOLEAN|DATETIME|DATE|TIME)\b",
-    re.IGNORECASE,
-)
-
-
-def _looks_like_sql_ddl_line(line: str) -> bool:
-    """True when a stderr line is a CREATE TABLE fragment, not a reason."""
-    s = line.strip().rstrip(",")
-    if not s:
-        return False
-    upper = s.upper()
-    if upper.startswith("CREATE TABLE") or upper.startswith("PRIMARY KEY"):
-        return True
-    if s in {")", "]", ");"} or s.startswith("[SQL"):
-        return True
-    return _SQL_COL_RE.match(s) is not None
 
 
 _EXCEPTION_LINE_RE = re.compile(r"^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*): (.*)$")
@@ -743,22 +734,37 @@ def _database_error_types() -> tuple:
     return tuple(roots)
 
 
+def probe_records(text: str) -> list[dict]:
+    """The typed records in probe output: one JSON object per line carrying
+    ``gate_record`` (halt / finding / miss), ``kind`` and ``text``. Anything
+    else on the stream (a library's own print, a traceback) is not a record."""
+    out: list[dict] = []
+    for line in (text or "").splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if (
+            isinstance(rec, dict)
+            and rec.get("gate_record") in ("halt", "finding", "miss")
+            and isinstance(rec.get("kind"), str)
+            and isinstance(rec.get("text"), str)
+        ):
+            out.append(rec)
+    return out
+
+
 def classify_unmarked_probe_failure(raw_lines: list[str]) -> str:
-    """Turn unmarked probe stderr into one GATE-FINDING sentence.
+    """One sentence for a probe that died without a typed record.
 
-    Read from the stderr's structure, not its words: the traceback's own
+    Read from the stderr's structure, never its words: the traceback's own
     exception line, resolved to its class and judged by the class hierarchy
-    (a database error is a schema/migration halt), and SQL DDL recognised by
-    its grammar (``_looks_like_sql_ddl_line``).
-
-    Live veterinary-care (sess_3daeca83ae9d4286): the probe crashed during
-    import/migration, SQLAlchemy dumped the CREATE TABLE body to stderr,
-    and the host took ``lines = raw[-8:]`` so the Floor banner was the
-    first column line (``scheduled_time TEXT,``) instead of a reason.
+    (a database error is a schema/migration halt). A raw stderr line is never
+    the banner -- live veterinary-care, sqlite dumped CREATE TABLE columns and
+    the Floor showed ``scheduled_time TEXT,`` as the reason.
     """
-    nonempty = [ln.strip() for ln in raw_lines if ln.strip()]
     raised = None
-    for ln in nonempty:
+    for ln in (x.strip() for x in raw_lines):
         match = _EXCEPTION_LINE_RE.match(ln)
         if match:
             cls = _exception_class(match.group(1))
@@ -769,107 +775,45 @@ def classify_unmarked_probe_failure(raw_lines: list[str]) -> str:
         message = message.split("[SQL:", 1)[0].strip()
         if issubclass(cls, _database_error_types()):
             return f"{SCHEMA_SQL_HALT}: {name}: {message}"[:280]
-        return f"workspace probe crashed: {name}: {message}"[:280]
-    if any(_looks_like_sql_ddl_line(ln) for ln in nonempty):
-        return (
-            f"{SCHEMA_SQL_HALT}: the database printed DDL without a "
-            "GATE-FINDING (probe crashed during import or migration)"
-        )
-    last = next(
-        (ln for ln in reversed(nonempty) if not _looks_like_sql_ddl_line(ln)),
-        "",
-    )
-    if last:
-        return f"workspace probe crashed: {last[:240]}"
+        return f"{HALT_SENTENCES['crash']}: {name}: {message}"[:280]
+    if any(x.strip() for x in raw_lines):
+        return f"{HALT_SENTENCES['crash']} with no typed record"
     return "behaviour probe failed with no output"
 
 
 def findings_from_probe_stderr(stderr: str) -> list[str]:
-    """Marked findings, or one classified reason — never raw SQL lines."""
-    raw = (stderr or "").splitlines()
-    marked = [
-        ln.split("GATE-FINDING: ", 1)[1] for ln in raw if "GATE-FINDING: " in ln
-    ]
-    if marked:
-        return marked[-20:]
-    return [classify_unmarked_probe_failure(raw)]
+    """Halt and finding texts, or one classified reason -- never raw lines."""
+    recs = [r for r in probe_records(stderr) if r["gate_record"] in ("halt", "finding")]
+    if recs:
+        return [r["text"] for r in recs][-20:]
+    return [classify_unmarked_probe_failure((stderr or "").splitlines())]
 
 
-def _is_f11_line(line: str) -> bool:
-    """True when a probe line is unused BLOCK_IDS (F11), not an F1 lie.
+def banner_from_records(records: list[dict], stderr: str = "") -> str:
+    """Floor banner from typed probe records.
 
-    ``(F1)`` is a substring of ``(F11)``, so F1 matching must not run
-    first or an F11 finding becomes the LotDesk banner.
+    A halt names itself (its canonical sentence). Probe errors with no halt
+    are shown as the first one. A run whose only findings are F1 lies is the
+    LotDesk banner. Nothing is decided by searching the text.
     """
-    return any(
-        token in line
-        for token in (F11_HALT, "(F11)", "never invokes", "declares block(s)")
-    )
-
-
-def _is_round_trip_line(line: str) -> bool:
-    """True when a probe line is a record that did not survive.
-
-    Its own class again: the route accepted the payload, the blocks may all
-    have answered fine, and the handler may have failed closed correctly --
-    and the product still forgot what it was told.
-    """
-    return "(ROUND-TRIP" in line
-
-
-def _is_contract_line(line: str) -> bool:
-    """True when a probe line is a block refusing the coder's payload.
-
-    Its own class: not a schema refusal (the ROUTE accepted the payload),
-    not F11 (the block WAS invoked), not F1 (the handler did fail closed --
-    that is how the refusal surfaced at all).
-    """
-    return "(CONTRACT" in line
-
-
-def _is_f1_line(line: str) -> bool:
-    """True when a probe line is success-over-failed-block, not F11."""
-    if _is_f11_line(line):
-        return False
-    return "(F1)" in line or "did not fail closed" in line or "persisted" in line
-
-
-def banner_detail(findings: list[str]) -> str:
-    """Floor banner text from probe findings.
-
-    Live construction (2026-08-30): findings were
-    ``no capability accepted its own schema`` but the host mapped every
-    non-zero exit onto F1, so the Floor lied about which phase failed.
-    The same mapping turned F11 unused-block findings into F1 because
-    ``(F1)`` is a substring of ``(F11)``.
-
-    Live veterinary-care (2026-09-03): unmarked sqlite DDL
-    (``scheduled_time TEXT,``) must never become the banner.
-    """
-    usable = [ln for ln in findings if ln and not _looks_like_sql_ddl_line(ln)]
-    if not findings:
-        return "behaviour probe failed with no output"
-    if not usable:
-        return classify_unmarked_probe_failure(findings)
-    if any(SCHEMA_HALT in ln for ln in usable):
-        return SCHEMA_HALT
-    if any("persist entity missing from migrated schema" in ln for ln in usable):
-        return next(
-            ln for ln in usable if "persist entity missing from migrated schema" in ln
+    halts = [r for r in records if r["gate_record"] == "halt"]
+    if halts:
+        halt = halts[0]
+        detail = next(
+            (r["text"] for r in records
+             if r["gate_record"] == "finding" and r["kind"] == halt["kind"]),
+            "",
         )
-    if any("no such table" in ln.lower() for ln in usable):
-        return next(ln for ln in usable if "no such table" in ln.lower())
-    if any(SCHEMA_SQL_HALT in ln for ln in usable):
-        return next(ln for ln in usable if SCHEMA_SQL_HALT in ln)
-    if any(_is_schema_line(ln) for ln in usable):
-        return next(ln for ln in usable if _is_schema_line(ln))
-    if any(F11_HALT in ln or _is_f11_line(ln) for ln in usable):
-        return F11_HALT
-    if any(CONTRACT_HALT in ln or _is_contract_line(ln) for ln in usable):
-        return CONTRACT_HALT
-    if any(_is_f1_line(ln) for ln in usable):
+        sentence = halt["text"]
+        if halt["kind"] in ("migration", "import", "boot", "crash") and detail:
+            return f"{sentence}: {detail}"[:280]
+        return sentence
+    findings = [r for r in records if r["gate_record"] == "finding"]
+    if not findings:
+        return classify_unmarked_probe_failure((stderr or "").splitlines())
+    if all(r["kind"] == KIND_F1 for r in findings):
         return F1_HALT
-    return usable[0]
+    return findings[0]["text"]
 
 
 def _pass_detail(
@@ -900,13 +844,16 @@ def _pass_detail(
 
 
 def _render_probe() -> str:
-    """The probe with this factory's resource obligations baked in."""
+    """The probe with this factory's resource obligations and halt sentences
+    baked in."""
     from app.factory.build.block_obligations import RESOURCE_OBLIGATIONS
 
-    return BEHAVIOUR_PROBE.replace(
-        "RESOURCE_OBLIGATIONS = {}",
-        "RESOURCE_OBLIGATIONS = " + repr(dict(RESOURCE_OBLIGATIONS)),
-        1,
+    return (
+        BEHAVIOUR_PROBE.replace(
+            "RESOURCE_OBLIGATIONS = {}",
+            "RESOURCE_OBLIGATIONS = " + repr(dict(RESOURCE_OBLIGATIONS)),
+            1,
+        ).replace("HALTS = {}", "HALTS = " + repr(dict(HALT_SENTENCES)), 1)
     )
 
 
@@ -915,10 +862,10 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
 
     The probe still fail-closes when every capability is dishonest
     (all refuse their own schema, every capability declares unused
-    blocks, or every block-reaching capability lies — LotDesk). One
+    blocks, or every block-reaching capability lies -- LotDesk). One
     miss among honest ones is recorded and the phase continues so
-    TESTER/STORE_MANAGER can still produce a zip. The Floor banner
-    uses the actual finding (schema vs F11 vs F1).
+    TESTER/STORE_MANAGER can still produce a zip. Every miss is classed by
+    the TYPED record the probe emitted, never by the words in its text.
     """
     from app.factory.build.gates import GateResult
 
@@ -933,39 +880,32 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
 
     proc = ctx.run([sys.executable, "-c", _render_probe()])
     if proc.returncode != 0:
-        # Marked findings only. Unmarked sqlite/alembic stderr used to
-        # become the Floor banner (``scheduled_time TEXT,``). Classify
-        # that crash; do not hide a real schema bug by swallowing it.
-        findings = findings_from_probe_stderr(proc.stderr or "")
+        records = probe_records(proc.stderr or "")
         return GateResult(
             ok=False,
             gate=GATE_NAME,
             reason="writer_behaviour_failed",
-            detail=banner_detail(findings),
-            findings=findings,
+            detail=banner_from_records(records, proc.stderr or ""),
+            findings=findings_from_probe_stderr(proc.stderr or ""),
         )
     raw_out = proc.stdout or ""
     raw_err = proc.stderr or ""
-    misses = [
-        ln.split("GATE-MISS: ", 1)[1]
-        for ln in (raw_out + "\n" + raw_err).splitlines()
-        if "GATE-MISS: " in ln
-    ]
-    schema_misses = [m for m in misses if _is_schema_line(m)]
-    f11_misses = [m for m in misses if _is_f11_line(m)]
-    contract_misses = [m for m in misses if _is_contract_line(m)]
-    roundtrip_misses = [m for m in misses if _is_round_trip_line(m)]
-    f1_misses = [
-        m for m in misses
-        if not _is_schema_line(m)
-        and not _is_f11_line(m)
-        and not _is_contract_line(m)
-        and not _is_round_trip_line(m)
-    ]
+    records = probe_records(raw_out + "\n" + raw_err)
+    miss_records = [r for r in records if r["gate_record"] == "miss"]
+
+    def _of(kind: str) -> list[str]:
+        return [r["text"] for r in miss_records if r["kind"] == kind]
+
+    misses = [r["text"] for r in miss_records]
+    schema_misses = _of(KIND_SCHEMA)
+    f11_misses = _of(KIND_F11)
+    contract_misses = _of(KIND_CONTRACT)
+    roundtrip_misses = _of(KIND_ROUNDTRIP)
+    f1_misses = _of(KIND_F1)
     skipped = [
         ln
         for ln in raw_out.splitlines()
-        if ln.strip() and ln.strip() != "SKIPPED" and "GATE-MISS: " not in ln
+        if ln.strip() and ln.strip() != "SKIPPED" and not _is_record_line(ln)
     ]
     detail = _pass_detail(f1_misses, schema_misses, f11_misses)
     if contract_misses:
@@ -995,3 +935,7 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
             "roundtrip_misses": roundtrip_misses,
         },
     )
+
+
+def _is_record_line(line: str) -> bool:
+    return bool(probe_records(line))

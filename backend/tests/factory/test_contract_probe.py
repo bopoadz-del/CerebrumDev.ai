@@ -47,11 +47,9 @@ import pytest
 from app.factory.build.roles import _DISPATCH_RUNTIME
 from app.factory.build.writer_behaviour import (
     BEHAVIOUR_PROBE,
-    _is_contract_line,
-    _is_f11_line,
-    _is_f1_line,
-    _is_schema_line,
+    KIND_CONTRACT,
     _render_probe,
+    banner_from_records,
 )
 
 # Harvested contracts as the shipped platform carries them. Verbatim.
@@ -225,7 +223,7 @@ def classify(fake_dispatch):
     from app.factory.build.block_obligations import RESOURCE_OBLIGATIONS
 
     ns: Dict[str, Any] = {"RESOURCE_OBLIGATIONS": dict(RESOURCE_OBLIGATIONS)}
-    exec(_lift_from_probe({"_classify_refusal", "_REFUSAL_MARKERS"}), ns)
+    exec(_lift_from_probe({"_classify_refusal", "_default_action"}), ns)
     return ns["_classify_refusal"]
 
 
@@ -239,7 +237,7 @@ def test_analytics_envelope_shape_is_named(classify):
         "analytics",
         {"input": {"metric": "monthly_rent_gbp", "value": 1450.0}},
         "track_event",
-        {"error": "metric and value required"},
+        {"status": "error", "error_kind": "input", "error": "metric and value required"},
     )
     assert note is not None
     assert "envelope shape" in note
@@ -254,7 +252,7 @@ def test_action_inside_the_payload_is_named(classify):
         "team",
         {"action": "create_team", "user_id": "system", "name": "T", "slug": "t"},
         None,
-        {"error": "Unknown action: None"},
+        {"status": "error", "error_kind": "input", "error": "Unknown action: None"},
     )
     assert note is not None
     assert "the action travelled inside the payload" in note
@@ -268,7 +266,7 @@ def test_action_in_both_places_is_named(classify):
         "workflow",
         {"action": "create_team", "steps": []},
         "create_team",
-        {"error": "workflow unknown field(s): action"},
+        {"status": "error", "error_kind": "input", "error": "workflow unknown field(s): action"},
     )
     assert note is not None
     assert "the action travelled inside the payload" in note
@@ -277,7 +275,7 @@ def test_action_in_both_places_is_named(classify):
 def test_missing_precondition_is_named(classify):
     note = classify(
         "team", {"user_id": "u7"}, "get_team_context",
-        {"error": "Team access denied"},
+        {"status": "error", "error_kind": "input", "error": "Team access denied"},
     )
     assert note is not None
     assert "without team_id" in note
@@ -308,7 +306,7 @@ def test_a_non_dict_answer_is_never_a_miss(classify):
 
 def test_an_unrecognised_refusal_still_reports_the_block_and_the_words(classify):
     note = classify(
-        "storage", {"file_id": "x"}, "retrieve", {"error": "file_not_found"},
+        "storage", {"file_id": "x"}, "retrieve", {"status": "error", "error_kind": "input", "error": "file_not_found"},
     )
     assert note is not None
     assert "storage" in note and "file_not_found" in note
@@ -323,20 +321,23 @@ def test_an_error_free_message_is_not_forced_into_a_class(classify):
 # The gate keeps its classes apart
 # --------------------------------------------------------------------------
 
-def test_a_contract_line_is_not_counted_as_f1_f11_or_schema():
-    line = ("unit_registry: analytics: envelope shape -- metric, value sit "
-            "inside 'input' (CONTRACT: envelope shape)")
-    assert _is_contract_line(line)
-    assert not _is_f11_line(line)
-    assert not _is_schema_line(line)
+def test_a_contract_miss_is_typed_contract_whatever_its_words():
+    """The probe emits contract misses with kind "contract"; the host reads the
+    kind. Text that happens to contain another class's marker changes nothing."""
+    assert '("contract", contract_misses)' in BEHAVIOUR_PROBE
+    line = "cap: analytics: envelope shape (CONTRACT: envelope shape) (F1) (F11)"
+    recs = [{"gate_record": "halt", "kind": KIND_CONTRACT, "text": "every capability wrote a payload its blocks refuse"},
+            {"gate_record": "finding", "kind": KIND_CONTRACT, "text": line}]
+    assert banner_from_records(recs) == "every capability wrote a payload its blocks refuse"
 
 
-def test_f1_and_f11_lines_are_not_counted_as_contract():
-    f1 = "cap: did not fail closed — answered {} while every block call failed (F1)"
-    f11 = "cap: declares block(s) it never invokes: workflow (F11)"
-    assert not _is_contract_line(f1)
-    assert not _is_contract_line(f11)
-    assert _is_f1_line(f1) and _is_f11_line(f11)
+def test_an_unavailable_block_is_not_the_coders_contract(classify):
+    """A provider that is down answers error_kind "unavailable": not a refusal
+    of the payload the coder wrote."""
+    assert classify(
+        "analytics", {"metric": "m"}, "track_event",
+        {"status": "error", "error_kind": "unavailable", "error": "provider unreachable"},
+    ) is None
 
 
 # --------------------------------------------------------------------------
@@ -371,7 +372,7 @@ def test_storage_missing_precondition_is_named(classify):
     test caught it."""
     note = classify(
         "storage", {"filename": "a.pdf"}, "retrieve",
-        {"error": "file_not_found"},
+        {"status": "error", "error_kind": "input", "error": "file_not_found"},
     )
     assert note is not None
     assert "without file_id" in note
@@ -405,13 +406,13 @@ def _probe_flow(answers, cap="unit_registry_and_vacancy_tracking"):
         "_real_execute": _fake_real_execute,
     }
     exec(_lift_from_probe({"_classify_refusal", "_recording_execute",
-                           "_REFUSAL_MARKERS", "contract_misses", "_seen"}), ns)
+                           "_default_action", "contract_misses", "_seen"}), ns)
     ns["_seen"]["cap"] = cap
     return ns, calls
 
 
 def test_the_recording_function_captures_a_refusal(fake_dispatch):
-    ns, calls = _probe_flow({"analytics": {"error": "metric and value required"}})
+    ns, calls = _probe_flow({"analytics": {"status": "error", "error_kind": "input", "error": "metric and value required"}})
     ns["_recording_execute"](
         "analytics",
         {"input": {"metric": "monthly_rent_gbp", "value": 1450.0}},
@@ -422,14 +423,13 @@ def test_the_recording_function_captures_a_refusal(fake_dispatch):
     line = ns["contract_misses"][0]
     assert line.startswith("unit_registry_and_vacancy_tracking: ")
     assert "envelope shape" in line
-    assert _is_contract_line(line)
 
 
 def test_the_recording_function_still_returns_the_block_answer(fake_dispatch):
-    ns, _ = _probe_flow({"analytics": {"error": "metric and value required"}})
+    ns, _ = _probe_flow({"analytics": {"status": "error", "error_kind": "input", "error": "metric and value required"}})
     out = ns["_recording_execute"]("analytics", {"input": {"metric": "m"}},
                                    action="track_event")
-    assert out == {"error": "metric and value required"}
+    assert out == {"status": "error", "error_kind": "input", "error": "metric and value required"}
 
 
 def test_a_healthy_call_records_nothing_and_still_records_the_block_id(fake_dispatch):
@@ -441,7 +441,7 @@ def test_a_healthy_call_records_nothing_and_still_records_the_block_id(fake_disp
 
 
 def test_the_same_refusal_twice_is_recorded_once(fake_dispatch):
-    ns, _ = _probe_flow({"team": {"error": "Team access denied"}})
+    ns, _ = _probe_flow({"team": {"status": "error", "error_kind": "input", "error": "Team access denied"}})
     for _ in range(3):
         ns["_recording_execute"]("team", {"user_id": "u"},
                                  action="get_team_context")
@@ -450,14 +450,14 @@ def test_the_same_refusal_twice_is_recorded_once(fake_dispatch):
 
 def test_a_positional_action_is_read_too(fake_dispatch):
     """execute(block, payload, action) as well as action=."""
-    ns, _ = _probe_flow({"team": {"error": "Team access denied"}})
+    ns, _ = _probe_flow({"team": {"status": "error", "error_kind": "input", "error": "Team access denied"}})
     ns["_recording_execute"]("team", {"user_id": "u"}, "get_team_context")
     assert ns["contract_misses"]
     assert "without team_id" in ns["contract_misses"][0]
 
 
 def test_calls_outside_a_capability_are_not_attributed(fake_dispatch):
-    ns, _ = _probe_flow({"team": {"error": "Team access denied"}})
+    ns, _ = _probe_flow({"team": {"status": "error", "error_kind": "input", "error": "Team access denied"}})
     ns["_seen"]["cap"] = None
     ns["_recording_execute"]("team", {"user_id": "u"}, action="get_team_context")
     assert ns["contract_misses"] == []
@@ -615,24 +615,13 @@ def test_a_value_stored_with_a_different_type_still_matches():
     assert ns["roundtrip_misses"] == []
 
 
-def test_a_round_trip_line_is_its_own_class():
-    from app.factory.build.writer_behaviour import _is_round_trip_line
-    line = ("unit_registry: unit holds 1 row(s) and GET answered with none "
-            "(ROUND-TRIP: empty list)")
-    assert _is_round_trip_line(line)
-    assert not _is_contract_line(line)
-    assert not _is_f11_line(line)
-    assert not _is_schema_line(line)
-
-
-def test_other_classes_are_not_counted_as_round_trip():
-    from app.factory.build.writer_behaviour import _is_round_trip_line
-    for line in (
-        "cap: declares block(s) it never invokes: workflow (F11)",
-        "cap: analytics: envelope shape -- metric (CONTRACT: envelope shape)",
-        "cap: did not fail closed - answered {} (F1)",
-    ):
-        assert not _is_round_trip_line(line), line
+def test_round_trip_misses_are_emitted_with_their_own_kind():
+    """A forgotten record is its own class: emitted as kind "roundtrip" and
+    read by kind, never recognised by a marker inside its sentence."""
+    from app.factory.build.writer_behaviour import BEHAVIOUR_PROBE, KIND_ROUNDTRIP
+    assert KIND_ROUNDTRIP == "roundtrip"
+    assert '("roundtrip", roundtrip_misses)' in BEHAVIOUR_PROBE
+    assert '_halt("roundtrip", [("roundtrip", m) for m in roundtrip_misses])' in BEHAVIOUR_PROBE
 
 
 def test_the_probe_runs_the_round_trip_on_the_baseline_post():
@@ -652,7 +641,9 @@ def test_all_capabilities_forgetting_is_a_halt():
     guard = ("if roundtrip_misses and all(cid in _rt_caps "
              "for cid, _cls in targets):")
     assert guard in BEHAVIOUR_PROBE
-    assert "no capability could read back a record it stored" in BEHAVIOUR_PROBE
+    from app.factory.build.writer_behaviour import HALT_SENTENCES, _render_probe
+    assert HALT_SENTENCES["roundtrip"] == "no capability could read back a record it stored"
+    assert HALT_SENTENCES["roundtrip"] in _render_probe()
     assert "_rt_caps = set(m.split(\":\", 1)[0] for m in roundtrip_misses)" in BEHAVIOUR_PROBE
 
 
@@ -661,4 +652,4 @@ def test_an_isolated_round_trip_miss_does_not_halt():
     the same rule F1, F11 and schema misses already follow."""
     from app.factory.build.writer_behaviour import BEHAVIOUR_PROBE
     assert "Isolated misses (below) record and continue." in BEHAVIOUR_PROBE
-    assert "list(roundtrip_misses)" in BEHAVIOUR_PROBE
+    assert '("roundtrip", roundtrip_misses)' in BEHAVIOUR_PROBE

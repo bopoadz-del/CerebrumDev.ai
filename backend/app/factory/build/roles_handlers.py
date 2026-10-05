@@ -6,12 +6,13 @@ Public types and templates live in ``roles_models`` / ``roles_constants``.
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger("cerebrumdev.factory.roles_handlers")
 
@@ -344,6 +345,220 @@ def _pin_source(source: Path, blocks_root: Optional[Path]) -> tuple:
 # source is mechanically rewritten to the vendored name.
 
 
+
+#: The Store's runtime packages, as dotted-name parts.
+_STORE_CORE_PKG = ("app", "core")
+_STORE_BLOCKS_PKG = ("app", "blocks")
+
+
+def _dotted_mentions(text: str) -> Tuple[List[str], List[str]]:
+    """Dotted names in Python source: ``(code, prose)``.
+
+    ``code`` are names the language itself references (``a.b.c`` built from
+    NAME and ``.`` tokens, imports included); ``prose`` are dotted words
+    inside comments and string literals. Read by the tokenizer, never by a
+    pattern, so a word in a sentence is never mistaken for an import."""
+    import io
+    import tokenize
+
+    code: List[str] = []
+    prose: List[str] = []
+    chain: List[str] = []
+    state = {"expect": True}
+
+    def _flush():
+        if chain:
+            code.append(".".join(chain))
+        chain.clear()
+
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text or "").readline):
+            if tok.type == tokenize.NAME:
+                if not state["expect"]:
+                    _flush()
+                chain.append(tok.string)
+                state["expect"] = False
+                continue
+            if tok.type == tokenize.OP and tok.string == "." and chain and not state["expect"]:
+                state["expect"] = True
+                continue
+            _flush()
+            state["expect"] = True
+            if tok.type in (tokenize.STRING, tokenize.COMMENT):
+                word: List[str] = []
+                for ch in tok.string + " ":
+                    if ch.isalnum() or ch in "._":
+                        word.append(ch)
+                        continue
+                    if word:
+                        prose.append("".join(word).strip("."))
+                    word = []
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        pass
+    _flush()
+    return code, prose
+
+
+def _submodules(names: Iterable[str], package: Tuple[str, ...]) -> List[str]:
+    """The first module under ``package`` each dotted name reaches."""
+    out: List[str] = []
+    for name in names:
+        parts = [p for p in name.split(".") if p]
+        if len(parts) > len(package) and tuple(parts[: len(package)]) == package:
+            out.append(parts[len(package)])
+    return out
+
+
+def _imported_names(text: str, package: Tuple[str, ...]) -> List[str]:
+    """Names bound by ``from <package> import a, b as c`` (the imported name,
+    not its alias)."""
+    try:
+        tree = ast.parse(text or "")
+    except SyntaxError:
+        return []
+    want = ".".join(package)
+    return [
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == want
+        for alias in node.names
+    ]
+
+
+def _relative_import_modules(text: str) -> List[str]:
+    """``from .x import ...`` -> ``x`` (one level, a sibling module)."""
+    try:
+        tree = ast.parse(text or "")
+    except SyntaxError:
+        return []
+    return [
+        node.module.split(".")[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.level == 1 and node.module
+    ]
+
+
+def _parsed(text: str):
+    """Syntax tree of source; an indented fragment is read dedented."""
+    import textwrap
+
+    for src in (text or "", textwrap.dedent(text or "")):
+        try:
+            return ast.parse(src)
+        except SyntaxError:
+            continue
+    return None
+
+
+def _assigned_from_call(text: str, func: str) -> set:
+    """Names assigned the result of calling ``func`` (``x = func(...)``)."""
+    tree = _parsed(text)
+    if tree is None:
+        return set()
+    out = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name) and node.value.func.id == func):
+            out.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    return out
+
+
+def _defines_function(text: str, name: str) -> bool:
+    tree = _parsed(text)
+    return tree is not None and any(
+        isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name
+        for n in ast.walk(tree)
+    )
+
+
+
+def _calls_with_name_arg(text: str, func: str, arg: str) -> bool:
+    """``func(arg)`` is called somewhere in the source."""
+    tree = _parsed(text)
+    return tree is not None and any(
+        isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == func
+        and len(n.args) == 1 and isinstance(n.args[0], ast.Name) and n.args[0].id == arg
+        for n in ast.walk(tree)
+    )
+
+
+def _callee(node: ast.Call) -> str:
+    parts: List[str] = []
+    func = node.func
+    while isinstance(func, ast.Attribute):
+        parts.append(func.attr)
+        func = func.value
+    if isinstance(func, ast.Name):
+        parts.append(func.id)
+    return ".".join(reversed(parts))
+
+
+#: The persistence calls a handler may not make itself (Phase 2 §0.2:
+#: persistence is route-scoped). Callee names of the Factory's own API.
+_DIRECT_PERSIST_CALLEES = frozenset({"_persist_record", "store.save", "save"})
+
+
+def _persists_directly(text: str) -> bool:
+    """The handler calls the persistence API itself."""
+    tree = _parsed(text)
+    return tree is not None and any(
+        isinstance(n, ast.Call) and _callee(n) in _DIRECT_PERSIST_CALLEES
+        for n in ast.walk(tree)
+    )
+
+
+def _harvest_block_source(source: str) -> Dict[str, List[str]]:
+    """What a vendored Store block's source declares, read from its tree:
+
+    * ``required``: the string list passed as ``required_fields=`` to the
+      ``Schema(...)`` bound to ``input_schema``;
+    * ``errors``: string values the source puts under an ``"error"`` key
+      (literals and placeholder-free f-strings, 4-120 chars);
+    * ``keys_read``: identifier keys read with ``.get("<key>"...)``.
+    """
+    out: Dict[str, List[str]] = {"required": [], "errors": [], "keys_read": []}
+    tree = _parsed(source)
+    if tree is None:
+        return out
+    for node in ast.walk(tree):
+        value = None
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any((isinstance(tg, ast.Name) and tg.id == "input_schema")
+                   or (isinstance(tg, ast.Attribute) and tg.attr == "input_schema")
+                   for tg in targets):
+                value = node.value
+        elif isinstance(node, ast.keyword) and node.arg == "input_schema":
+            value = node.value
+        if isinstance(value, ast.Call) and _callee(value).split(".")[-1] == "Schema":
+            for kw in value.keywords:
+                if kw.arg == "required_fields" and isinstance(kw.value, (ast.List, ast.Tuple)):
+                    names = [e.value for e in kw.value.elts
+                             if isinstance(e, ast.Constant) and isinstance(e.value, str)
+                             and e.value.isidentifier()]
+                    if names and not out["required"]:
+                        out["required"] = names
+        if isinstance(node, ast.Dict):
+            for key, val in zip(node.keys, node.values):
+                if not (isinstance(key, ast.Constant) and key.value == "error"):
+                    continue
+                text = None
+                if isinstance(val, ast.Constant) and isinstance(val.value, str):
+                    text = val.value
+                elif isinstance(val, ast.JoinedStr) and all(
+                    isinstance(v, ast.Constant) for v in val.values
+                ):
+                    text = "".join(str(v.value) for v in val.values)
+                if text is not None and 4 <= len(text) <= 120 and not set(text) & set("{}\"'"):
+                    out["errors"].append(text)
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get" and node.args
+                and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)
+                and node.args[0].value.isidentifier() and 2 <= len(node.args[0].value) <= 30):
+            out["keys_read"].append(node.args[0].value)
+    return out
+
+
 def _code_only(text: str) -> str:
     """``text`` with comments and string literals blanked out.
 
@@ -429,11 +644,7 @@ def _rewrite_shim_constructors(text: str) -> str:
         r"_instantiate_store_block(get_block(\1))",
         text,
     )
-    assigned = {
-        match.group(1)
-        for match in re.finditer(r"(?m)^[ \t]*(\w+)\s*=\s*get_block\(", text)
-        if match.group(1) not in {"_instantiate_store_block", "get_block"}
-    }
+    assigned = _assigned_from_call(text, "get_block") - {"_instantiate_store_block", "get_block"}
     for name in assigned:
         text = re.sub(
             rf"\b{re.escape(name)}\s*\(\s*\)",
@@ -452,7 +663,7 @@ def _rewrite_shim_constructors(text: str) -> str:
     )
     if text == original:
         return text
-    if "def _instantiate_store_block" not in text:
+    if not _defines_function(text, "_instantiate_store_block"):
         from app.factory.build.offline_adapters import insert_after_future_imports
 
         text = insert_after_future_imports(
@@ -780,22 +991,19 @@ def _closure_over_runtime(
             # Reached by real code == HARD; named only in a comment or string
             # literal == SOFT. See the docstring for why both are followed and
             # only the first is fatal when absent.
-            text = _code_only(raw_text)
-            code_cores = re.findall(r"\bapp\.core\.(\w+)\b", text)
-            code_blocks = re.findall(r"\bapp\.blocks\.(\w+)\b", text)
+            code_refs, prose_refs = _dotted_mentions(raw_text)
+            code_cores = _submodules(code_refs, _STORE_CORE_PKG)
+            code_blocks = _submodules(code_refs, _STORE_BLOCKS_PKG)
             hard_cores.update(code_cores)
             hard_blocks.update(code_blocks)
-            all_cores = re.findall(r"\bapp\.core\.(\w+)\b", raw_text)
-            all_blocks = re.findall(r"\bapp\.blocks\.(\w+)\b", raw_text)
+            all_cores = code_cores + _submodules(prose_refs, _STORE_CORE_PKG)
+            all_blocks = code_blocks + _submodules(prose_refs, _STORE_BLOCKS_PKG)
             core_mods.update(dict.fromkeys(all_cores))
             todo.extend(all_blocks)
-            # Line-bounded on purpose: ``[\w,\s]+`` would swallow the next line.
-            for cls in re.findall(r"from\s+app\.blocks\s+import\s+([^\n(#]+)", text):
-                for imported in (c.strip() for c in cls.split(",")):
-                    # ``import X as Y`` binds Y; the thing to resolve is X.
-                    # Unstripped, the lookup key was the whole "X as Y" and
-                    # never matched anything.
-                    name = re.split(r"\s+as\s+", imported)[0].strip()
+            if True:
+                for name in _imported_names(raw_text, _STORE_BLOCKS_PKG):
+                    # ``import X as Y`` binds Y; the thing to resolve is X --
+                    # the AST alias carries X.
                     if not name or name in _REGISTRY_API_NAMES:
                         continue
                     # ``from app.blocks import _knowledge`` imports a SUBMODULE,
@@ -852,17 +1060,17 @@ def _closure_over_runtime(
             )
         seen_core[name] = None
         for raw_text in sources:
-            text = _code_only(raw_text)
-            hard_cores.update(re.findall(r"\bapp\.core\.(\w+)\b", text))
-            core_todo.extend(re.findall(r"\bapp\.core\.(\w+)\b", raw_text))
+            code_refs, prose_refs = _dotted_mentions(raw_text)
+            hard_cores.update(_submodules(code_refs, _STORE_CORE_PKG))
+            core_todo.extend(
+                _submodules(code_refs, _STORE_CORE_PKG) + _submodules(prose_refs, _STORE_CORE_PKG)
+            )
             # ``from .x import`` inside a PACKAGE names a sibling within that
             # package, which the package copy already carries. Following it as
             # a top-level app/core/x.py would demand a file that need not
             # exist. Only a flat module's relative import means app.core.x.
             if not is_pkg:
-                relative = re.findall(
-                    r"^\s*from\s+\.(\w+)\s+import", text, re.MULTILINE
-                )
+                relative = _relative_import_modules(raw_text)
                 hard_cores.update(relative)  # a real import statement
                 core_todo.extend(relative)
 
@@ -1617,17 +1825,15 @@ def actions_init_eager_reexports(text: str) -> List[str]:
     That pattern is the circular-import class. An empty list means the
     package can finish initializing before any capability module loads.
     """
-    found: List[str] = []
-    for raw in (text or "").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("from app.actions import "):
-            tail = line.split("from app.actions import ", 1)[1]
-            name = tail.split("#", 1)[0].split(" as ", 1)[0].strip()
-            if name:
-                found.append(name)
-    return found
+    tree = _parsed(text)
+    if tree is None:
+        return []
+    return [
+        alias.name
+        for node in getattr(tree, "body", [])
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == "app.actions"
+        for alias in node.names
+    ]
 
 
 def _handler_module(
@@ -1973,7 +2179,7 @@ def _ensure_route_persists_payload(body: str) -> str:
         "save(payload)",
         body,
     )
-    if "save(payload)" not in rewritten:
+    if not _calls_with_name_arg(rewritten, "save", "payload"):
         rewritten = (
             rewritten.rstrip()
             + "\n    try:\n        stored = save(payload)\n"
@@ -2460,9 +2666,8 @@ def main() -> int:
         agent = sorted(
             k
             for k, v in sources.items()
-            if str(v).startswith("coder LLM")
-            or str(v).startswith("coder CLI")
-            or str(v).startswith("FACTORY_CODE_CLI")
+            # The Factory's one authorship vocabulary (authorship.py).
+            if str(v).startswith({tuple(AGENT_SOURCE_PREFIXES)!r})
         )
         print(f"artifacts: {{len(sources)}} total, {{len(agent)}} written by the coding agent")
     else:
@@ -2802,25 +3007,16 @@ def _block_contract(ctx: RoleContext, block_id: str) -> Dict[str, Any]:
     module_rel = Path("vendor") / "cerebrum" / "blocks" / f"{block_id}.py"
     if ctx.workspace.exists(module_rel):
         source = ctx.workspace.read_text(module_rel)
-        schema = re.search(
-            r"input_schema\s*=\s*Schema\((.*?)\)", source, re.DOTALL
-        )
-        if schema:
-            required = re.search(r"required_fields\s*=\s*\[([^\]]*)\]", schema.group(1))
-            if required:
-                fields = re.findall(r"[\"'](\w+)[\"']", required.group(1))
-                if fields:
-                    contract["input_required_fields"] = fields
+        harvested = _harvest_block_source(source)
+        if harvested["required"]:
+            contract["input_required_fields"] = harvested["required"]
         # Blocks self-document their per-action requirements in the error
         # literals they answer with ("user_id and name required", "metric and
         # value required", ...). Three live builds discovered these one 429
         # at a time; harvesting them into the contract lets the coder satisfy
         # them before the first attempt instead of after the third.
-        errors = re.findall(
-            r"[\"']error[\"']\s*:\s*f?[\"']([^\"'{}]{4,120})[\"']", source
-        )
-        if errors:
-            contract["runtime_error_contracts"] = sorted(set(errors))[:25]
+        if harvested["errors"]:
+            contract["runtime_error_contracts"] = sorted(set(harvested["errors"]))[:25]
         # WORKAROUND -- removal tracked in CerebrumDev.ai#256.
         #
         # The dict keys the block's code reads from its input are its de
@@ -2829,7 +3025,6 @@ def _block_contract(ctx: RoleContext, block_id: str) -> Dict[str, Any]:
         # step.get("block") -- knowledge that sat in the vendored source and
         # nowhere else, which is why this harvest exists at all.
         #
-        # It reads the wrong artifact, and that is not a bug to fix here.
         # A .get("x") anywhere in the module harvests identically whether x
         # is a payload key, a result key, a config key or an env key; a key
         # read through a variable (payload.get(field)) is invisible to it;
@@ -2840,9 +3035,8 @@ def _block_contract(ctx: RoleContext, block_id: str) -> Dict[str, Any]:
         # declaring requires_inputs. Until it lands AND the vendored blocks
         # fill it in -- it ships optional and empty on purpose -- a declared
         # value wins over this one. The two are never merged silently.
-        keys_read = re.findall(r"\.get\(\s*[\"'](\w{2,30})[\"']", source)
-        if keys_read:
-            contract["input_keys_read_by_block"] = sorted(set(keys_read))[:40]
+        if harvested["keys_read"]:
+            contract["input_keys_read_by_block"] = sorted(set(harvested["keys_read"]))[:40]
     return contract
 
 
@@ -2882,6 +3076,9 @@ def _budget_too_low(ctx: RoleContext, what: str) -> bool:
         f"skipped: {int(max(left, 0))}s of build budget left, a {what} call "
         f"needs up to {int(needed)}s"
     )
+    from app.factory.build.failure_kinds import BUDGET_SKIPPED, record_failure_kind
+
+    record_failure_kind(ctx.state, what, BUDGET_SKIPPED)
     ctx.note(f"coder skipped for {what} — build budget nearly spent", stage="budget")
     return True
 
@@ -4264,7 +4461,7 @@ def run_writer(
                 )
             ):
                 authored = None
-            elif "_persist_record(" in kept_text or "store.save(" in kept_text or "save(payload)" in kept_text:
+            elif _persists_directly(kept_text):
                 # Phase 2 §0.2: persistence is route-scoped. A keepable CLI
                 # handler that still persists directly collides with the
                 # tenant-required store signature (handler has no tenant);
@@ -4978,11 +5175,12 @@ def run_writer(
 
 
 def _looks_like_email_field(field: Dict[str, Any]) -> bool:
-    """Field name or format implies an address, not the word 'sample'.
+    """The field DECLARES an address: type ``email`` or format ``email``.
 
     The live winery-hospitality export failed its own pilot suite because
     TESTER sent guest_email='sample' and WRITER (correctly) required '@'.
-    Vocabulary/min/max cannot express that; the name is the constraint.
+    The fix is the declaration (type/format), never the field's name: a
+    name implies nothing the spec did not say.
     """
     resolved = _resolve_known_field_type(field.get("type") or "str")
     if resolved == "email":
@@ -4990,10 +5188,7 @@ def _looks_like_email_field(field: Dict[str, Any]) -> bool:
     if resolved not in (None, "str"):
         return False
     fmt = str(field.get("format") or "").lower().replace("-", "")
-    if fmt == "email":
-        return True
-    name = str(field.get("name") or "").lower()
-    return name == "email" or name.endswith("_email") or name.startswith("email_")
+    return fmt == "email"
 
 
 _TYPE_ALIASES = {
@@ -5128,69 +5323,44 @@ def _model_roundtrip_literal(field: Dict[str, Any]) -> str:
 
 
 def _temporal_sample(field: Dict[str, Any]) -> str | None:
-    """ISO sample for appointment-like fields, or None when not temporal.
+    """ISO sample for a field DECLARED temporal (type or format), else None.
 
     Live veterinary-care: scheduled_time / duration_minutes / service_type.
-    The word "sample" is type-valid as str and rejected as a time.
+    The word "sample" is type-valid as str and rejected as a time -- so the
+    spec declares the type; the name decides nothing.
     """
     fmt = str(field.get("format") or "").lower().replace("-", "")
     ftype = _normalize_field_type(field.get("type") or "str")
-    name = str(field.get("name") or "").lower()
     if ftype == "datetime" or fmt in ("datetime", "timestamp", "iso8601"):
         return _TEMPORAL_SAMPLES["datetime"]
     if ftype == "date" or fmt == "date":
         return _TEMPORAL_SAMPLES["date"]
     if ftype == "time" or fmt == "time":
         return _TEMPORAL_SAMPLES["time"]
-    if name.endswith("_at") or name.endswith("_datetime"):
-        return _TEMPORAL_SAMPLES["datetime"]
-    if name.endswith("_date"):
-        return _TEMPORAL_SAMPLES["date"]
-    if name.endswith("_time") or name == "time":
-        return _TEMPORAL_SAMPLES["time"]
     return None
 
 
 def _sample_value(field: Dict[str, Any]) -> Any:
-    """A value that satisfies every constraint the field declares.
+    """A value that satisfies every constraint the field DECLARES.
 
     Typing alone is not enough. An agent-designed field often carries a
     vocabulary or a range, and a generic "sample" is type-valid but
     domain-invalid -- the route rejects it, the gate fails, and the rework
     loop cannot recover because the only way for the writer to pass would be
-    to delete its own validation.
+    to delete its own validation. What the field is CALLED decides nothing:
+    a vocabulary, a type, a format or a bound must be declared (the spec
+    miner aligns the spec to what the handler enforces), and a field that
+    declares nothing gets its type's neutral sample.
     """
     if field.get("allowed_values"):
-        name = str(field.get("name") or "").lower()
-        if name == "channel" or name.endswith("_channel"):
-            return sample_channel_value(field["allowed_values"])
-        return field["allowed_values"][0]
+        # A Store-deliverable value when the vocabulary holds one (a
+        # notification channel), else the first declared value.
+        return sample_channel_value(field["allowed_values"])
     if _looks_like_email_field(field):
         return "guest@example.com"
     temporal = _temporal_sample(field)
     if temporal is not None:
         return temporal
-    name = str(field.get("name") or "").lower()
-    declared = str(field.get("type") or "str").strip().lower()
-    # Name-only fallback when the spec still says str but the handler
-    # (VetConnect) demanded a bool / count. Alignment usually upgrades the
-    # type first; this keeps the sample honest if a stale spec slips through.
-    if declared in ("str", "text", "string", ""):
-        if name.startswith("is_") or name.startswith("has_"):
-            return True
-        if name.endswith("_count") or name in {"capacity", "quantity", "login_count"}:
-            return 1
-        # Factory envelope default. A bare ``status`` used to sample as
-        # "sample", which the fallback / coder guard rejects with
-        # ``status must be one of: open, in_progress, closed``
-        # (sess_5dfb4a3 appointment_scheduling).
-        if name == "status" or name.endswith("_status"):
-            return "open"
-        # Live sess_67fe60f7 automated_reminders: bare ``channel`` sampled
-        # as "sample" and the Store notification / event_bus notify path
-        # raised ``Unknown channel: sample``.
-        if name == "channel" or name.endswith("_channel"):
-            return sample_channel_value()
     ftype = _normalize_field_type(field.get("type") or "str")
     if ftype in ("int", "float"):
         lo, hi = field.get("min"), field.get("max")
@@ -5203,8 +5373,6 @@ def _sample_value(field: Dict[str, Any]) -> Any:
             return lo
         if hi is not None:
             return hi if hi < _SAMPLE_VALUES[ftype] else _SAMPLE_VALUES[ftype]
-    if ftype == "str" and (name.endswith("_id") or name.endswith("_code")):
-        return "id-1"
     return _SAMPLE_VALUES.get(ftype, "sample")
 
 

@@ -64,14 +64,26 @@ def parse_three_gate_verdict(detail: str) -> Dict[str, str]:
     return found
 
 
+#: The setting a generated platform would read to reach the Store over HTTP.
+STORE_URL_SETTING = "CEREBRUM_API_URL"
+#: The TESTER-emitted route test that proves every capability accepts a payload.
+ACCEPT_PAYLOAD_TEST = "test_every_capability_route_accepts_payload"
+
+
 def _handlers_call_the_store(root: Path) -> List[str]:
     actions = root / "app" / "actions"
     if not actions.is_dir():
         return ["app/actions is missing"]
+    from app.factory.build.block_inputs import settings_names
+    from app.factory.build.network_posture import _code_urls
+
     hits: List[str] = []
     for path in sorted(actions.glob("*.py")):
         source = path.read_text(encoding="utf-8")
-        if "httpx" in source or "/v1/execute" in source:
+        # Structure, not names in the text: the handler reads the Store's
+        # location setting from the environment, or writes an outbound URL
+        # as a code constant (the syntax tree -- comments are not calls).
+        if STORE_URL_SETTING in settings_names(source) or _code_urls(source):
             hits.append(path.name)
     return hits
 
@@ -164,8 +176,16 @@ def _accept_payload_test_present(root: Path) -> bool:
     routes = root / "tests" / "test_routes.py"
     if not routes.is_file():
         return False
-    return "def test_every_capability_route_accepts_payload" in routes.read_text(
-        encoding="utf-8"
+    import ast
+
+    try:
+        tree = ast.parse(routes.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return False
+    return any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == ACCEPT_PAYLOAD_TEST
+        for node in tree.body
     )
 
 

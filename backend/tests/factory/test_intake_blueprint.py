@@ -62,7 +62,10 @@ def test_lettings_golden_chat_reconstructs_the_same_roster():
 
 def test_plain_language_names_done_when_and_approve():
     chat = load_lettings_golden_chat()
-    intake = reconstruct_intake_from_chat(chat["turns"], use_llm=False)
+    # The vertical is the user's typed Floor choice, never read from the brief.
+    intake = reconstruct_intake_from_chat(
+        chat["turns"], use_llm=False, vertical_hint="residential_lettings"
+    )
     prose = render_plain_language(intake)
     assert "Residential Lettings" in prose
     assert "Done when:" in prose
