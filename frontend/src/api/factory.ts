@@ -281,12 +281,17 @@ export async function chatStream(
   sessionId: string,
   message: string,
   onEvent: (ev: ChatEvent) => void,
+  vertical?: string | null,
 ): Promise<void> {
+  // The vertical travels as its own typed field, never inside the message:
+  // the user picks or types it on the Floor and the Factory never infers it.
+  const body: { message: string; vertical?: string } = { message }
+  if (vertical !== undefined && vertical !== null) body.vertical = vertical
   const res = await fetch(`${API_BASE}/v1/sessions/${sessionId}/chat`, {
     method: 'POST',
     headers: authHeaders(),
     credentials: 'include',
-    body: JSON.stringify({ message }),
+    body: JSON.stringify(body),
   })
   if (!res.ok || !res.body) {
     const txt = await res.text().catch(() => '')
@@ -361,8 +366,22 @@ export interface ProductDesign {
   last_error?: string | null
 }
 
+/** A vertical a Store kit DECLARES it serves (its own serves_verticals). */
+export interface DeclaredVertical {
+  vertical: string
+  kit: string
+  build_ready: boolean
+}
+
 export const product = {
   get: (sid: string) => req<ProductDesign>('GET', `/v1/sessions/${sid}/product`),
+  /** The Floor's vertical picker: options from the Store kits' declarations,
+   *  plus the user's current choice. */
+  verticals: (sid: string) =>
+    req<{ verticals: DeclaredVertical[]; chosen: string | null; default: string }>(
+      'GET',
+      `/v1/sessions/${sid}/product/verticals`,
+    ),
   draft: (sid: string, brief: string, vertical_hint?: string) =>
     req<ProductDesign & { source?: string; yaml?: string }>('POST', `/v1/sessions/${sid}/product/draft`, {
       brief,

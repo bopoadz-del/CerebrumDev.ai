@@ -270,6 +270,73 @@ def test_failure_ownership_parses_the_failing_assert_as_code():
     assert not _asserts_a_comparison("prose saying assert x == y without source")
 
 
+# -- the vertical is the user's choice, never inferred ------------------------
+
+
+def _module_tree(rel: str):
+    import ast
+
+    src = (Path(__file__).resolve().parents[2] / "app" / rel).read_text(encoding="utf-8")
+    return ast.parse(src), src
+
+
+def test_every_drafted_vertical_comes_from_the_users_choice_only():
+    """Owner order 2026-10-05: the Factory never infers a vertical from brief
+    prose or from the block set. Structurally: every value the architect binds
+    to ``vertical`` is ``chosen_vertical(vertical_hint)`` -- the user's field --
+    and no model payload's "vertical" key is ever read."""
+    import ast
+
+    tree, _ = _module_tree("factory/product_architect.py")
+    # The two functions that CREATE a draft's vertical (one per drafting path).
+    drafters = {
+        n.name: n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef)
+        and n.name in {"_blueprint_from_llm_payload", "_draft_blueprint_from_brief_inner"}
+    }
+    assert set(drafters) == {"_blueprint_from_llm_payload", "_draft_blueprint_from_brief_inner"}
+    for name, fn in drafters.items():
+        bound = [
+            node.value
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "vertical" for t in node.targets)
+        ]
+        assert bound, f"{name} binds no vertical"
+        for value in bound:
+            assert (
+                isinstance(value, ast.Call)
+                and getattr(value.func, "id", None) == "chosen_vertical"
+                and [getattr(a, "id", None) for a in value.args] == ["vertical_hint"]
+            ), f"{name}: {ast.unparse(value)}"
+    # The model's payload never supplies one.
+    for node in ast.walk(drafters["_blueprint_from_llm_payload"]):
+        key = None
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+            key = node.slice.value
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+        ):
+            key = node.args[0].value
+        assert key != "vertical", f"a vertical is read from data: {ast.unparse(node)}"
+
+
+def test_the_chat_model_picks_no_kit_and_the_notice_reads_the_session_choice():
+    import ast
+
+    tree, src = _module_tree("factory/platform_chat_llm.py")
+    assert "kit_match" not in src
+    notice = next(
+        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_kit_notice"
+    )
+    assert [a.arg for a in notice.args.args] == ["state"], "the notice must take no message text"
+
+
 # -- samples follow declarations; source questions go to the parser --------
 
 

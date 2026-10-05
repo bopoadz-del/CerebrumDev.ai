@@ -3,7 +3,7 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -38,6 +38,10 @@ router = APIRouter()
 
 class ChatMessage(BaseModel):
     message: str
+    #: The vertical the user picked or typed on the Floor -- a typed field,
+    #: never read out of ``message``. Sent once is enough: it persists on the
+    #: session (``product_design.vertical``) until the user changes it.
+    vertical: Optional[str] = None
 
 
 class ApproveRequest(BaseModel):
@@ -612,6 +616,14 @@ async def chat(
     # SSE generator it could only surface as an event). Quotas exempt
     # subscribers; this binds every account.
     require_llm_rate(getattr(state, "user_id", None), "chat")
+    if body.vertical is not None:
+        # The user's own choice, persisted before the stream reloads the
+        # session. An empty value clears it back to "no vertical".
+        from ..factory.store_kits import NO_VERTICAL, chosen_vertical
+
+        choice = chosen_vertical(body.vertical)
+        state.product_design.vertical = None if choice == NO_VERTICAL else choice
+        update_session(state.session_id, state)
     if _chat_starts_generation(state, body.message):
         assert_entitled(principal)
     return StreamingResponse(

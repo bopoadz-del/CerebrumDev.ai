@@ -33,6 +33,7 @@ import {
   kernelName,
 } from './buildProgress'
 import { LevelGradeStrip } from './levelGradeView'
+import { VerticalPicker } from './verticalPicker'
 import { displayProductName, humanizeProductId, latestBlueprintIn } from './productDisplay'
 
 interface Capability {
@@ -480,6 +481,17 @@ export function Floor({
     },
   ])
   const [input, setInput] = useState('')
+  // The user's own vertical choice (picked or typed). Sent with each chat as
+  // a typed field; '' = no choice (a general product, no domain kit).
+  const [vertical, setVertical] = useState('')
+  // Sent only when the user changed it, so a choice made another way (the
+  // typed "vertical is ..." command) is never cleared by an untouched picker.
+  const [verticalDirty, setVerticalDirty] = useState(false)
+  const pickVertical = useCallback((v: string) => {
+    setVertical(v)
+    setVerticalDirty(true)
+  }, [])
+  const syncVertical = useCallback((v: string) => setVertical(v), [])
   const [busy, setBusy] = useState(false)
   const [coderBuild, setCoderBuild] = useState<BuildStatus | null>(null)
   const [productDesign, setProductDesign] = useState<ProductDesign | null>(null)
@@ -583,7 +595,10 @@ export function Floor({
       let runnerStarted = false
       setMsgs((m) => [...m, { role: 'user', text: message }, { role: 'factory', text: '' }])
       try {
-        await chatStream(sessionId, message, (ev: ChatEvent) => {
+        await chatStream(
+          sessionId,
+          message,
+          (ev: ChatEvent) => {
           const token = chatEventText(ev)
           if (token !== null) {
             setMsgs((m) => {
@@ -668,7 +683,10 @@ export function Floor({
               return copy
             })
           }
-        })
+          },
+          ...(verticalDirty ? [vertical] : []),
+        )
+        if (verticalDirty) setVerticalDirty(false)
       } catch (e) {
         setMsgs((m) => [
           ...m.slice(0, -1),
@@ -677,7 +695,7 @@ export function Floor({
       }
       return { runnerStarted }
     },
-    [sessionId],
+    [sessionId, vertical, verticalDirty],
   )
 
   const send = useCallback(
@@ -1149,6 +1167,13 @@ export function Floor({
           {newSessionError && <div className="error-box">{newSessionError}</div>}
         </div>
       )}
+      <VerticalPicker
+        sessionId={sessionId}
+        value={vertical}
+        onChange={pickVertical}
+        onLoaded={syncVertical}
+        disabled={busy || coderBuilding || accessPaused}
+      />
       <form
         className="composer"
         onSubmit={(e) => {

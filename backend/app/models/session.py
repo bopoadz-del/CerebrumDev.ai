@@ -58,6 +58,10 @@ class ProductDesignState(BaseModel):
     elicitation_rounds: int = 0
     #: The "no ready kit for this" notice is said once per session.
     kit_notice_given: bool = False
+    #: The vertical the USER chose on the Floor (picked or typed). The only
+    #: source of a product's vertical: None means "product" (no domain kit).
+    #: The Factory never infers it from the brief's prose or its blocks.
+    vertical: Optional[str] = None
 
 
 class SessionState(BaseModel):

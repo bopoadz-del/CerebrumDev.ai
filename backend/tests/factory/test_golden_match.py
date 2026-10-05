@@ -101,12 +101,17 @@ def test_the_real_goldens_route_by_their_own_structure():
     real = goldens(ROOT / "blueprints")
     assert real, "no golden blueprint on disk declares serves_verticals"
     target = load_blueprint(real[0].path)
-    hit = _golden_for_draft(target)
+    # The user's choice is one of the verticals the golden itself declares
+    # (owner 2026-10-05: a golden never hands a product a vertical the user
+    # did not pick -- no choice, no golden).
+    choice = target.serves_verticals[0]
+    assert _golden_for_draft(target) is None
+    hit = _golden_for_draft(target, choice)
     assert hit is not None and hit.drafting_mode == "golden"
     assert hit.product_id == target.product_id
 
     thin = target.model_copy(update={"capabilities": target.capabilities[:1]})
     thin_caps = {c.id for c in thin.capabilities}
     assert len(thin_caps) == 1
-    assert _golden_for_draft(thin) is None or pytest.fail(
+    assert _golden_for_draft(thin, choice) is None or pytest.fail(
         "one capability of a large golden must not clear the default threshold")
