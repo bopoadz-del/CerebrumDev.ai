@@ -132,6 +132,42 @@ def _import_is_guarded(tree: ast.AST, line: int) -> bool:
     return False
 
 
+def _inside_import_error_guard(tree: ast.AST, target: ast.AST) -> bool:
+    """``target`` sits in the body of a ``try`` that catches ImportError."""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try) or not any(
+            _catches_import_error(h) for h in node.handlers
+        ):
+            continue
+        for stmt in node.body:
+            if any(child is target for child in ast.walk(stmt)):
+                return True
+    return False
+
+
+def _top_level_statement(tree: ast.Module, target: ast.AST):
+    """The module-level statement that contains ``target``."""
+    for stmt in tree.body:
+        if any(child is target for child in ast.walk(stmt)):
+            return stmt
+    return None
+
+
+def _insert_before_line(text: str, lineno: int, block: str) -> str:
+    lines = text.splitlines(keepends=True)
+    return "".join(lines[: lineno - 1]) + block + "".join(lines[lineno - 1 :])
+
+
+def _first_import_of(tree: ast.Module, predicate):
+    """The first Import/ImportFrom node (source order) matching ``predicate``."""
+    found = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom)) and predicate(node)
+    ]
+    return min(found, key=lambda n: (n.lineno, n.col_offset)) if found else None
+
+
 ENSURE_READY_MARKER = "def _ensure_store_block_ready"
 MCP_OFFLINE_MARKER = "Store-unwired MCP"
 QUERY_UNWIRED_MARKER = "Store-unwired query"
@@ -231,8 +267,40 @@ def emit_instantiate_ready(text: str) -> str:
     )
 
 
+def _unguarded_host_registry_import(text: str) -> bool:
+    """The module imports the Store host's ``_create_block_instance`` beside
+    ``BLOCK_REGISTRY`` in one block, and that host import is not yet guarded
+    by an ImportError handler -- the construct this transform rewrites."""
+    tree = _tree(text)
+    if tree is None:
+        return False
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if not isinstance(body, list):
+            continue
+        host = registry = None
+        for stmt in body:
+            if isinstance(stmt, ast.ImportFrom):
+                names = {alias.name for alias in stmt.names}
+                if stmt.module == "app.dependencies" and "_create_block_instance" in names:
+                    host = stmt
+                if "BLOCK_REGISTRY" in names:
+                    registry = stmt
+        if host is not None and registry is not None and not _inside_import_error_guard(tree, host):
+            return True
+    return False
+
+
 def emit_notification_mcp(text: str) -> str:
-    if MCP_OFFLINE_MARKER in text:
+    """Record a notification in-process when the Store host is absent.
+
+    Applies to any module that imports the Store host's
+    ``_create_block_instance`` beside ``BLOCK_REGISTRY`` without an
+    ImportError guard (found on the syntax tree, whatever the module is
+    called); once rewritten the import is guarded, so a second pass is a
+    no-op.
+    """
+    if not _unguarded_host_registry_import(text):
         return text
     old = (
         "        try:\n"
@@ -294,9 +362,12 @@ def emit_database_insert(text: str) -> str:
 
 
 def emit_database_query(text: str) -> str:
-    """Build SELECT SQL from table/filters when the handler omitted ``sql``."""
-    if QUERY_UNWIRED_MARKER in text:
-        return text
+    """Build SELECT SQL from table/filters when the handler omitted ``sql``.
+
+    A no-op unless the module carries the exact Store query body it rewrites;
+    the rewritten body no longer contains that fragment, so a second pass is a
+    no-op too.
+    """
     old = (
         "        \"\"\"Execute SELECT query\"\"\"\n"
         "        sql = data.get(\"sql\")\n"
@@ -349,18 +420,58 @@ def emit_database_query(text: str) -> str:
     return text.replace(old, new, 1)
 
 
+def _pdf_reader_sources(tree: ast.Module) -> list:
+    """Modules this code takes ``PdfReader`` from -- ``from X import
+    PdfReader`` or ``X.PdfReader`` on an imported module ``X`` -- each with
+    the import node that brings it in. Read off the syntax tree: the stub
+    provides exactly that API, for exactly those modules."""
+    imported = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imported.setdefault(alias.asname or alias.name, (alias.name, node))
+    out = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and any(
+            alias.name == "PdfReader" for alias in node.names
+        ):
+            out.setdefault(node.module, node)
+        elif (
+            isinstance(node, ast.Attribute)
+            and node.attr == "PdfReader"
+            and isinstance(node.value, ast.Name)
+            and node.value.id in imported
+        ):
+            module, imp = imported[node.value.id]
+            out.setdefault(module, imp)
+    return sorted(out.items())
+
+
 def emit_document_engine_parse(text: str) -> str:
-    """Stub PDF parser imports so PRODUCT can run without pdfplumber/pypdf.
+    """Stub the PDF reader modules a module reads ``PdfReader`` from.
 
     Live veterinary-care PRODUCT (sess_66a387b5c9b0495c) died on
     ``Missing PDF parser package`` after #306 synthesized a real PDF path.
-    The factory interpreter may have ``pypdf``; generated-product pytest
-    and some Store backends look for ``pdfplumber`` / ``PyPDF2``. Injecting
-    a typed stub is Store-unwired adaptation — the same class as aiofiles —
-    not inventing a successful parse of a caller document.
+    Delivered platforms may lack the Store's PDF libraries. Injecting a typed
+    stub is Store-unwired adaptation -- the same class as aiofiles -- not
+    inventing a successful parse of a caller document.
+
+    Decided by STRUCTURE, whatever the module is called: only modules this
+    code takes ``PdfReader`` from are stubbed (that is the API the stub
+    provides), and a module that reads ``PdfReader`` from nowhere is left as
+    it is. The stub goes immediately before the statement that imports the
+    first such module, so it never precedes a ``from __future__`` import and
+    commutes with every other transform here.
     """
-    if DOC_PARSE_UNWIRED_MARKER in text:
+    tree = _tree(text)
+    if tree is None or _defines(text, "_install_offline_pdf"):
         return text
+    sources = _pdf_reader_sources(tree)
+    if not sources:
+        return text
+    names = tuple(module for module, _node in sources)
+    first = min((node for _module, node in sources), key=lambda n: n.lineno)
+    anchor = _top_level_statement(tree, first)
     preamble = (
         "# Store-unwired document parse: delivered platforms may lack the\n"
         "# Store's PDF libraries. A stub reader lets parse() import; text\n"
@@ -393,29 +504,44 @@ def emit_document_engine_parse(text: str) -> str:
         "    mod.PdfWriter = object\n"
         "    _sys.modules[name] = mod\n"
         "\n"
-        "for _pdf_name in (\"pypdf\", \"PyPDF2\", \"pdfplumber\", \"pdfminer\", \"fitz\"):\n"
+        f"for _pdf_name in {names!r}:\n"
         "    _install_offline_pdf(_pdf_name)\n"
         "\n"
     )
-    return preamble + text
+    if anchor is None:
+        return insert_after_future_imports(text, preamble)
+    return _insert_before_line(text, anchor.lineno, preamble)
 
 
 def emit_vector_search_sklearn(text: str) -> str:
-    """Stub sklearn so PRODUCT does not hard-fail on vector_search import.
+    """Stub sklearn so PRODUCT does not hard-fail on importing it.
 
     Live sess_a69c8ce ``universal_search`` died on
     ``ModuleNotFoundError: No module named 'sklearn'``. scikit-learn is
     recorded in DISTRIBUTIONS for requirements.txt, but product pytest
     (and some delivered platforms) may still lack it. A typed stub lets
     the module import; it does not invent a real embedding search.
+
+    Applies to any module that imports sklearn (syntax tree), whatever it is
+    called; the stub goes immediately before the statement that imports it.
     """
-    if SKLEARN_UNWIRED_MARKER in text:
+    tree = _tree(text)
+    if tree is None or _defines(text, "_install_offline_sklearn"):
         return text
-    if not _references_module(text, "sklearn"):
+    first = _first_import_of(
+        tree,
+        lambda node: (
+            any(alias.name.split(".")[0] == "sklearn" for alias in node.names)
+            if isinstance(node, ast.Import)
+            else (node.module or "").split(".")[0] == "sklearn"
+        ),
+    )
+    if first is None:
         return text
+    anchor = _top_level_statement(tree, first)
     preamble = (
         "# Store-unwired sklearn: delivered platforms / product pytest may\n"
-        "# lack scikit-learn. A stub lets vector_search import; similarity\n"
+        "# lack scikit-learn. A stub lets the module import; similarity\n"
         "# is empty rather than a fabricated ranking.\n"
         "import sys as _sys, types as _types\n"
         "\n"
@@ -457,37 +583,63 @@ def emit_vector_search_sklearn(text: str) -> str:
         "_install_offline_sklearn()\n"
         "\n"
     )
-    return preamble + text
+    if anchor is None:
+        return insert_after_future_imports(text, preamble)
+    return _insert_before_line(text, anchor.lineno, preamble)
+
+
+_AIOFILES_FALLBACK = (
+    "# Store-unwired aiofiles: delivered platforms do not ship aiofiles.\n"
+    "try:\n"
+    "    import aiofiles\n"
+    "except ImportError:\n"
+    "    class _StdAioFile:\n"
+    "        def __init__(self, path, mode):\n"
+    "            self._path = path\n"
+    "            self._mode = mode\n"
+    "            self._fh = None\n"
+    "        async def __aenter__(self):\n"
+    "            self._fh = open(self._path, self._mode)\n"
+    "            return self\n"
+    "        async def __aexit__(self, *exc):\n"
+    "            self._fh.close()\n"
+    "        async def write(self, data):\n"
+    "            return self._fh.write(data)\n"
+    "        async def read(self):\n"
+    "            return self._fh.read()\n"
+    "    class _StdAioFiles:\n"
+    "        @staticmethod\n"
+    "        def open(path, mode=\"r\"):\n"
+    "            return _StdAioFile(path, mode)\n"
+    "    aiofiles = _StdAioFiles()\n"
+)
 
 
 def emit_storage_aiofiles(text: str) -> str:
-    if AIOFILES_MARKER not in text and _references_module(text, "aiofiles"):
-        fallback = (
-            "# Store-unwired aiofiles: delivered platforms do not ship aiofiles.\n"
-            "try:\n"
-            "    import aiofiles\n"
-            "except ImportError:\n"
-            "    class _StdAioFile:\n"
-            "        def __init__(self, path, mode):\n"
-            "            self._path = path\n"
-            "            self._mode = mode\n"
-            "            self._fh = None\n"
-            "        async def __aenter__(self):\n"
-            "            self._fh = open(self._path, self._mode)\n"
-            "            return self\n"
-            "        async def __aexit__(self, *exc):\n"
-            "            self._fh.close()\n"
-            "        async def write(self, data):\n"
-            "            return self._fh.write(data)\n"
-            "        async def read(self):\n"
-            "            return self._fh.read()\n"
-            "    class _StdAioFiles:\n"
-            "        @staticmethod\n"
-            "        def open(path, mode=\"r\"):\n"
-            "            return _StdAioFile(path, mode)\n"
-            "    aiofiles = _StdAioFiles()\n"
+    """Fall back to stdlib files where a module imports aiofiles unguarded.
+
+    The target is a module-level ``import aiofiles`` that no ImportError
+    handler guards (syntax tree, whatever the module is called); it is
+    replaced in place by a guarded import with a stdlib fallback, so a second
+    pass finds it guarded and does nothing.
+    """
+    tree = _tree(text)
+    if tree is not None:
+        target = next(
+            (
+                stmt
+                for stmt in tree.body
+                if isinstance(stmt, ast.Import)
+                and [alias.name for alias in stmt.names] == ["aiofiles"]
+                and not any(alias.asname for alias in stmt.names)
+                and not _inside_import_error_guard(tree, stmt)
+            ),
+            None,
         )
-        text = text.replace("import aiofiles\n", fallback, 1)
+        if target is not None:
+            lines = text.splitlines(keepends=True)
+            end = target.end_lineno or target.lineno
+            text = "".join(lines[: target.lineno - 1]) + _AIOFILES_FALLBACK + "".join(lines[end:])
     needle = (
         "        file_hash = hashlib.sha256(content if isinstance(content, bytes) "
         "else content.encode()).hexdigest()[:16]\n"
@@ -696,30 +848,44 @@ def emit_store_host_di(text: str) -> str:
     return stripped
 
 
-def emit_runtime_module(module_name: str, text: str) -> str:
-    """Apply the emission transform that belongs to one vendored Store module."""
-    name = module_name.rsplit(".", 1)[-1]
-    if name in ("notification", "event_bus"):
-        # event_bus notify reuses the Store notification MCP import.
-        # Applying the same offline fallback is a no-op when the pattern
-        # is absent. Live sess_4fba2a2: workflow step_1 (event_bus): error
-        # after #314 rewrote channel=sample → mcp and the notify path ran.
-        return emit_notification_mcp(text)
-    if name == "database":
-        return emit_database_query(emit_database_insert(text))
-    if name == "document_engine":
-        return emit_document_engine_parse(text)
-    if name == "vector_search":
-        return emit_vector_search_sklearn(text)
-    if name == "storage":
-        return emit_storage_aiofiles(text)
-    if name == "capture":
-        from app.factory.build.network_posture import P1_CAPTURE_ADAPTER
+#: Every emission transform for vendored Store runtime modules. Each one finds
+#: its OWN target construct on the syntax tree (or the exact Store fragment it
+#: rewrites) and returns the module unchanged when that construct is absent,
+#: so every transform runs on every module and none is chosen by the module's
+#: name. Each is idempotent (its output no longer carries its target), and
+#: they touch disjoint constructs -- in-place rewrites of different
+#: statements, or a stub inserted before the statement that imports its own
+#: target -- so their order does not change the result
+#: (tests/factory/test_emit_by_structure.py proves both on every Store module).
+#:
+#: ``emit_result_key_access`` is not listed: _prepare_cloned_python already
+#: applies it to every vendored module after these run.
+#:
+#: Removed, with the reason: the whole-module replacement of a Store module by
+#: network_posture.P1_CAPTURE_ADAPTER used to be keyed on the module's NAME.
+#: The module carries no structural trigger -- no outbound URL in its code
+#: (network_posture._code_urls finds none); its provider default lives in its
+#: manifest, which network_posture.apply_p1_capture_manifest already rewrites
+#: -- so there is no construct to decide on. The P1 network posture is still
+#: enforced at the boundary: assert_workspace_posture refuses an outbound URL
+#: in shipped code or settings.
+RUNTIME_TRANSFORMS = (
+    emit_notification_mcp,
+    emit_database_insert,
+    emit_database_query,
+    emit_document_engine_parse,
+    emit_vector_search_sklearn,
+    emit_storage_aiofiles,
+)
 
-        # P1 replaces a Store capture module that would default to deepseek.
-        return P1_CAPTURE_ADAPTER
-    if name == "workflow":
-        # Kit shim / WorkflowBlock ``out['result']`` is the live
-        # appointment_scheduling RuntimeError: 'result' class.
-        return emit_result_key_access(text)
+
+def emit_runtime_module(module_name: str, text: str) -> str:
+    """Apply every runtime transform to one vendored Store module.
+
+    ``module_name`` is kept for the caller's signature and decides nothing:
+    each transform recognises its own construct in ``text``.
+    """
+    del module_name
+    for transform in RUNTIME_TRANSFORMS:
+        text = transform(text)
     return text

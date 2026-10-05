@@ -609,13 +609,17 @@ def test_cloner_emits_store_unwired_adapter_contracts(tmp_path):
         "    return getattr(importlib.import_module(module_path), class_name)\n"
     )
     (store / "app" / "blocks" / "__init__.py").write_text(init, encoding="utf-8")
+    # Valid Python: the notification transform finds its construct on the
+    # syntax tree (a bare ``try:`` with no handler is not a module).
     (store / "app" / "blocks" / "notification.py").write_text(
         "class NotificationBlock:\n"
         "    def send(self, block_name, payload):\n"
         "        try:\n"
         "            from vendor.cerebrum.blocks import BLOCK_REGISTRY\n"
         "            from app.dependencies import _create_block_instance\n"
-        "            return BLOCK_REGISTRY\n",
+        "            return BLOCK_REGISTRY\n"
+        "        except Exception:\n"
+        "            return None\n",
         encoding="utf-8",
     )
     (store / "app" / "blocks" / "database.py").write_text(
