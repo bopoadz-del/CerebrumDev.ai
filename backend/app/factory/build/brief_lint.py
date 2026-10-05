@@ -28,7 +28,7 @@ from app.factory.build.brief_lines import content_lines, line_key
 
 SLOT_RE = re.compile(r"\{\{[A-Z0-9_]+\}\}")
 BUDGET_RE = re.compile(r"\b(?:budget|wall)[^\n]{0,40}?(\d+)\s*s\b", re.I)
-CHECK_TAG_RE = re.compile(r"\[check:[a-z0-9_]+\]", re.I)
+CHECK_TAG_RE = re.compile(r"\[check:([a-z0-9_]+)\]", re.I)
 SESSION_ID_RE = re.compile(r"\bsess_[0-9a-f]{6,}\b", re.I)
 
 
@@ -67,6 +67,19 @@ def _acceptance_bullets(compiled: Any) -> List[str]:
         for line in body.splitlines()
         if line.strip().startswith("-")
     ]
+
+
+def acceptance_check_ids(compiled: Any) -> tuple:
+    """The harness check ids the compiled ACCEPTANCE section declares (its
+    ``[check:<id>]`` tags), in first-seen order -- the checks this brief
+    turns on."""
+    seen: List[str] = []
+    for bullet in _acceptance_bullets(compiled):
+        for match in CHECK_TAG_RE.finditer(bullet):
+            check = match.group(1).lower()
+            if check not in seen:
+                seen.append(check)
+    return tuple(seen)
 
 
 def _kit_manifest_errors(manifests: Any) -> List[str]:

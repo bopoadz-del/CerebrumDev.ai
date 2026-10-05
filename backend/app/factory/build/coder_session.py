@@ -3662,6 +3662,9 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
         "vertical": compiled.vertical,
         "missing_reuse": list(compiled.missing_reuse),
         "capabilities": list(compiled.capabilities),
+        # The checks this brief turns on: the runner reads them to decide
+        # which gate failures may reach the writer (brief_gates).
+        "acceptance_checks": list(compiled.acceptance_checks),
     }
     if result.blocker:
         ctx.state.setdefault("coder_failures", {})["brief_dispatch"] = (

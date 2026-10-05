@@ -363,9 +363,13 @@ def gate_product(ctx: "GateContext") -> "GateResult":
     Both halves must pass, and a failure names WHICH half — "PRODUCT failed"
     with no scope is the shape of report this gate exists to replace.
     """
+    from app.factory.build.brief_gates import PRODUCT_GATE_CHECK
     from app.factory.build.gates import GateResult, gate_suite_green
+    from app.factory.build.persist_accept import PRODUCT_ROUND_TRIP_CHECK
     from dataclasses import replace
 
+    # Each half names the brief check it measures (brief_gates), so the
+    # runner can tell a brief-defined failure from a factory-invented one.
     suite = gate_suite_green(replace(ctx, suite_marker="pilot"))
     if not suite.ok:
         return GateResult(
@@ -374,7 +378,11 @@ def gate_product(ctx: "GateContext") -> "GateResult":
             reason=suite.reason or "pilot_suite_red",
             detail="PRODUCT (pilot-marked suite): " + suite.detail,
             findings=list(suite.findings),
-            payload={"half": "pilot_suite", **dict(suite.payload)},
+            payload={
+                "half": "pilot_suite",
+                **dict(suite.payload),
+                "check": PRODUCT_GATE_CHECK,
+            },
         )
 
     trip = gate_round_trip(ctx)
@@ -385,7 +393,11 @@ def gate_product(ctx: "GateContext") -> "GateResult":
             reason=trip.reason or "round_trip_failed",
             detail="PRODUCT (one-record round-trip): " + trip.detail,
             findings=list(trip.findings),
-            payload={"half": "round_trip", **dict(trip.payload)},
+            payload={
+                "half": "round_trip",
+                **dict(trip.payload),
+                "check": PRODUCT_ROUND_TRIP_CHECK,
+            },
         )
     return GateResult(
         ok=True,
