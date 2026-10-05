@@ -43,6 +43,13 @@ from app.factory.build.authorship import AGENT_SOURCE_PREFIXES as _AGENT_SOURCE_
 from app.factory.build.authorship import FULL_PILOT_MIN_AUTHORED_ACTIONS as _FULL_PILOT_MIN_AUTHORED
 from app.factory.build.authorship import RENDERED_MARKER_READER as _RENDERED_MARKER_READER
 from app.factory.build.acceptance_floor import check_ids as _floor_check_ids
+from app.factory.build.rejection_contract import (
+    ALLOWED_VALUES_HEADER,
+    MISSING_REQUIRED,
+    NOT_ALLOWED,
+    REJECTED_FIELD_HEADER,
+    REJECTION_REASON_HEADER,
+)
 
 ACCEPTANCE_CHECK_NAMES: tuple[str, ...] = _floor_check_ids()
 
@@ -505,7 +512,9 @@ def render_auth_module() -> str:
         '    for name in required:',
         '        if name not in payload or payload[name] in (None, ""):',
         '            raise HTTPException(',
-        '                status_code=422, detail="Missing required field: " + name',
+        '                status_code=422,',
+        '                detail="Missing required field: " + name,',
+        f'                headers=_rejection(name, {MISSING_REQUIRED!r}),',
         '            )',
         '    for name, rules in constraints.items():',
         '        if name not in payload:',
@@ -515,7 +524,24 @@ def render_auth_module() -> str:
         '            raise HTTPException(',
         '                status_code=422,',
         '                detail=name + " must be one of: " + ", ".join(str(v) for v in allowed),',
+        f'                headers=_rejection(name, {NOT_ALLOWED!r}, allowed),',
         '            )',
+        '',
+        '',
+        'def _rejection(field: str, reason: str, allowed: Any = None) -> Dict[str, str]:',
+        '    """The rejection as data: which field, why, and the accepted values.',
+        '',
+        '    Callers (the route suite included) read these headers; the prose',
+        '    detail is for humans only."""',
+        '    import json',
+        '',
+        '    out = {',
+        f'        {REJECTED_FIELD_HEADER!r}: json.dumps(field),',
+        f'        {REJECTION_REASON_HEADER!r}: reason,',
+        '    }',
+        '    if allowed is not None:',
+        f'        out[{ALLOWED_VALUES_HEADER!r}] = json.dumps(list(allowed))',
+        '    return out',
     ]
     return "\n".join(lines)
 
