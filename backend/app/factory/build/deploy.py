@@ -5,8 +5,8 @@ persistent disk/DB, or a schema behind Alembic head is not 200. An
 unconditional ``ok: true`` / always-200 body is F1 (LotDesk-class) and is
 rejected by factory tests.
 
-Rollback is a performed drill (start N â†’ persist â†’ start N+1 â†’ roll back
-to N â†’ assert prior health and prior data), not a configured-only script.
+Rollback is a performed drill (start N → persist → start N+1 → roll back
+to N → assert prior health and prior data), not a configured-only script.
 
 Structured request logs carry a correlation id and must not put emoji on
 machine-parseable stdout (F13).
@@ -291,7 +291,7 @@ def render_health() -> str:
         "            head = head_revision()\n"
         "            mig_ok = bool(current) and current == head\n"
         '            mig_detail = f"current={current} head={head}"\n'
-        "        except Exception as exc:  # noqa: BLE001 â€” health must not raise\n"
+        "        except Exception as exc:  # noqa: BLE001 — health must not raise\n"
         "            mig_detail = type(exc).__name__\n"
         "    checks.append({\"name\": \"migrations\", \"ok\": mig_ok, \"detail\": mig_detail})\n"
         "\n"
@@ -419,7 +419,7 @@ def render_rollback_script() -> str:
     return (
         "#!/bin/sh\n"
         "# Roll the running identity back to a prior revision.\n"
-        "# Does not wipe STORAGE_PATH/platform.db â€” persisted rows stay.\n"
+        "# Does not wipe STORAGE_PATH/platform.db — persisted rows stay.\n"
         "# Render equivalent: Dashboard rollback to the previous deploy\n"
         "# (same disk). Losing that disk is still a SPOF; this script\n"
         "# cannot invent a replica.\n"
@@ -589,7 +589,7 @@ def render_deploy_doc() -> str:
 
 def render_product_tests(specs: Dict[str, Dict[str, Any]]) -> str:
     entity, sample = first_entity_sample(specs)
-    return f'''"""S11 deploy / observe â€” fail-closed health and performed rollback."""
+    return f'''"""S11 deploy / observe — fail-closed health and performed rollback."""
 
 from __future__ import annotations
 

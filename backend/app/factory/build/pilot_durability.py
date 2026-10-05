@@ -203,7 +203,7 @@ for cap_id, entity in written.items():
         findings.append("%s: %s cannot be read from a new process (%s)" % (cap_id, entity, seen))
     elif not isinstance(seen, int) or seen < 1:
         findings.append(
-            "%s: wrote to %s and a new process sees %r row(s) â€” persistence "
+            "%s: wrote to %s and a new process sees %r row(s) — persistence "
             "did not outlive the writing process" % (cap_id, entity, seen)
         )
 
@@ -221,7 +221,7 @@ def gate_pilot_outcome_survives_restart(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=True,
             gate=GATE_NAME,
-            detail="code cycle â€” durability is decided on the pilot cycle",
+            detail="code cycle — durability is decided on the pilot cycle",
         )
 
     if not (ctx.workspace / "app" / "models.py").is_file():
@@ -229,7 +229,7 @@ def gate_pilot_outcome_survives_restart(ctx: "GateContext") -> "GateResult":
             ok=False,
             gate=GATE_NAME,
             reason="pilot_no_models",
-            detail="app/models.py is missing â€” nothing to persist",
+            detail="app/models.py is missing — nothing to persist",
             findings=["no models to probe"],
         )
 
