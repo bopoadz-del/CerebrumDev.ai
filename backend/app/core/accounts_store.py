@@ -184,27 +184,34 @@ def prepare_libpq_client_env() -> None:
 
 
 def normalize_accounts_database_url(url: str) -> str:
-    """psycopg3 driver rewrite plus Neon TLS without a client cert.
+    """psycopg3 driver rewrite plus TLS without a client cert.
+
+    The URL is read through its parsed scheme -- ``dialect[+driver]`` -- not
+    by searching its text: a bare ``postgres``/``postgresql`` dialect gets the
+    psycopg3 driver; an explicit driver is kept.
 
     Strips ``sslcert`` / ``sslkey`` query params that point at ``/root/...``
-    or any unreadable file. Adds ``sslmode=require`` for ``*.neon.tech``
-    when the URL did not already set a mode. Does not invent a client cert.
+    or any unreadable file. Does not invent a client cert.
+
+    The TLS mode is the operator's to declare in the URL (``sslmode=...``);
+    nothing is inferred from the host's spelling. The vendor-suffix rule that
+    used to add ``sslmode=require`` for one provider's hosts is gone (owner
+    rule: no behaviour from a literal name). Without a declared mode libpq
+    uses ``prefer``, which still negotiates TLS with a server that offers it;
+    declare ``sslmode=require`` to refuse a plaintext fallback.
     """
     url = (url or "").strip()
-    if url.startswith("postgres://"):
-        url = "postgresql://" + url[len("postgres://"):]
-    if url.startswith("postgresql://") and "+psycopg" not in url:
-        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
-    if not url.startswith("postgresql"):
-        return url
-
     parsed = urlparse(url)
+    dialect, _, driver = parsed.scheme.lower().partition("+")
+    if dialect == "postgres":
+        dialect = "postgresql"
+    if dialect != "postgresql":
+        return url
+    parsed = parsed._replace(scheme=f"{dialect}+{driver or 'psycopg'}")
+
     kept: List[tuple[str, str]] = []
-    have_sslmode = False
     for key, value in parse_qsl(parsed.query, keep_blank_values=True):
         lowered = key.lower()
-        if lowered == "sslmode":
-            have_sslmode = True
         if lowered in {"sslcert", "sslkey"}:
             if (
                 not value
@@ -213,9 +220,6 @@ def normalize_accounts_database_url(url: str) -> str:
             ):
                 continue
         kept.append((key, value))
-    host = (parsed.hostname or "").lower()
-    if host.endswith(".neon.tech") and not have_sslmode:
-        kept.append(("sslmode", "require"))
     return urlunparse(parsed._replace(query=urlencode(kept)))
 
 
@@ -503,7 +507,9 @@ def issue_login_token(account_id: str) -> str:
 
 
 def account_for_login_token(raw: str) -> Optional[Dict[str, Any]]:
-    if not raw or not raw.startswith("cdt_"):
+    # The kind of a credential is which table holds its hash -- the store
+    # knows what it minted. The ``cd?_`` label is for humans, never read.
+    if not raw:
         return None
     token_hash = _hash_token(raw)
     with _LOCK, _engine().begin() as conn:
@@ -539,7 +545,7 @@ def issue_api_key(account_id: str, label: str = "") -> Dict[str, str]:
 
 
 def account_for_api_key(raw: str) -> Optional[Dict[str, Any]]:
-    if not raw or not raw.startswith("cdk_"):
+    if not raw:
         return None
     key_hash = _hash_token(raw)
     with _LOCK, _engine().begin() as conn:
@@ -602,7 +608,7 @@ def issue_verify_token(account_id: str) -> str:
 
 def confirm_verify_token(raw: str) -> Optional[str]:
     """Mark the owning account verified; return account_id or None."""
-    if not raw or not raw.startswith("cdv_"):
+    if not raw:
         return None
     token_hash = _hash_token(raw)
     with _LOCK, _engine().begin() as conn:
@@ -645,7 +651,7 @@ def issue_reset_token(email: str) -> Optional[str]:
 
 def confirm_reset_token(raw: str, new_password: str) -> Optional[str]:
     """Reset the password and invalidate all login tokens; return account_id."""
-    if not raw or not raw.startswith("cdr_"):
+    if not raw:
         return None
     token_hash = _hash_token(raw)
     salt = secrets.token_hex(16)
@@ -686,13 +692,15 @@ def change_account_password(
     Same security as :func:`confirm_reset_token`, except the caller's current
     ``cdt_`` session is kept when ``keep_login_token`` is provided so an
     in-account change does not bounce the Floor. API keys (``cdk_``) are not
-    login sessions and stay valid.
+    login sessions and stay valid. The kept session is matched by hash in the
+    login-session table; any other credential matches no row, so every
+    session is closed.
     """
     if not account_id or not new_password:
         return False
     salt = secrets.token_hex(16)
     keep_hash = None
-    if keep_login_token and keep_login_token.startswith("cdt_"):
+    if keep_login_token:
         keep_hash = _hash_token(keep_login_token)
     with _LOCK, _engine().begin() as conn:
         row = conn.execute(

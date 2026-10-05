@@ -61,6 +61,29 @@ class TestEvaluateGrounding:
         )
         assert verdict["verdict"] == VERDICT_GROUNDED
 
+    def test_urls_are_found_by_the_url_grammar_not_a_pattern(self):
+        """A URL is a token the stdlib parser gives a scheme and a host:
+        markdown brackets and trailing punctuation are not part of it, any
+        scheme counts, and a scheme with no host (mailto:) is not a URL."""
+        from app.core.grounding import _urls
+
+        text = (
+            "See [docs](https://docs.internal/guide?x=1). Mirror: ftp://files.internal/a, "
+            "or mail mailto:ops@example.com."
+        )
+        assert _urls(text) == ["https://docs.internal/guide?x=1", "ftp://files.internal/a"]
+
+        grounded = evaluate_grounding(
+            "Read [the guide](https://docs.internal/guide).",
+            sources=["See https://docs.internal/guide for setup."],
+        )
+        assert grounded["verdict"] == VERDICT_GROUNDED
+        invented = evaluate_grounding(
+            "Fetch it from ftp://files.invalid/build.zip",
+            sources=["No product has been generated yet."],
+        )
+        assert invented["verdict"] == VERDICT_BLOCKED
+
     def test_ungrounded_figure_is_flagged_with_disclosure(self):
         verdict = evaluate_grounding(
             "That typically costs 4500 USD per month.",
@@ -116,6 +139,7 @@ class TestChatRoutesThroughGrounding:
     ):
         monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
         from app.core.session_store import create_session
+        from app.factory.floor_actions import FloorAction
         from app.routers.chat import _stream_response
 
         state = create_session("grounding-test-session", "user-1")
@@ -131,7 +155,9 @@ class TestChatRoutesThroughGrounding:
             new=AsyncMock(return_value=poisoned),
         ):
             events = []
-            async for evt in _stream_response("grounding-test-session", "where is my zip?"):
+            async for evt in _stream_response(
+                "grounding-test-session", "where is my zip?", action=FloorAction.CHAIN
+            ):
                 events.append(evt)
 
         joined = "".join(events)
@@ -150,6 +176,7 @@ class TestChatRoutesThroughGrounding:
     ):
         monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
         from app.core.session_store import create_session
+        from app.factory.floor_actions import FloorAction
         from app.routers.chat import _stream_response
 
         create_session("grounding-ok-session", "user-1")
@@ -163,7 +190,9 @@ class TestChatRoutesThroughGrounding:
             new=AsyncMock(return_value=fine),
         ):
             events = []
-            async for evt in _stream_response("grounding-ok-session", "what first?"):
+            async for evt in _stream_response(
+                "grounding-ok-session", "what first?", action=FloorAction.CHAIN
+            ):
                 events.append(evt)
 
         joined = "".join(events)

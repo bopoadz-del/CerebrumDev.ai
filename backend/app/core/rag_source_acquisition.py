@@ -703,6 +703,7 @@ def run_acquisition_preview(
             report.extracted_text = parse_result.text
             report.text_preview = parse_result.text[:RAG_PARSE_PREVIEW_CHARACTERS]
             report.warnings.extend(parse_result.warnings)
+            report.parser_truncated = parse_result.truncated
             report.parse_status = ParseStatus.PARSED
             report.status = AcquisitionStatus.PARSED
         else:

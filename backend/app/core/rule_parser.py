@@ -12,8 +12,11 @@ logger = logging.getLogger(__name__)
 def parse_rules(rule_texts: List[str]) -> List[Dict[str, str]]:
     """Convert free-text rules into structured rule objects.
 
-    Uses the configured Kimi LLM when available; otherwise falls back to the
-    deterministic parser.
+    The rule model returns each rule's typed trigger and action. Without one,
+    a rule is kept verbatim and NOT interpreted: nothing reads the user's
+    words to guess which part is a condition and which an action (the
+    if/then/always word split that used to do that is deleted -- owner rule:
+    decisions never come from prose).
     """
     if not rule_texts:
         return []
@@ -29,7 +32,7 @@ def parse_rules(rule_texts: List[str]) -> List[Dict[str, str]]:
 
 
 def _parse_naive(rule_texts: List[str]) -> List[Dict[str, str]]:
-    """Deterministic rule parser."""
+    """Keep each rule verbatim, uninterpreted (no rule model answered)."""
     parsed = []
     for text in rule_texts:
         text = text.strip()
@@ -37,9 +40,9 @@ def _parse_naive(rule_texts: List[str]) -> List[Dict[str, str]]:
             continue
         parsed.append({
             "raw": text,
-            "trigger": _extract_trigger(text),
-            "action": _extract_action(text),
-            "code_snippet": _generate_snippet(text),
+            "trigger": "",
+            "action": "",
+            "code_snippet": _generate_snippet(text, "", ""),
         })
     return parsed
 
@@ -137,39 +140,28 @@ def _parse_with_llm(provider: str, rule_texts: List[str]) -> List[Dict[str, str]
         raw = item.get("raw", "")
         if not raw:
             continue
+        trigger = str(item.get("trigger") or "")
+        action = str(item.get("action") or "")
         parsed.append({
             "raw": raw,
-            "trigger": item.get("trigger") or _extract_trigger(raw),
-            "action": item.get("action") or _extract_action(raw),
-            "code_snippet": item.get("code_snippet") or _generate_snippet(raw),
+            "trigger": trigger,
+            "action": action,
+            "code_snippet": item.get("code_snippet") or _generate_snippet(raw, trigger, action),
         })
     return parsed or _parse_naive(rule_texts)
 
 
-def _extract_trigger(text: str) -> str:
-    """Naive trigger extraction."""
-    lower = text.lower()
-    if "if " in lower:
-        return text.split("if ", 1)[1].split(" then", 1)[0].strip(" .")
-    return "always"
+def _generate_snippet(text: str, trigger: str, action: str) -> str:
+    """A placeholder Python snippet from the rule's TYPED trigger and action.
 
-
-def _extract_action(text: str) -> str:
-    """Naive action extraction."""
-    lower = text.lower()
-    if " then " in lower:
-        return text.split(" then ", 1)[1].strip(" .")
-    if "always " in lower:
-        return text.lower().replace("always ", "").strip(" .")
-    return text
-
-
-def _generate_snippet(text: str) -> str:
-    """Generate a placeholder Python snippet for the rule."""
-    trigger = _extract_trigger(text)
-    action = _extract_action(text)
+    A rule without both (no rule model answered) becomes a comment only --
+    it is recorded, not executed on a guess.
+    """
+    comment = " ".join(text.splitlines())
+    if not (trigger and action):
+        return f"# Rule (not interpreted -- no rule model answered): {comment}\n"
     return (
-        f"# Rule: {text}\n"
+        f"# Rule: {comment}\n"
         f"if context.matches({trigger!r}):\n"
         f"    context.apply_action({action!r})\n"
     )

@@ -156,6 +156,8 @@ class RagAcquisitionReport(BaseModel):
     extracted_text: str = ""
     text_preview: str = ""
     warnings: List[str] = Field(default_factory=list)
+    #: The parser cut the extracted text at its character bound.
+    parser_truncated: bool = False
     errors: List[ValidationError] = Field(default_factory=list)
     raw_artifact_persisted: bool = False
     started_at: datetime = Field(default_factory=datetime.utcnow)
