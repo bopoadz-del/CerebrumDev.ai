@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set
+from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 import re
 
@@ -29,8 +29,10 @@ from app.factory.build.authorship import (
     n_required_capabilities_from,
 )
 from app.factory.build.block_obligations import ENVELOPE_STATUS_VALUES
+from app.factory.build.brief_gates import PRODUCT_GATE_CHECK, SUITE_CHECK
 from app.factory.build.persist_accept import (
     FACTORY_GROUNDED_PERSIST_SOURCE,
+    PRODUCT_ROUND_TRIP_CHECK,
     persist_accept_acceptance_line,
     persist_accept_forbidden_lines,
     persist_accept_rules_text,
@@ -144,6 +146,15 @@ class CompiledBrief:
     slots: Dict[str, str] = field(default_factory=dict)
     budget_s: float = 0.0
     template_revision: str = TEMPLATE_REVISION
+
+    @property
+    def acceptance_checks(self) -> Tuple[str, ...]:
+        """The check ids this brief turns on (its ACCEPTANCE ``[check:id]``
+        tags). A gate outside them -- and outside the floor checks the brief
+        enforces -- is factory-invented (brief_gates)."""
+        from app.factory.build.brief_lint import acceptance_check_ids
+
+        return acceptance_check_ids(self)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -713,10 +724,10 @@ def render_slot_bodies(
         "Fails loud. The run is not done until ALL of these are true. "
         "ACCEPTANCE is run by the harness, not the coder.",
         "- the product boots  [check:boot]",
-        "- own gates green  [check:gates]",
+        f"- own gates green  [check:{SUITE_CHECK}]",
         "- one-record round-trip per capability (POST creates, GET returns it); a capability "
         "calling a declared placeholder connector answers HTTP 503 error_kind unavailable "
-        "instead and is not judged  [check:round_trip]",
+        f"instead and is not judged  [check:{PRODUCT_ROUND_TRIP_CHECK}]",
         persist_accept_acceptance_line(),
         schema_accept_acceptance_line(),
         reuse_accept_acceptance_line(),
@@ -725,7 +736,7 @@ def render_slot_bodies(
         ),
         "- the domain pack's domain_acceptance_conditions hold  [check:domain_acceptance]",
         f"- envelope vocab {', '.join(ENVELOPE_STATUS_VALUES)} enforced by schema, not prose  [check:envelope_schema]",
-        f"- PRODUCT gate: {GATE_SCOPES['PRODUCT']}  [check:product_gate]",
+        f"- PRODUCT gate: {GATE_SCOPES['PRODUCT']}  [check:{PRODUCT_GATE_CHECK}]",
         f"- STORE gate: {GATE_SCOPES['STORE']}  [check:store_gate]",
         "- scripts/acceptance.py ≥12 measured checks k/k inside the Store-built image  [check:store_acceptance]",
         "- ledger records pilot_ready=true  [check:ledger]",
