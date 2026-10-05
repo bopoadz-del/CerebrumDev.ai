@@ -117,32 +117,16 @@ def test_a_refinement_without_its_value_is_refused(state):
     assert result["ok"] is False and result["refined"] is False
 
 
-# ── set_rigor: the acceptance bar is the customer's to choose ────────────────
+# The build level is the user's typed INTAKE (set_build_level / confirm_intake),
+# not a blueprint refinement: tests/factory/test_build_level.py.
 
-@pytest.mark.parametrize("level", ["prototype", "light", "standard", "production"])
-def test_set_rigor_takes_the_declared_grade(state, level):
+
+def test_the_build_level_is_not_a_refinement(state):
     _draft_retail(state)
-    result = apply_refinement(state, FloorAction.SET_RIGOR, level)
-    assert result is not None, level
-    assert result["ok"] and result["refined"], level
-    assert result["action"] == "set_rigor", level
-    assert result["blueprint"]["rigor"] == level, level
+    from app.factory.floor_actions import FloorActionError
 
-
-def test_an_undeclared_grade_is_refused_not_mapped(state):
-    """No synonym table: a grade outside the four declared levels is refused."""
-    _draft_retail(state)
-    before = dict(state.product_design.blueprint)
-    result = apply_refinement(state, FloorAction.SET_RIGOR, "zorblat-grade")
-    assert result["ok"] is False
-    assert state.product_design.blueprint == before
-
-
-def test_set_rigor_reflows_plan(state):
-    _draft_retail(state)
-    state.product_design.plan = {"stale": True}
-    apply_refinement(state, FloorAction.SET_RIGOR, "prototype")
-    assert state.product_design.plan is None  # bar changed -> re-plan
+    with pytest.raises(FloorActionError):
+        apply_refinement(state, FloorAction.SET_BUILD_LEVEL, "prototype")
 
 
 def test_add_and_remove_stay_themselves(state):

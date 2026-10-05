@@ -7,21 +7,29 @@ from app.factory.build.writer_brief import CODING_AGENT_BRIEF, writer_system_bri
 from app.factory.coder import _PLATFORM_SYSTEM, _ROUTE_SYSTEM, _SPEC_SYSTEM
 
 
-def test_one_brief_names_gates_pilot_ready_and_forbids_thin_success():
+def test_one_brief_names_the_build_level_and_the_pilot_exit_forbids_thin_success():
+    from types import SimpleNamespace
+
+    from app.factory.build.writer_brief import level_exit_condition
+
     brief = writer_system_brief()
     assert brief.startswith("You are the Factory coding agent")
     assert CODING_AGENT_BRIEF in brief
+    assert "BUILD LEVEL" in brief
+    # The exit condition and the ladder are rendered for the chosen level.
+    exit_ = level_exit_condition(SimpleNamespace(build_level="pilot"))
     for name in (
         Level.CODE_GREEN.value,
         Level.STORE_GREEN.value,
         Level.FOUNDING_CUSTOMER_READY.value,
         "pilot_ready",
     ):
-        assert name in brief
-    assert "CODE" in brief and "PRODUCT" in brief and "STORE" in brief
+        assert name in exit_
+    assert "CODE" in exit_ and "PRODUCT" in exit_ and "STORE" in exit_
+    assert "thin success is a failure" in exit_.lower()
+    assert "templates-only" in exit_.lower()
     lowered = brief.lower()
-    assert "thin" in lowered and "scaffold" in lowered
-    assert "templates-only" in lowered or "stub" in lowered
+    assert "scaffold" in lowered
     assert "action=" in brief
     assert "writer_behaviour" in brief
     assert "no capability accepted its own schema" in brief
@@ -31,7 +39,6 @@ def test_one_brief_names_gates_pilot_ready_and_forbids_thin_success():
     assert "'input': payload" in brief
     assert "workflow: step_2 (event_bus): error" in brief
     assert "EVERY id in BLOCK_IDS" in brief
-    assert "Finished" in brief or "finished product" in lowered
     assert "one factory_code_cli writer" in lowered
     assert "three gated phases" in lowered
 
@@ -76,8 +83,6 @@ def test_generate_platform_handler_sends_the_one_brief(monkeypatch):
     system = captured["messages"][0]
     assert system["role"] == "system"
     assert writer_system_brief() in system["content"]
-    assert "pilot_ready" in system["content"]
-    assert "CODE_GREEN" in system["content"]
     user = captured["messages"][-1]["content"]
     assert "Write the handle() body now." in user
 

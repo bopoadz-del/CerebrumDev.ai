@@ -131,6 +131,7 @@ def build_manifest(
     layer_counts: Dict[int, int],
     engine_included: bool,
     provenance: Optional[Dict[str, str]] = None,
+    build_level: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Assemble the versioned manifest. Validated, never a free-form dict."""
     if retrieval_mode not in RETRIEVAL_MODES:
@@ -176,6 +177,9 @@ def build_manifest(
         "tenancy_mode": tenancy_mode,
         "prompt_template_version": prompt_version,
         "ci_run_id": ci_run,
+        # The level the user chose and the gate the run stopped at, read
+        # from the run's own ledger -- None for a run that declared none.
+        "build_level": dict(build_level) if build_level else None,
     }
 
 

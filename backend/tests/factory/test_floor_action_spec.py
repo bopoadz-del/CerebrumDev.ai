@@ -49,10 +49,12 @@ def test_value_shapes_match_the_backend_rules():
     for name, rule in _committed()["actions"].items():
         action = fa.FloorAction(name)
         assert (rule["value"] is not None) == (action in fa.VALUE_REQUIRED), name
-    rigor = _committed()["actions"][fa.FloorAction.SET_RIGOR.value]["value"]["one_of"]
-    assert rigor == [r.value for r in fa.RigorLevel]
-    for grade in rigor:
-        assert fa.parse_rigor(grade).value == grade
+    levels = _committed()["actions"][fa.FloorAction.SET_BUILD_LEVEL.value]["value"]["one_of"]
+    assert levels == [level.value for level in fa.BuildLevel]
+    for level in levels:
+        assert fa.parse_level(level).value == level
+    with pytest.raises(fa.FloorActionError):
+        fa.parse_level("standard")
 
 
 def test_the_smoke_and_the_e2e_build_requests_from_the_spec_file():

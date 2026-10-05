@@ -1,20 +1,22 @@
 """Typed Floor actions: what the user asked the Factory to DO.
 
 The Floor's controls (Approve, Continue, Run pilot, Draft, the feature-list
-editor, rename, rigor, vertical) send an explicit ``action`` -- and a
-``value`` where the action takes one -- with the chat request. The Factory
-dispatches on that field. It never reads the user's words to decide an
-action: free-typed text goes to the Floor chat LLM, whose answer is itself a
-typed decision, and with no LLM configured free text gets an honest pointer
-to the controls. (The regexes this replaces matched "approve", "go ahead",
-"rename to ...", "make it a prototype" ... in the message and decided by
-them.)
+editor, rename, vertical, the build level, Confirm on a proposed intake) send
+an explicit ``action`` -- and a ``value`` where the action takes one -- with
+the chat request. The Factory dispatches on that field. It never reads the
+user's words to decide an action: free-typed text goes to the Floor chat LLM,
+whose answer is itself a typed decision, and with no LLM configured free text
+gets an honest pointer to the controls. (The regexes this replaces matched
+"approve", "go ahead", "rename to ...", "make it a prototype" ... in the
+message and decided by them.)
 """
 
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
+
+from app.factory.build.build_level import BuildLevel, BuildLevelError, parse_build_level
 
 
 class FloorAction(str, Enum):
@@ -28,36 +30,38 @@ class FloorAction(str, Enum):
     REMOVE_CAPABILITY = "remove_capability"
     RENAME = "rename"
     SET_VERTICAL = "set_vertical"
-    SET_RIGOR = "set_rigor"
+    #: Change on the intake line: puts the level the user picked (prototype |
+    #: light | pilot | production) on the proposal. Stores nothing by itself.
+    SET_BUILD_LEVEL = "set_build_level"
+    #: The user pressed Confirm on the intake the chat proposed (vertical,
+    #: country, currency, build level). The ONLY way a proposal becomes the
+    #: session's typed fields; the model's proposal alone stores nothing.
+    CONFIRM_INTAKE = "confirm_intake"
     LIST_CAPABILITIES = "list_capabilities"
     #: The legacy kit-chain configurator (chain suggestion over the user's
     #: documents) -- reached by this typed action, never by kit vocabulary.
     CHAIN = "chain"
 
 
-class RigorLevel(str, Enum):
-    """The build grades a blueprint can declare (ProductBlueprint.rigor)."""
-
-    PROTOTYPE = "prototype"
-    LIGHT = "light"
-    STANDARD = "standard"
-    PRODUCTION = "production"
-
-
-#: Actions that edit a pending blueprint (feature list, name, grade, vertical).
+#: Actions that edit a pending blueprint (feature list, name, vertical).
 REFINEMENT_ACTIONS = frozenset(
     {
         FloorAction.ADD_CAPABILITY,
         FloorAction.REMOVE_CAPABILITY,
         FloorAction.RENAME,
         FloorAction.SET_VERTICAL,
-        FloorAction.SET_RIGOR,
         FloorAction.LIST_CAPABILITIES,
     }
 )
 
-#: Refinements that need a value (a capability id, a name, a vertical, a grade).
-VALUE_REQUIRED = frozenset(REFINEMENT_ACTIONS - {FloorAction.LIST_CAPABILITIES})
+#: Actions that record the user's intake (the session's typed fields). They
+#: work before any blueprint exists -- the chat asks for them up front.
+INTAKE_ACTIONS = frozenset({FloorAction.SET_BUILD_LEVEL, FloorAction.CONFIRM_INTAKE})
+
+#: Actions that need a value (a capability id, a name, a vertical, a level).
+VALUE_REQUIRED = frozenset(
+    (REFINEMENT_ACTIONS - {FloorAction.LIST_CAPABILITIES}) | {FloorAction.SET_BUILD_LEVEL}
+)
 
 #: Actions that start or resume the coding agent.
 RUN_ACTIONS = frozenset({FloorAction.APPROVE, FloorAction.CONTINUE, FloorAction.RUN_PILOT})
@@ -77,8 +81,8 @@ def action_spec() -> dict:
     or ``{"one_of": [...]}`` (a closed set)."""
 
     def value_shape(action: "FloorAction"):
-        if action is FloorAction.SET_RIGOR:
-            return {"one_of": [r.value for r in RigorLevel]}
+        if action is FloorAction.SET_BUILD_LEVEL:
+            return {"one_of": [level.value for level in BuildLevel]}
         if action in VALUE_REQUIRED:
             return "string"
         return None
@@ -111,11 +115,32 @@ def parse_action(raw: Optional[str]) -> Optional[FloorAction]:
         ) from exc
 
 
-def parse_rigor(raw: Optional[str]) -> RigorLevel:
+def parse_level(raw: Optional[str]) -> BuildLevel:
     try:
-        return RigorLevel((raw or "").strip())
-    except ValueError as exc:
-        raise FloorActionError(
-            f"unknown build grade {raw!r}; expected one of "
-            + ", ".join(r.value for r in RigorLevel)
-        ) from exc
+        return parse_build_level(raw)
+    except BuildLevelError as exc:
+        raise FloorActionError(str(exc)) from exc
+
+
+#: The typed reason a run action is refused while no level is chosen.
+BUILD_LEVEL_REQUIRED = "BUILD_LEVEL_REQUIRED"
+
+
+def require_build_level(product_design: Any) -> Optional[dict]:
+    """None when the session carries a chosen build level; otherwise the
+    typed refusal a run action returns. There is no default level: the build
+    waits for the user's choice."""
+    if str(getattr(product_design, "build_level", None) or "").strip():
+        return None
+    return {
+        "sse": "info",
+        "ok": False,
+        "refused": BUILD_LEVEL_REQUIRED,
+        "summary": (
+            "Choose the build level before the build starts: prototype (done "
+            "when the code passes), light, pilot, or production (the full "
+            "acceptance floor). Nothing is built until you choose."
+        ),
+        "awaiting_action": FloorAction.SET_BUILD_LEVEL.value,
+        "stream_delta": True,
+    }

@@ -1,4 +1,4 @@
-﻿"""Session-scoped product architecture API (Design Product mode).
+"""Session-scoped product architecture API (Design Product mode).
 
 POST /v1/sessions/{id}/product/draft
 POST /v1/sessions/{id}/product/plan
@@ -39,6 +39,8 @@ from app.factory.build.builds_push import (
 from app.factory.blocks_source import resolve_blocks_root
 from app.factory.blueprint import BlueprintError, ProductBlueprint
 from app.factory.dual_registry import DualRegistryError
+from app.factory.floor_actions import require_build_level
+from app.factory.locale_choice import intake_state
 from app.factory.paths import UnsafeOutputDir, factory_outputs_root, safe_output_dir
 from app.factory.product_architect import (
     blueprint_to_yaml,
@@ -184,6 +186,17 @@ class ModeBody(BaseModel):
 
 class CoderControlBody(BaseModel):
     action: Literal["pause", "stop", "resume"]
+
+
+def _refuse_without_build_level(state: Any) -> None:
+    """A build starts only once the user has chosen its level (409, typed
+    reason). There is no default level and none is inferred."""
+    refused = require_build_level(state.product_design)
+    if refused is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": refused["refused"], "message": refused["summary"]},
+        )
 
 
 def _require_session(session_id: str, principal: Principal):
@@ -528,6 +541,8 @@ def download_product_package(
         # grades and what the buyer opens, so the MANIFEST must agree with
         # it by construction rather than by coincidence.
         provenance=_provenance_from_tree(out),
+        # The level this platform was BUILT to, read from its run's ledger.
+        build_level=status.get("build_level"),
     )
     write_export_manifest(out, manifest)
     tree_contents = {
@@ -645,6 +660,10 @@ def product_verticals(
         # The country/currency the user declared (typed, never inferred).
         "country": state.product_design.country,
         "currency": state.product_design.currency,
+        # The build level the user chose; None = not chosen (no default).
+        "build_level": state.product_design.build_level,
+        # The Floor's intake line: declared fields + any pending proposal.
+        "intake": intake_state(state.product_design),
     }
 
 
@@ -705,9 +724,9 @@ def plan_product(
     # Same resolver as the chat flow (env path, then Store clone).
     blocks_root = resolve_blocks_root()
     try:
-        from app.factory.locale_choice import sync_blueprint_locale
+        from app.factory.locale_choice import sync_blueprint_intake
 
-        sync_blueprint_locale(state.product_design)
+        sync_blueprint_intake(state.product_design)
         bp = ProductBlueprint.model_validate(state.product_design.blueprint)
         plan = plan_blueprint(bp, blocks_root=blocks_root)
         state.product_design.plan = plan.to_dict()
@@ -731,6 +750,11 @@ def approve_blueprint(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not state.product_design.blueprint:
         raise HTTPException(status_code=400, detail="no blueprint to approve")
+    from app.factory.locale_choice import sync_blueprint_intake
+
+    # The confirmed intake (locale, build level) is ON the blueprint before
+    # it is frozen by approval -- never added afterwards.
+    sync_blueprint_intake(state.product_design)
     state.product_design.blueprint_approved = bool(body.approve)
     state.config.domain = session_domain_from_blueprint(state.product_design.blueprint)
     update_session(session_id, state)
@@ -752,6 +776,7 @@ def run_pilot_cycle(
     from app.factory.platform_chat_flow import resume_pilot_cycle
 
     state = _require_session(session_id, principal)
+    _refuse_without_build_level(state)
     require_remaining(principal.account_id, "generation")
     require_llm_rate(principal, "generate")
     if not state.product_design.blueprint:
@@ -804,9 +829,9 @@ def _run_n3_reseed(
             status_code=400, detail="approve blueprint before n3_reseed"
         )
     if output_dir:
-        from app.factory.locale_choice import sync_blueprint_locale
+        from app.factory.locale_choice import sync_blueprint_intake
 
-        sync_blueprint_locale(state.product_design)
+        sync_blueprint_intake(state.product_design)
         bp = ProductBlueprint.model_validate(state.product_design.blueprint)
         out = safe_output_dir(output_dir, bp.product_id)
         gen = dict(state.product_design.generation or {})
@@ -913,12 +938,13 @@ def generate_approved_product(
             status_code=409,
             detail="a build is already in progress — poll /product/build-status",
         )
+    _refuse_without_build_level(state)
     # Same resolver as the chat flow (env path, then Store clone).
     blocks_root = resolve_blocks_root()
     try:
-        from app.factory.locale_choice import sync_blueprint_locale
+        from app.factory.locale_choice import sync_blueprint_intake
 
-        sync_blueprint_locale(state.product_design)
+        sync_blueprint_intake(state.product_design)
         bp = ProductBlueprint.model_validate(state.product_design.blueprint)
         from app.factory.platform_chat_flow import _compile_and_lint_approved
 

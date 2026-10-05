@@ -30,6 +30,18 @@ def client(monkeypatch):
     return TestClient(app)
 
 
+def _confirm_level(session_id: str, level: str) -> None:
+    """The user's level, confirmed on the Floor's intake line (the typed
+    confirm_intake action) -- the build refuses to start without one."""
+    from app.factory.locale_choice import confirm_intake
+
+    state = get_session(session_id)
+    assert state is not None
+    state.product_design.intake_proposal = {"build_level": level}
+    confirm_intake(state.product_design)
+    update_session(session_id, state)
+
+
 def test_session_product_steward_golden_flow(client, monkeypatch, tmp_path, stub_coder):
     """The TEMPLATE path's golden flow (provenance.json, kernel ActionOutcome
     actions, command_center.tsx) -- all template-only artifacts.
@@ -70,6 +82,7 @@ def test_session_product_steward_golden_flow(client, monkeypatch, tmp_path, stub
     assert strategies["estate_registry"] == "COMPOSE"
     assert "UNSUPPORTED" not in strategies.values()
 
+    _confirm_level("sess_product_1", "prototype")
     r = client.post(
         "/v1/sessions/sess_product_1/product/approve", json={"approve": True}
     )
@@ -129,6 +142,7 @@ def test_runner_build_reports_progress_and_gates_the_download(client, monkeypatc
     )
     assert r.status_code == 200, r.text
     assert client.post("/v1/sessions/sess_runner_1/product/plan").status_code == 200
+    _confirm_level("sess_runner_1", "prototype")
     assert (
         client.post(
             "/v1/sessions/sess_runner_1/product/approve", json={"approve": True}

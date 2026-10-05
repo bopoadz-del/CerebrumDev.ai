@@ -417,10 +417,18 @@ class RoleRunner:
         self._cli_writer_reopened: bool = False
         resolved = (cycle or "code").strip().lower()
         self.cycle = "pilot" if resolved == "pilot" else "code"
-        #: Floor ``_run`` passes True when a factory coder key is set.
-        #: Direct RoleRunner callers (tests, CLI helpers) stay code-only
-        #: unless they opt in — a keyed CI stub must not open Store-green.
+        #: Floor ``_run`` passes True when the run is to climb past code
+        #: SUCCESS. Direct RoleRunner callers (tests, CLI helpers) stay
+        #: code-only unless they opt in — a keyed CI stub must not open
+        #: Store-green.
         self.auto_pilot = bool(auto_pilot)
+        from app.factory.build.build_level import bar_for
+
+        #: The user's BUILD LEVEL. When the blueprint declares one it is the
+        #: single input for where this run stops and how strict its top rung
+        #: is; None (a direct, non-Floor caller) keeps ``auto_pilot`` and
+        #: every gate at full strength.
+        self.level_bar = bar_for(blueprint)
         from app.factory.blocks_lock import resolve_lock
 
         self.blocks_lock = resolve_lock(blocks_lock)
@@ -871,8 +879,9 @@ class RoleRunner:
         rework: int = 0,
         findings: Sequence[str] = (),
     ) -> BuildOutcome:
+        bar = getattr(self, "level_bar", None)
         if outcome is Outcome.SUCCESS:
-            if self.auto_pilot and getattr(self, "cycle", "code") != "pilot":
+            if self._climbs_past_code() and getattr(self, "cycle", "code") != "pilot":
                 lie = (
                     "auto-pilot run reached code-cycle SUCCESS without a "
                     "Store-green pilot cycle — refuse SUCCESS+non-pilot lie"
@@ -882,7 +891,10 @@ class RoleRunner:
                 detail = lie
                 findings = list(findings) + [lie]
                 phase = phase or BuildRole.TESTER
-            blocked = self._thin_cli_success_blocker()
+            # "Thin SUCCESS is a failure" is the pilot-and-above bar; a
+            # prototype or light build is not held to the authorship floor.
+            thin_applies = bar is None or bar.thin_success_is_failure
+            blocked = self._thin_cli_success_blocker() if thin_applies else None
             if blocked:
                 logger.error("factory refuse thin SUCCESS: %s", blocked)
                 outcome = Outcome.FAILED_ROLE_ERROR
@@ -950,6 +962,11 @@ class RoleRunner:
             ),
             "repo_url": self.state.get("repo_url") or "",
         }
+        if bar is not None:
+            # Each run states its level, where that level stops, and where
+            # this run actually stopped.
+            payload.update(bar.to_json())
+            payload["stopped_at"] = self._stopped_at(outcome, phase)
         self.ledger.append(
             kind,
             role=phase,
@@ -974,9 +991,44 @@ class RoleRunner:
             ledger_path=str(self.ledger.path),
         )
 
+    def _climbs_past_code(self) -> bool:
+        """True when this run continues past code SUCCESS: the declared
+        level reaches the Store gate, or -- with no level -- auto_pilot."""
+        bar = getattr(self, "level_bar", None)
+        if bar is not None:
+            return bar.reaches_pilot
+        return bool(self.auto_pilot)
+
     def _should_auto_open_pilot(self) -> bool:
         """True when code-phase 5/5 must continue into a Store-green cycle."""
-        return self.cycle != "pilot" and bool(self.auto_pilot)
+        return self.cycle != "pilot" and self._climbs_past_code()
+
+    def _stopped_at(self, outcome: "Outcome", phase: Optional[BuildRole]) -> str:
+        """The rung this run ended on: the last gate passed on SUCCESS, the
+        gate that failed otherwise (located exactly as three_gate_verdict
+        locates it)."""
+        pilot = getattr(self, "cycle", "code") == "pilot"
+        if outcome is Outcome.SUCCESS:
+            return "STORE" if pilot else "CODE"
+        if phase is BuildRole.STORE_MANAGER:
+            return "STORE"
+        if phase is BuildRole.TESTER and pilot:
+            return "PRODUCT"
+        return "CODE"
+
+    def _note_build_level(self) -> None:
+        """State the run's level in its own ledger before any phase runs."""
+        bar = getattr(self, "level_bar", None)
+        if bar is None:
+            return
+        self.ledger.append(
+            EventKind.NOTE,
+            detail=(
+                f"BUILD_LEVEL {bar.level.value}: the run stops at the "
+                f"{bar.stop_gate} gate"
+            ),
+            payload=bar.to_json(),
+        )
 
     def _emit_inspect(self, snapshot: Dict[str, Any], *, reason: str) -> None:
         """Append an inspect snapshot as a NOTE — never a verdict."""
@@ -1256,11 +1308,14 @@ class RoleRunner:
 
     def _open_auto_pilot(self) -> None:
         """Reopen TESTER + STORE_MANAGER without writing a code SUCCESS."""
+        bar = getattr(self, "level_bar", None)
+        why = (
+            f"build level {bar.level.value} stops at {bar.stop_gate}"
+            if bar is not None
+            else "factory LLM configured"
+        )
         self._open_pilot_for_acceptance(
-            reason=(
-                "code-phase SUCCESS; auto-opening Store-green cycle "
-                "(factory LLM configured)"
-            ),
+            reason=f"code-phase SUCCESS; auto-opening Store-green cycle ({why})",
             auto_pilot=True,
         )
 
@@ -1283,6 +1338,7 @@ class RoleRunner:
                 product_id=getattr(self.blueprint, "product_id", "unknown"),
                 inputs_hash=inputs_hash,
             )
+        self._note_build_level()
 
         from app.factory.build.preflight import evaluate_preflight
 

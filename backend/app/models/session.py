@@ -68,6 +68,14 @@ class ProductDesignState(BaseModel):
     #: guessed (app.factory.locale_choice / money_contract).
     country: Optional[str] = None
     currency: Optional[str] = None
+    #: The BUILD LEVEL the USER chose (prototype | light | pilot | production)
+    #: -- typed, copied onto the blueprint's ``build_level``. None means not
+    #: chosen yet, and a build cannot start (no default, never inferred).
+    build_level: Optional[str] = None
+    #: What the Floor chat PROPOSED from the user's answer -- {vertical?,
+    #: country?, currency?, build_level?}. A proposal only: it becomes the
+    #: typed fields above solely through the typed ``confirm_intake`` action.
+    intake_proposal: Optional[Dict[str, str]] = None
 
 
 class SessionState(BaseModel):
