@@ -494,3 +494,22 @@ def test_chat_sends_the_typed_action_in_the_body(smoke, monkeypatch):
     monkeypatch.setattr(smoke, "BASE", "http://zorblat.test", raising=False)
     smoke.chat("s", "t", "", action="approve")
     assert seen["body"] == {"message": "", "action": "approve"}
+
+
+def test_build_level_check_decodes_the_intake_event(smoke):
+    """The intake event's data is JSON-encoded (escaped quotes on the wire).
+    A raw-substring test could never match and read DEAD on a correct confirm
+    (live 79449900); the check decodes the event instead."""
+    live = (
+        'event: intake\n'
+        'data: "{\\"declared\\": {\\"vertical\\": null, \\"country\\": null, '
+        '\\"currency\\": null, \\"build_level\\": \\"production\\"}, \\"proposal\\": null}"\n\n'
+    )
+    intake = smoke.sse_events(live, "intake")[-1]
+    assert intake["declared"]["build_level"] == smoke.SMOKE_BUILD_LEVEL
+    assert intake["proposal"] is None
+    # The wrong level, or a pending proposal, must not pass.
+    other = smoke.sse_events(live.replace("production", "prototype"), "intake")[-1]
+    assert other["declared"]["build_level"] != smoke.SMOKE_BUILD_LEVEL
+    pending = smoke.sse_events(live.replace('\\"proposal\\": null', '\\"proposal\\": {}'), "intake")[-1]
+    assert pending["proposal"] is not None
