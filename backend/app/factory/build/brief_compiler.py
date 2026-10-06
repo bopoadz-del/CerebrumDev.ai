@@ -2,7 +2,8 @@
 
 TEMPLATE (factory/standards/BRIEF_TEMPLATE.md) is the owner aviation shape.
 FILL is registry + block.json + domain pack + intake blueprint. An LLM
-never writes or edits brief text.
+never writes or edits this text: it is the brief's CONTRACT. The architect's
+NARRATIVE (build/architect.py) is a separate field, prepended at dispatch.
 
 Staged cuts from the one compiled brief:
 
@@ -146,6 +147,10 @@ class CompiledBrief:
     slots: Dict[str, str] = field(default_factory=dict)
     budget_s: float = 0.0
     template_revision: str = TEMPLATE_REVISION
+    #: The architect's NARRATIVE (build/architect.py). Never part of ``text``:
+    #: ``text`` is the CONTRACT this compiler wrote and the lint vouches for;
+    #: the coder receives ``architect.dispatch_text`` = NARRATIVE + CONTRACT.
+    narrative: str = ""
 
     @property
     def acceptance_checks(self) -> Tuple[str, ...]:
