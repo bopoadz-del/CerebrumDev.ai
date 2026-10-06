@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from app.factory.build.product_suites import finding_items, recheck_items
 from app.factory.blueprint import load_blueprint
 from app.factory.build import brief_gates
 from app.factory.build import runner as runner_mod
@@ -211,7 +212,10 @@ def test_a_failing_check_the_compiled_brief_defines_reaches_the_writer(
     assert outcome.ok, outcome.detail
     assert outcome.rework_used == 1
     assert len(_events(runner, EventKind.REWORK)) == 1
-    assert captured[-1] == ("FAILED tests/test_models.py::test_round_trip - boom",)
+    # Typed work list: the FINDING items are exactly the brief-defined failure,
+    # and the round carries the re-check command exactly once.
+    assert finding_items(captured[-1]) == ("FAILED tests/test_models.py::test_round_trip - boom",)
+    assert len(recheck_items(captured[-1])) == 1
     assert not [
         e for e in _events(runner, EventKind.NOTE) if (e.payload or {}).get("gate_advisory")
     ]
@@ -237,7 +241,8 @@ def test_mixed_round_hands_the_writer_only_the_brief_defined_failure(
 
     assert outcome.ok, outcome.detail
     assert outcome.rework_used == 1
-    assert captured[-1] == ("defined finding",)
+    assert finding_items(captured[-1]) == ("defined finding",)
+    assert len(recheck_items(captured[-1])) == 1
     rework = _events(runner, EventKind.REWORK)[0]
     assert rework.payload["findings"] == ["defined finding"]
     note = next(

@@ -5669,6 +5669,23 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         cid: dict(spec) if isinstance(spec, dict) else spec
         for cid, spec in dict(ctx.state.get("model_specs") or {}).items()
     }
+    # The declared schema is the product's own app/models.py, read on EVERY
+    # pass -- the same FIELDS/CONSTRAINTS the WRITER gate's probe builds its
+    # payload from. Sampling only the captured state spec meant a field the
+    # writer declared in a rework round never reached these suites, and the
+    # same test failed again (live sess_1fbea5094c2a4a57).
+    from app.factory.build.product_suites import DOMAIN_SUITE, ROUTES_SUITE, SMOKE_SUITE
+    from app.factory.build.declared_specs import (
+        merge_declared_specs,
+        product_root,
+        specs_from_product_models,
+    )
+
+    _root = product_root(
+        (getattr(ctx.workspace, "workspace", None), getattr(ctx.workspace, "destination", None))
+    )
+    if _root is not None:
+        specs = merge_declared_specs(specs, specs_from_product_models(_root))
     # Late align: coder rework may have rewritten handlers after WRITER's
     # first align, or left vocab/type on the handler that the spec never
     # declared. Re-mine on-disk handlers AND the route (``_constraint_guard``
@@ -5842,7 +5859,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         smoke.append('    assert not failures, "; ".join(failures)')
     else:
         smoke.append("    pass")
-    ctx.workspace.write_text(Path("tests") / "test_smoke.py", "\n".join(smoke) + "\n")
+    ctx.workspace.write_text(Path(SMOKE_SUITE), "\n".join(smoke) + "\n")
 
     # -- models round-trip through persistence -----------------------------
     model_lines = [
@@ -5911,7 +5928,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         Path("tests") / "test_deploy.py", render_deploy_tests(specs)
     )
     ctx.workspace.write_text(
-        Path("tests") / "test_domain_acceptance.py", render_domain_tests(specs)
+        Path(DOMAIN_SUITE), render_domain_tests(specs)
     )
 
     # Eight suites were stamped and none touched the UI, so the agent could
@@ -6164,7 +6181,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
     else:
         route_lines.append("    pass")
     ctx.workspace.write_text(
-        Path("tests") / "test_routes.py", "\n".join(route_lines) + "\n"
+        Path(ROUTES_SUITE), "\n".join(route_lines) + "\n"
     )
 
     admitted: List[Dict[str, Any]] = []
