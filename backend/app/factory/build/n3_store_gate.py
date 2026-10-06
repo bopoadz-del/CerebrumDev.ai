@@ -377,6 +377,12 @@ def _parse_score(text: str) -> Tuple[Optional[int], Optional[int]]:
     return int(match.group(1)), int(match.group(2))
 
 
+#: How much of a gate's raw evidence is kept per line, and how much of it a
+#: writer work item carries (the tail -- where a build's error is).
+EVIDENCE_CAP = 6000
+EVIDENCE_IN_ITEM = 1500
+
+
 def _factory_check_name(name: str) -> str:
     raw = str(name or "").strip()
     return N3_NAME_ALIASES.get(raw, raw)
@@ -474,6 +480,7 @@ def report_from_store_gate_payload(raw: Mapping[str, Any]) -> AcceptanceReport:
                 name=name,
                 status=str(item.get("status") or "FAIL").upper(),
                 detail=str(item.get("detail") or ""),
+                evidence=str(item.get("evidence") or "")[:EVIDENCE_CAP],
             )
         )
     by_name = {line.name: line for line in lines}
@@ -804,7 +811,7 @@ def _product_failure_detail(snap: StoreGateSnapshot, report: AcceptanceReport) -
     failed = [
         line.name
         for line in report.lines
-        if line.owner == PRODUCT and not line.satisfied
+        if line.owner == PRODUCT and line.failed
     ]
     if not snap.lines:
         base = snap.detail or f"store-gate {snap.state or 'missing'} {snap.score}"
@@ -853,14 +860,21 @@ def apply_store_gate_failure(
             "product_failed": [
                 line.name
                 for line in report.lines
-                if line.owner == PRODUCT and not line.satisfied
+                if line.owner == PRODUCT and line.failed
             ],
             # What each failed line said, so a re-opened WRITER is told the
             # gate's own evidence, not just a name.
             "product_failed_detail": {
                 line.name: str(getattr(line, "detail", "") or "")
                 for line in report.lines
-                if line.owner == PRODUCT and not line.satisfied
+                if line.owner == PRODUCT and line.failed
+            },
+            # The raw evidence the gate attached (a failed image build's log
+            # tail), kept apart from ``detail`` so ownership never reads it.
+            "product_failed_evidence": {
+                line.name: str(getattr(line, "evidence", "") or "")
+                for line in report.lines
+                if line.owner == PRODUCT and line.failed and getattr(line, "evidence", "")
             },
         }
     ledger.append(
@@ -895,9 +909,10 @@ def _what_to_build(check_id: str) -> str:
     return ""
 
 
-def store_rework_item(check_id: str, detail: str) -> str:
-    """One typed work item: the check, what the gate saw, what to build, and
-    the command that re-checks it (the same harness the gate runs)."""
+def store_rework_item(check_id: str, detail: str, evidence: str = "") -> str:
+    """One typed work item: the check, what the gate saw, what to build, the
+    gate's raw evidence when it attached any, and the command that re-checks
+    it (the same harness the gate runs)."""
     from app.factory.build.store_acceptance import ACCEPTANCE_SELF_CHECK_COMMAND
 
     build = _what_to_build(check_id)
@@ -906,6 +921,8 @@ def store_rework_item(check_id: str, detail: str) -> str:
         text += f": {detail.strip()}"
     if build:
         text += f". Build: {build}"
+    if evidence.strip():
+        text += f". Gate evidence (tail): {evidence.strip()[-EVIDENCE_IN_ITEM:]}"
     return text + f" (re-check: `{ACCEPTANCE_SELF_CHECK_COMMAND}`)"
 
 
@@ -924,13 +941,17 @@ def store_gate_verdict(payload: Mapping[str, Any]) -> Optional[Any]:
     if not failed:
         return None
     details = payload.get("product_failed_detail") or {}
+    evidence = payload.get("product_failed_evidence") or {}
     return GateResult(
         ok=False,
         gate=GATE_NAME,
         reason="store_gate_failed",
         detail=f"store-gate {payload.get('score') or ''}: product failed "
         + ", ".join(failed),
-        findings=[store_rework_item(c, str(details.get(c) or "")) for c in failed],
+        findings=[
+            store_rework_item(c, str(details.get(c) or ""), str(evidence.get(c) or ""))
+            for c in failed
+        ],
         payload={"check": GATE_NAME, "finding_checks": failed},
     )
 

@@ -95,12 +95,13 @@
     },
     {
       "id": "docker_health_200",
-      "requirement_text": "The image builds, boots, and answers its healthcheck before traffic. Build it and start it yourself before you claim this.",
-      "brief_render": "- docker_health_200: The image builds, boots, and answers its healthcheck before traffic. Build it and start it yourself before you claim this.",
+      "requirement_text": "The image builds, boots, and answers its healthcheck before traffic. The Dockerfile installs only the runtime requirements and starts the service; it never runs the test suite, the release gate, or anything that needs dev dependencies during the build -- tests run in CI, not in docker build. Build it and start it yourself before you claim this.",
+      "brief_render": "- docker_health_200: The image builds, boots, and answers its healthcheck before traffic. The Dockerfile installs only the runtime requirements and starts the service; it never runs the test suite, the release gate, or anything that needs dev dependencies during the build -- tests run in CI, not in docker build. Build it and start it yourself before you claim this.",
       "gate_fn": "check_docker_health_200",
       "check": "the built image answers its healthcheck",
       "universal": true,
-      "subject": "runtime"
+      "subject": "runtime",
+      "stage": "image"
     },
     {
       "id": "cross_tenant_404",

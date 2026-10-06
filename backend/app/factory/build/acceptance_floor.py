@@ -147,7 +147,30 @@ def _load() -> Dict[str, Any]:
                 f"{FLOOR_REL}: {cid} must declare subject as runtime, "
                 f"factory_record, or tree:<path> (found {subject!r})"
             )
+        stage = check.get("stage")
+        if stage is not None and stage not in STAGES:
+            raise ValueError(
+                f"{FLOOR_REL}: {cid} declares stage {stage!r}; "
+                f"known stages: {sorted(STAGES)}"
+            )
+    if not any(c.get("stage") == STAGE_IMAGE for c in checks):
+        raise ValueError(f"{FLOOR_REL}: no check declares stage {STAGE_IMAGE!r}")
     return data
+
+
+#: The pipeline step a check's verdict depends on, when one exists. ``image``:
+#: the check is judged on the product's built image, so a ``docker build`` of
+#: the product's Dockerfile that fails is THAT check's failure (the Store gate
+#: scores it so, and the other checks NOT_RUN) -- never "the gate's workflow
+#: failed". Declared here, rendered into the harness as IMAGE_CHECKS, read by
+#: the gate: no check id is named in either.
+STAGE_IMAGE = "image"
+STAGES = frozenset({STAGE_IMAGE})
+
+
+def image_check_ids() -> Tuple[str, ...]:
+    """The checks a failed image build fails (the floor's ``stage: image``)."""
+    return tuple(str(c["id"]) for c in checks() if c.get("stage") == STAGE_IMAGE)
 
 
 #: What a check judges. The owner of a failure is derived from this and from
