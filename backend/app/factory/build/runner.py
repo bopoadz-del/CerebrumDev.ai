@@ -1357,6 +1357,17 @@ class RoleRunner:
                 + tuple(_test_defect_items(defects))
                 + (_tester_recheck_item(verdict),)
             )
+        # The foreman (F2): every hard stop above has already allowed this
+        # round, so it can never extend a budget -- it can only rewrite the
+        # round's instructions, or end the build earlier (confidence-gated).
+        foreman = self._foreman_review(role, verdict, work)
+        if foreman.stop:
+            return self._stop(
+                Outcome.FAILED_GATE, f"foreman:{foreman.stop_reason}", verdict, role
+            )
+        if foreman.used:
+            raw = set(verdict.findings)
+            work = tuple(foreman.work) + tuple(i for i in work if i not in raw)
         rec = self._decision_record(
             DECISION_REWORK,
             role=role,
@@ -1375,6 +1386,15 @@ class RoleRunner:
             "gate": verdict.gate,
             "decision": rec,
         }
+        if foreman.mode != "off":
+            payload["foreman"] = {
+                "mode": foreman.mode,
+                "used": foreman.used,
+                "fallback": foreman.fallback,
+                "attempts": foreman.attempts,
+                "instruction": foreman.instruction.to_json() if foreman.instruction else None,
+                "refusals": list(foreman.errors),
+            }
         if reopen:
             payload["reopen"] = [BuildRole.WRITER.value, BuildRole.TESTER.value, role.value]
         self.ledger.append(
@@ -1388,6 +1408,67 @@ class RoleRunner:
             payload=payload,
         )
         return GateDecision(DECISION_REWORK, work_list=work, record=rec)
+
+    def _foreman_review(self, role: BuildRole, verdict: Any, work: Sequence[Any]) -> Any:
+        """One foreman call for a REWORK round (no call when FACTORY_FOREMAN=off).
+        Any failure of the foreman itself leaves the round exactly as it was."""
+        from app.factory.build import brief_gates
+        from app.factory.build import foreman as fm
+
+        mode = fm.foreman_mode()
+        if mode == "off":
+            return fm.ForemanResult(mode=mode)
+        try:
+            caps = [c.capability_id for c in getattr(self.plan, "capabilities", None) or []]
+            resolved = {
+                str(b)
+                for c in getattr(self.plan, "capabilities", None) or []
+                for b in (c.block_ids or [])
+            }
+            store = resolved | {str(b) for b in getattr(self.plan, "dual_registered_blocks", None) or []}
+            own = {
+                str(v)
+                for v in (
+                    getattr(self.blueprint, "product_name", ""),
+                    getattr(self.blueprint, "product_id", ""),
+                )
+                if v
+            } | set(caps)
+            ctx = fm.ForemanContext(
+                capabilities=frozenset(caps),
+                finding_capabilities=frozenset(_findings.capability_ids(verdict.findings) & set(caps)),
+                resolved_blocks=frozenset(resolved),
+                store_blocks=frozenset(store),
+                own_names=frozenset(own),
+            )
+            pairs = brief_gates.failure_checks(verdict)
+            check = pairs[0][0] if pairs else str(getattr(verdict, "gate", ""))
+            brief_path = self.workspace / "docs" / "coder_brief.md"
+            brief_text = brief_path.read_text(encoding="utf-8") if brief_path.is_file() else ""
+
+            def note(detail: str, **payload: Any) -> None:
+                self.ledger.append(EventKind.NOTE, role=role, detail=detail, payload=payload)
+
+            return fm.review(
+                list(verdict.findings),
+                ctx=ctx,
+                gate=role.value,
+                check=check,
+                brief_text=brief_text,
+                changed=fm.changed_files(self.workspace, fm._last_green_at(self.ledger)),
+                tail=fm.ledger_tail(self.ledger),
+                note=note,
+                mode=mode,
+                session_id=str(self.state.get("session_id") or ""),
+            )
+        except Exception as exc:  # noqa: BLE001 -- the foreman never breaks a build
+            self.ledger.append(
+                EventKind.NOTE,
+                role=role,
+                detail=f"foreman unavailable ({type(exc).__name__}); the round uses the typed findings",
+                payload={"foreman_error": type(exc).__name__},
+            )
+            return fm.ForemanResult(mode=mode, fallback=True)
 
     def reopen_after_store_gate(self, verdict: Any) -> GateDecision:
         """The N3 Store gate answers after the runner returned: run its verdict
