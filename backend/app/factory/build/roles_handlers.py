@@ -4259,6 +4259,12 @@ def run_writer(
         raise RoleError(str(exc)) from exc
     except BriefLintError as exc:
         raise RoleError(str(exc)) from exc
+    from app.factory.build.architect import attach_narrative
+
+    # The architect writes the NARRATIVE around the CONTRACT just compiled and
+    # linted (FACTORY_BRIEF_NARRATIVE; off by default). The CONTRACT is not
+    # touched: every phase brief derived below carries it verbatim.
+    compiled_brief = attach_narrative(ctx, compiled_brief)
     if compiled_brief.intake:
         ctx.state["intake_blueprint"] = compiled_brief.intake
         ctx.workspace.write_text(
@@ -5171,7 +5177,9 @@ def run_writer(
         ):
             later_brief = compile_phase_brief(compiled_brief, phase_id)
             lint_or_raise(later_brief)
-            later_text = later_brief.text
+            from app.factory.build.architect import dispatch_text
+
+            later_text = dispatch_text(later_brief)
             ctx.workspace.write_text(
                 BRIEF_REL,
                 later_text if later_text.endswith("\n") else later_text + "\n",
