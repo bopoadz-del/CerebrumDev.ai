@@ -271,7 +271,11 @@ def test_probe_findings_are_marked_so_library_logging_cannot_bury_them():
     # Every write the probe makes is a typed record: one JSON object per line,
     # written by _record and nowhere else.
     writes = [ln.strip() for ln in probe.splitlines() if ".write(" in ln]
-    assert writes == ['stream.write(json.dumps({"gate_record": level, "kind": kind, "text": text}) + "\\n")'], writes
+    assert writes == ['stream.write(json.dumps(rec) + "\\n")'], writes
+    # ...and that one write is _record's: the record it builds is the typed
+    # record, plus the capability field when the miss names one (F1).
+    assert 'rec = {"gate_record": level, "kind": kind, "text": str(text)}' in probe
+    assert 'rec["capability"] = _cap_of(text)' in probe
     noise = (
         "INFO  [alembic.runtime.migration] Running upgrade  -> 0001\n"
         "INFO:     Started server process [42]\n"

@@ -43,7 +43,6 @@ _PRE_SPLIT_SYMBOLS = (
     "_content_digest",
     "_ensure_handler_fails_closed",
     "_ensure_route_persists_payload",
-    "_failing_capability_ids",
     "_fallback_spec",
     "_field_default",
     "_handler_module",

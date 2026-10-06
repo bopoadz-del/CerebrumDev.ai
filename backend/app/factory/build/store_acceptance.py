@@ -113,6 +113,13 @@ def _records(text: str):
             yield value
 
 
+#: A check the gate could not run because an earlier step it depends on
+#: failed (the image never built, so nothing ran inside it). Never satisfied
+#: -- the build is not certified -- and never a failure handed to anyone: the
+#: failure is the line that stopped the run, not the lines it starved.
+NOT_RUN = "NOT_RUN"
+
+
 @dataclass
 class AcceptanceLine:
     name: str
@@ -121,10 +128,21 @@ class AcceptanceLine:
     #: PRODUCT or FACTORY, derived from the check's subject and who wrote it
     #: (acceptance_floor.owner_of). Empty until finalize_owners stamps it.
     owner: str = ""
+    #: Raw evidence the gate attached (e.g. the tail of a failed ``docker
+    #: build``). Shown to whoever fixes it; NEVER read by owner_of, which
+    #: decides from the check's subject and the structural ``detail`` -- a log
+    #: tail naming a Factory script the product's Dockerfile chose to run must
+    #: not move the failure onto the Factory.
+    evidence: str = ""
 
     @property
     def satisfied(self) -> bool:
         return self.status in {"PASS", "SKIP"}
+
+    @property
+    def failed(self) -> bool:
+        """Measured and not satisfied -- what an owner must act on."""
+        return not self.satisfied and self.status != NOT_RUN
 
 
 @dataclass
@@ -198,7 +216,7 @@ def finalize_owners(report: AcceptanceReport) -> AcceptanceReport:
         if not line.owner:
             line.owner = owner_of(line.name, line.detail)
         if line.owner == FACTORY:
-            if not line.satisfied:
+            if line.failed:
                 owed.append(line.name)
             continue
         p_total += 1
@@ -327,6 +345,7 @@ def _report_from_mapping(raw: Mapping[str, Any]) -> AcceptanceReport:
                 name=name,
                 status=str(item.get("status") or "FAIL").upper(),
                 detail=str(item.get("detail") or ""),
+                evidence=str(item.get("evidence") or ""),
             )
         )
     if not lines:
@@ -929,7 +948,9 @@ def render_acceptance_script(blueprint: Any = None) -> str:
         render_github_ci().replace("\r\n", "\n").encode("utf-8")
     ).hexdigest()
     advisory = ", ".join(repr(n) for n in sorted(_floor_advisory_ids(blueprint)))
-    from app.factory.build.acceptance_floor import brief_signals
+    from app.factory.build.acceptance_floor import brief_signals, image_check_ids
+
+    image_checks = ", ".join(repr(n) for n in image_check_ids())
     from app.factory.build.writer_phases import RAG_INGEST_PATHS, RAG_QUERY_PATHS
 
     # Decided here, from the build's declared contract: does a capability bind
@@ -1072,6 +1093,10 @@ class _Tags(HTMLParser):
 CHECKS = [{names}]
 # Reported and scored, never a veto -- same source as CHECKS (the floor file).
 ADVISORY = [{advisory}]
+# Checks judged on the built image (the floor's ``stage: image``). When the
+# product's Dockerfile does not build, the Store gate scores THESE as FAIL and
+# the rest NOT_RUN, reading this constant -- the gate names no check itself.
+IMAGE_CHECKS = [{image_checks}]
 REQUIRED = {ACCEPTANCE_REQUIRED}
 # Keys of the typed records the Factory reads from this harness's stdout --
 # the same constants the Factory's parser uses (store_acceptance.py).
@@ -2018,10 +2043,20 @@ def check_openapi_committed() -> Tuple[str, str]:
     return "PASS", "openapi 3.x with %d paths" % len(paths)
 
 
+#: Advice only, appended to the self-check's SKIP reason: the image is measured
+#: by the Store gate alone, but the writer may build it itself to catch a
+#: Dockerfile that cannot build before the gate does.
+IMAGE_BUILD_ADVICE = (
+    "; build it yourself with `docker build .` -- the Dockerfile must build "
+    "without dev dependencies or running the test suite"
+)
+
+
 def check_docker_health_200(http: _Http) -> Tuple[str, str]:
     unmeasured = _only_the_gate_measures("STORE_DOCKER_HEALTH")
     if unmeasured is not None:
-        return unmeasured
+        status, reason = unmeasured
+        return status, reason + IMAGE_BUILD_ADVICE
     measured = (os.environ.get("STORE_DOCKER_HEALTH") or "").strip()
     if measured != "200":
         return "FAIL", "STORE_DOCKER_HEALTH=%r (Store gate must measure container /health=200)" % measured
