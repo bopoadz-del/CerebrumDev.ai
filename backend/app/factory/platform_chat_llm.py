@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.llm_config import get_llm_config
 from app.factory import platform_chat_flow
@@ -609,20 +609,33 @@ def _refine_of(raw: Any) -> Dict[str, str]:
     }
 
 
-def try_decide(state: Any, message: str) -> Optional[Dict[str, Any]]:
-    """Decide, or None on miss/failure. Soft misses log warning, not error.
+def try_decide_with_reason(state: Any, message: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """``(decision, refusal_kind)``: the decision, or None plus WHY no model
+    answered -- the model ladder's typed kind (``payment_refused``,
+    ``rate_limited``, ``unavailable``, ``bad_request``, ``not_configured``),
+    or None for a soft miss / non-provider failure.
 
     Sentry LoggingIntegration turns ``logger.exception`` into error events.
     Empty OpenRouter completions are expected; do not page on them.
     """
+    from app.core.model_ladder import ModelUnavailable
+
     try:
-        return decide(state, message)
+        return decide(state, message), None
     except LlmSoftMiss as exc:
         logger.warning("Floor chat LLM miss; falling back to regex routing: %s", exc)
-        return None
+        return None, None
+    except ModelUnavailable as exc:
+        logger.warning("Floor chat LLM refused by every provider (%s): %s", exc.kind, exc)
+        return None, exc.kind
     except Exception:
         logger.exception("Floor chat LLM failed; falling back to regex routing")
-        return None
+        return None, None
+
+
+def try_decide(state: Any, message: str) -> Optional[Dict[str, Any]]:
+    """Decide, or None on miss/failure (see :func:`try_decide_with_reason`)."""
+    return try_decide_with_reason(state, message)[0]
 
 
 def _elicitation_allowed(state: Any) -> bool:

@@ -3758,6 +3758,26 @@ def _writer_worker_timeout_s(ctx: RoleContext) -> Optional[float]:
     return max(float(DEFAULT_WORKER_TIMEOUT_S), float(left) - MODEL_CALL_GRACE_S)
 
 
+def _writer_slot_wait_left(ctx: RoleContext) -> Callable[[], Optional[float]]:
+    """Seconds this run may still wait for a build slot: up to its phase-wall
+    CEILING (``deadline_box['ceiling_at']``, set by the runner) and never a
+    separate, shorter timeout. ``None`` when the run has no ceiling."""
+
+    def _left() -> Optional[float]:
+        box = ctx.deadline_box or {}
+        ceiling = box.get("ceiling_at")
+        if ceiling is None:
+            return None
+        clock = box.get("clock")
+        if not callable(clock):
+            import time as _time
+
+            clock = _time.monotonic
+        return float(ceiling) - float(clock())
+
+    return _left
+
+
 def _writer_worker_live_time_left(ctx: RoleContext) -> Optional[Callable[[], Optional[float]]]:
     """The run's remaining budget as the worker reads it, live, every tick.
 
@@ -3794,12 +3814,12 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
     output exactly as it applies to the in-process coder.
     """
     from app.factory.build.codewhale_worker import (
-        SLOT_WAIT_POLL_S,
-        TENANT_SLOTS_EXHAUSTED,
+        SLOT_WAIT_CLOSED,
+        SLOT_WAIT_EXHAUSTED,
+        SLOT_WAIT_OPEN,
         WorkerError,
         is_narration_line,
         run_worker_job,
-        worker_slot_wait_s,
         writer_specialist_cap,
     )
     from app.factory.build.writer_prompt import render_writer_prompt
@@ -3853,58 +3873,82 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
                 **call,
             )
 
-        # A tenant-scope slot refusal is the owner's OWN other build --
-        # transient, not terminal. Live 2026-09-30 (automotive re-run): the
-        # refusal was buried as "coding agent stopped" while the sibling
-        # build held the single tenant slot. Wait for it, narrated on the
-        # Floor and bounded by FACTORY_WORKER_SLOT_WAIT_S -- never a silent
-        # queue. Process-scope stays an immediate refusal: a full box is
-        # other tenants' work.
-        import time as _wait_time
+        # No free build slot never fails the writer (owner, 2026-10-06): the
+        # job QUEUES, first-in-first-out per tenant (the smoke principal is
+        # served first), its place narrated as a typed NOTE the Floor and the
+        # budget read. The wait is bounded only by the run's phase-wall
+        # ceiling (live 2026-10-06: the post-deploy smoke died
+        # "tenant_slots_exhausted" behind a second build on its account).
+        slot_wait: Dict[str, Any] = {"last": 0.0, "position": None, "closed": False}
 
-        wait_deadline = _wait_time.monotonic() + worker_slot_wait_s()
-        last_wait_note = 0.0
-        while True:
-            try:
-                receipt = run_worker_job(
-                    prompt,
-                    dest,
-                    tenant_store=ctx.state.get("tenant_store"),
-                    # THIS build's own identity, so a concurrent build cannot hand
-                    # its session id to this writer child through the process env.
-                    session_id=str(ctx.state.get("session_id") or ""),
-                    product_id=str(
-                        getattr(ctx.blueprint, "product_id", "") or ""
-                    ),
-                    progress=relay_progress,
-                    # D1: the wall is the run's remaining phase budget, not a flat
-                    # 1800s that kills the writer before the phase inspector's
-                    # in-flight bump can fire.
-                    timeout_s=_writer_worker_timeout_s(ctx),
-                    # ...and the wall follows the run's LIVE deadline, so the
-                    # budget ramp reaches this wait (live 2026-10-06: killed
-                    # at 1800s while producing work).
-                    live_time_left=_writer_worker_live_time_left(ctx),
+        def note_slot_wait(info: Dict[str, Any]) -> None:
+            import time as _time
+
+            now = _time.monotonic()
+            if (
+                info.get("position") == slot_wait["position"]
+                and now - slot_wait["last"] < 60.0
+            ):
+                return
+            slot_wait["last"] = now
+            slot_wait["position"] = info.get("position")
+            ctx.note(
+                f"waiting for a build slot -- position {info.get('position')} "
+                f"({info.get('ahead')} ahead)",
+                stage="writer-slot-wait",
+                source="codewhale_worker",
+                slot_wait=SLOT_WAIT_OPEN,
+                slot_queue={
+                    "position": info.get("position"),
+                    "ahead": info.get("ahead"),
+                    "since_s": info.get("since_s"),
+                },
+            )
+
+        def relay_after_slot(line: str, info: Any) -> None:
+            # The job holds its slot once the worker is talking: close the
+            # wait NOTE (only if one was opened) before the first line.
+            if slot_wait["position"] is not None and not slot_wait["closed"]:
+                slot_wait["closed"] = True
+                ctx.note(
+                    "build slot acquired",
+                    stage="writer-slot-wait",
+                    source="codewhale_worker",
+                    slot_wait=SLOT_WAIT_CLOSED,
                 )
-                break
-            except WorkerError as exc:
-                capped_by_self = TENANT_SLOTS_EXHAUSTED in str(exc)
-                if not capped_by_self or _wait_time.monotonic() >= wait_deadline:
-                    raise RoleError(
-                        f"codewhale_worker_failed: {exc}",
-                        reason="codewhale_worker_failed",
-                        location="WRITER",
-                    ) from exc
-                now = _wait_time.monotonic()
-                if now - last_wait_note >= 60.0 or last_wait_note == 0.0:
-                    last_wait_note = now
-                    ctx.note(
-                        "waiting for your other build to release its slot -- "
-                        + str(exc).split(" — ")[-1][:160],
-                        stage="writer-slot-wait",
-                        source="codewhale_worker",
-                    )
-                _wait_time.sleep(SLOT_WAIT_POLL_S)
+            relay_progress(line, info)
+
+        try:
+            receipt = run_worker_job(
+                prompt,
+                dest,
+                tenant_store=ctx.state.get("tenant_store"),
+                # THIS build's own identity, so a concurrent build cannot hand
+                # its session id to this writer child through the process env.
+                session_id=str(ctx.state.get("session_id") or ""),
+                product_id=str(
+                    getattr(ctx.blueprint, "product_id", "") or ""
+                ),
+                progress=relay_after_slot,
+                # D1: the wall is the run's remaining phase budget, not a flat
+                # 1800s that kills the writer before the phase inspector's
+                # in-flight bump can fire.
+                timeout_s=_writer_worker_timeout_s(ctx),
+                # ...and the wall follows the run's LIVE deadline, so the
+                # budget ramp reaches this wait (live 2026-10-06: killed
+                # at 1800s while producing work).
+                live_time_left=_writer_worker_live_time_left(ctx),
+                slot_wait_left=_writer_slot_wait_left(ctx),
+                on_slot_wait=note_slot_wait,
+            )
+        except WorkerError as exc:
+            if SLOT_WAIT_EXHAUSTED in str(exc):
+                raise RoleError(
+                    f"{SLOT_WAIT_EXHAUSTED}: {exc}",
+                    reason=SLOT_WAIT_EXHAUSTED,
+                    location="WRITER",
+                ) from exc
+            raise
     except WorkerError as exc:
         raise RoleError(
             f"codewhale_worker_failed: {exc}",

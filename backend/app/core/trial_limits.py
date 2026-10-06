@@ -23,13 +23,12 @@ from fastapi import HTTPException
 
 from . import accounts_store
 
-# Must match backend/app/routers/accounts.py smoke-login principals.
-OPS_SMOKE_EMAILS = frozenset(
-    {
-        "factory-smoke-a@cerebrum-dev.invalid",
-        "factory-smoke-b@cerebrum-dev.invalid",
-    }
-)
+# The two principals the deploy gate's smoke-login issues (routers/accounts.py
+# reads these; this is their one definition). Quota exemption and the reserved
+# build slot both key on "an account the smoke gate issued".
+SMOKE_PRINCIPAL_A = "factory-smoke-a@cerebrum-dev.invalid"
+SMOKE_PRINCIPAL_B = "factory-smoke-b@cerebrum-dev.invalid"
+OPS_SMOKE_EMAILS = frozenset({SMOKE_PRINCIPAL_A, SMOKE_PRINCIPAL_B})
 
 # counter -> (env var, default limit, scope)
 TRIAL_COUNTERS: Dict[str, tuple] = {
@@ -99,6 +98,23 @@ def trials_enforced() -> bool:
         return bool(stripe_configured())
     except Exception:  # noqa: BLE001 -- unreadable billing config is not a paywall
         return False
+
+
+def is_ops_smoke_account(account_id: Optional[str]) -> bool:
+    """Whether ``account_id`` is one of the smoke gate's own principals.
+
+    Resolved server-side from the stored account, never from anything the
+    caller sends. Unknown or unreadable accounts are not smoke principals.
+    """
+    if not account_id:
+        return False
+    try:
+        fields = accounts_store.subscription_fields(account_id)
+    except Exception:  # noqa: BLE001 -- an unreadable store grants nothing
+        return False
+    if fields is None:
+        return False
+    return str(fields.get("email") or "").strip().lower() in OPS_SMOKE_EMAILS
 
 
 def _is_limited_account(account_id: Optional[str]) -> bool:

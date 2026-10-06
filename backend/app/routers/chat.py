@@ -368,8 +368,12 @@ async def _platform_turn(
         return
 
     llm_result = None
-    if platform_chat_llm.should_orchestrate(state, user_message):
-        decision = await asyncio.to_thread(platform_chat_llm.try_decide, state, user_message)
+    orchestrated = platform_chat_llm.should_orchestrate(state, user_message)
+    refusal_kind = None
+    if orchestrated:
+        decision, refusal_kind = await asyncio.to_thread(
+            platform_chat_llm.try_decide_with_reason, state, user_message
+        )
         if decision:
             decision = platform_chat_llm.enforce_elicitation_cap(decision, state, user_message)
             # Free text never starts a build (apply_decision answers a
@@ -383,13 +387,23 @@ async def _platform_turn(
         return
 
     # No chat LLM answered. The Factory does not guess an action from the
-    # words: the Floor's controls perform them.
+    # words: the Floor's controls perform them. Say WHY, by the typed kind:
+    # "not configured" only when no provider is configured at all -- a
+    # provider that refused (payment, rate limit, outage) is configured.
+    from app.core.model_ladder import NOT_CONFIGURED, floor_unavailable_reason
+
+    if not orchestrated or refusal_kind == NOT_CONFIGURED:
+        why = floor_unavailable_reason(None)
+    elif refusal_kind:
+        why = floor_unavailable_reason(refusal_kind)
+    else:
+        why = "the Floor chat model did not return a usable answer this time"
     guidance = (
         "Use the Floor controls: Draft turns your brief into a feature list; "
         "Approve starts the coding agent; Continue resumes a build; the "
         "feature-list editor and rename change a pending blueprint; the "
-        "intake line sets the build level, vertical, country and currency. Free-text conversation needs the Floor chat model, which "
-        "is not configured on this deployment."
+        "intake line sets the build level, vertical, country and currency. "
+        f"Free-text conversation is unavailable right now: {why}."
     )
     result = {"sse": "info", "ok": True, "summary": guidance, "stream_delta": True}
     _record(result)
