@@ -94,9 +94,15 @@ def schema_accept_rules_text() -> str:
 
 def schema_accept_acceptance_line() -> str:
     """ACCEPTANCE cut: harness check, not a coder decorative test."""
+    from app.factory.build.writer_behaviour import SELF_CHECK_COMMAND
+
     return (
         f"- every capability accepts a POST built from its own FIELDS/"
-        f"CONSTRAINTS ({SCHEMA_ACCEPT_GATE} baseline)  "
+        f"CONSTRAINTS ({SCHEMA_ACCEPT_GATE} baseline): every field a handler "
+        "or route requires is declared in that capability's model FIELDS -- "
+        "the WRITER gate and TESTER's product suites (test_smoke, test_routes, "
+        "domain acceptance) all build their payload from those FIELDS; run "
+        f"`{SELF_CHECK_COMMAND}` before declaring done  "
         f"[check:{SCHEMA_ACCEPT_CHECK}]"
     )
 
