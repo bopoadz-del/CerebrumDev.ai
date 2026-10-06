@@ -114,9 +114,27 @@ roundtrip_misses = []
 HALTS = {}
 
 
+class _Miss(str):
+    """A miss line that carries the capability it is about, so the record
+    names it as a field and nothing downstream reads it out of the text."""
+
+
+def _miss(cap_id, text):
+    out = _Miss(text)
+    out.cap = cap_id
+    return out
+
+
+def _cap_of(text):
+    return getattr(text, "cap", None)
+
+
 def _record(level, kind, text):
     stream = sys.stdout if level in ("miss", "unjudged") else sys.stderr
-    stream.write(json.dumps({"gate_record": level, "kind": kind, "text": text}) + "\n")
+    rec = {"gate_record": level, "kind": kind, "text": str(text)}
+    if _cap_of(text):
+        rec["capability"] = _cap_of(text)
+    stream.write(json.dumps(rec) + "\n")
 
 
 def _halt(kind, entries=()):
@@ -406,7 +424,7 @@ def _recording_execute(block_id, *a, **kw):
             act = a[1]
         note = _classify_refusal(block_id, payload, act, result)
         if note:
-            line = "%s: %s" % (cap, note)
+            line = _miss(cap, "%s: %s" % (cap, note))
             if line not in contract_misses:
                 contract_misses.append(line)
     return result
@@ -485,18 +503,20 @@ def _check_round_trip(cap_id, cls, body):
         # Not judgeable rather than failed: no table to read.
         return
     if rows < 1:
-        roundtrip_misses.append(
+        roundtrip_misses.append(_miss(
+            cap_id,
             "%s: POST reported success and %s holds 0 row(s) -- the product "
             "did not remember what it was told (ROUND-TRIP: nothing stored)"
-            % (cap_id, entity)
-        )
+            % (cap_id, entity),
+        ))
         return
     stored = store.list_all(entity, tenant_id="local")
     if not any(_record_matches(r, body) for r in stored):
-        roundtrip_misses.append(
+        roundtrip_misses.append(_miss(
+            cap_id,
             "%s: %s grew to %d row(s) but none carries a value the POST "
-            "supplied (ROUND-TRIP: wrong record)" % (cap_id, entity, rows)
-        )
+            "supplied (ROUND-TRIP: wrong record)" % (cap_id, entity, rows),
+        ))
         return
     # ... and the GET the buyer actually makes — authenticated, matching
     # the emitted routes (every CRUD route requires the platform token).
@@ -510,25 +530,28 @@ def _check_round_trip(cap_id, cls, body):
     if got.status_code in (404, 405):
         return  # no list route on this capability; the store half stands
     if got.status_code != 200:
-        roundtrip_misses.append(
+        roundtrip_misses.append(_miss(
+            cap_id,
             "%s: stored the record, then GET answered HTTP %s "
-            "(ROUND-TRIP: not readable)" % (cap_id, got.status_code)
-        )
+            "(ROUND-TRIP: not readable)" % (cap_id, got.status_code),
+        ))
         return
     listed = _listed_records(got.json() if got.content else {})
     if not listed:
-        roundtrip_misses.append(
+        roundtrip_misses.append(_miss(
+            cap_id,
             "%s: %s holds %d row(s) and GET answered with none -- the exact "
             "residential-lettings answer (ROUND-TRIP: empty list)"
-            % (cap_id, entity, rows)
-        )
+            % (cap_id, entity, rows),
+        ))
         return
     if not any(_record_matches(r, body) for r in listed):
-        roundtrip_misses.append(
+        roundtrip_misses.append(_miss(
+            cap_id,
             "%s: GET returned %d record(s), none carrying a value the POST "
             "supplied (ROUND-TRIP: wrong record returned)"
-            % (cap_id, len(listed))
-        )
+            % (cap_id, len(listed)),
+        ))
 
 # -- phase 1: baseline -----------------------------------------------------
 for cap_id, cls in MODELS.items():
@@ -539,7 +562,7 @@ for cap_id, cls in MODELS.items():
     except Exception as exc:
         target = persist_misses if isinstance(exc, _db_error_types()) else schema_misses
         target.append(
-            "%s: POST raised %s" % (cap_id, _exc_text(exc))
+            _miss(cap_id, "%s: POST raised %s" % (cap_id, _exc_text(exc)))
         )
         continue
     try:
@@ -551,14 +574,15 @@ for cap_id, cls in MODELS.items():
         # right answer. Neither the round trip nor fail-closed under forced
         # block failure is judgeable -- nothing is built to fail -- so it is
         # named with its reason, not probed and not counted as a miss.
-        placeholder_unjudged.append(
+        placeholder_unjudged.append(_miss(
+            cap_id,
             "%s: not judgeable -- declared placeholder connector(s) need %s"
-            % (cap_id, ", ".join(data.get("settings") or []))
-        )
+            % (cap_id, ", ".join(data.get("settings") or [])),
+        ))
         continue
     if resp.status_code != 200:
         schema_misses.append(
-            "%s: baseline POST returned HTTP %s" % (cap_id, resp.status_code)
+            _miss(cap_id, "%s: baseline POST returned HTTP %s" % (cap_id, resp.status_code))
         )
         continue
     data = data if isinstance(data, dict) else {}
@@ -576,10 +600,11 @@ for cap_id, cls in MODELS.items():
         if _seen["blocks"].get(cap_id):
             targets.append((cap_id, cls))
             continue
-        schema_misses.append(
+        schema_misses.append(_miss(
+            cap_id,
             "%s: refused a payload built from its own declared constraints (%s)"
-            % (cap_id, str(data.get("error"))[:160])
-        )
+            % (cap_id, str(data.get("error"))[:160]),
+        ))
         continue
     targets.append((cap_id, cls))
 
@@ -597,10 +622,11 @@ for _cap_id, _cls in targets:
     _invoked = _seen["blocks"].get(_cap_id, set())
     _never = sorted(b for b in _declared if b not in _invoked)
     if _never:
-        f11_misses.append(
+        f11_misses.append(_miss(
+            _cap_id,
             "%s: declares block(s) it never invokes: %s (F11)"
-            % (_cap_id, ", ".join(_never))
-        )
+            % (_cap_id, ", ".join(_never)),
+        ))
 
 if persist_misses:
     # Isolated schema refusals may continue; a missing persist table is
@@ -649,7 +675,7 @@ for cap_id, cls in targets:
     try:
         resp = client.post("/v1/" + cap_id, json=body, headers=AUTH)
     except Exception as exc:
-        findings.append(("probe_error", "%s: POST raised under forced failure: %s" % (cap_id, exc)))
+        findings.append(("probe_error", _miss(cap_id, "%s: POST raised under forced failure: %s" % (cap_id, exc))))
         continue
     data = resp.json() if resp.content else {}
     if _calls["n"] == 0:
@@ -660,19 +686,20 @@ for cap_id, cls in targets:
         continue
     missed = False
     if resp.status_code == 200 and data.get("ok") is not False:
-        misses.append(
+        misses.append(_miss(
+            cap_id,
             "%s: did not fail closed — answered %s while every block call "
-            "failed (F1)" % (cap_id, json.dumps(data)[:120])
-        )
+            "failed (F1)" % (cap_id, json.dumps(data)[:120]),
+        ))
         missed = True
     after = _rows(entity)
     if before is None or after is None:
         findings.append(
-            ("unreadable", "%s: cannot read entity %r — persistence was never checked" % (cap_id, entity))
+            ("unreadable", _miss(cap_id, "%s: cannot read entity %r — persistence was never checked" % (cap_id, entity)))
         )
     elif after > before:
         misses.append(
-            "%s: persisted %d row(s) after a failed handler (F1)" % (cap_id, after - before)
+            _miss(cap_id, "%s: persisted %d row(s) after a failed handler (F1)" % (cap_id, after - before))
         )
         missed = True
     if not missed:
@@ -682,18 +709,18 @@ if findings:
     for _kind, _text in findings:
         _record("finding", _kind, _text)
     raise SystemExit(1)
-_f11_caps = set(m.split(":", 1)[0] for m in f11_misses)
+_f11_caps = set(_cap_of(m) for m in f11_misses)
 if f11_misses and all(cid in _f11_caps for cid, _cls in targets):
     # Every probed capability declared unused BLOCK_IDS. Isolated F11
     # (below) continues so a mixed workspace can still ship a zip.
     _halt("f11", [("f11", m) for m in f11_misses])
-_rt_caps = set(m.split(":", 1)[0] for m in roundtrip_misses)
+_rt_caps = set(_cap_of(m) for m in roundtrip_misses)
 if roundtrip_misses and all(cid in _rt_caps for cid, _cls in targets):
     # Nothing the product was told survived. That is residential-lettings
     # exactly, and it is the bar "boots and passes its own tests" never
     # reached. Isolated misses (below) record and continue.
     _halt("roundtrip", [("roundtrip", m) for m in roundtrip_misses])
-_contract_caps = set(m.split(":", 1)[0] for m in contract_misses)
+_contract_caps = set(_cap_of(m) for m in contract_misses)
 if contract_misses and all(cid in _contract_caps for cid, _cls in targets):
     # Every probed capability wrote a payload its own blocks refuse. That is
     # the residential-lettings shape exactly: a zip that boots and cannot
@@ -808,11 +835,26 @@ def classify_unmarked_probe_failure(raw_lines: list[str]) -> str:
     return "behaviour probe failed with no output"
 
 
-def findings_from_probe_stderr(stderr: str) -> list[str]:
-    """Halt and finding texts, or one classified reason -- never raw lines."""
+def record_finding(rec: dict) -> str:
+    """One typed probe record as a typed Finding: the capability is the
+    record's own field, the shape its kind -- never read from the text."""
+    from app.factory.build.findings import Finding
+
+    cap = rec.get("capability")
+    return Finding(
+        rec["text"],
+        gate=GATE_NAME,
+        capability_id=cap if isinstance(cap, str) and cap else None,
+        finding_shape=rec.get("kind"),
+    )
+
+
+def findings_from_probe_stderr(stderr: str) -> list:
+    """Halt and finding records as typed Findings, or one classified reason
+    -- never raw lines."""
     recs = [r for r in probe_records(stderr) if r["gate_record"] in ("halt", "finding")]
     if recs:
-        return [r["text"] for r in recs][-20:]
+        return [record_finding(r) for r in recs][-20:]
     return [classify_unmarked_probe_failure((stderr or "").splitlines())]
 
 
@@ -848,19 +890,24 @@ def _pass_detail(
 ) -> str:
     """Success-path banner: name schema vs F11 vs F1, never collapse them."""
     parts = []
+
+    def _caps(items: list) -> set:
+        # The capability field of each typed miss; an untyped miss counts once.
+        return {getattr(m, "capability_id", None) or m for m in items}
+
     if f1_misses:
-        n = len({m.split(":", 1)[0] for m in f1_misses})
+        n = len(_caps(f1_misses))
         parts.append(
             f"{n} capability(ies) recorded as misses "
             "(success over a failed block)"
         )
     if schema_misses:
-        n = len({m.split(":", 1)[0] for m in schema_misses})
+        n = len(_caps(schema_misses))
         parts.append(
             f"{n} capability(ies) recorded as misses (refused their own schema)"
         )
     if f11_misses:
-        n = len({m.split(":", 1)[0] for m in f11_misses})
+        n = len(_caps(f11_misses))
         parts.append(
             f"{n} capability(ies) recorded as misses "
             "(declared blocks they never invoke — F11)"
@@ -1008,10 +1055,10 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
     miss_records = [r for r in records if r["gate_record"] == "miss"]
     unjudged = [r["text"] for r in records if r["gate_record"] == "unjudged"]
 
-    def _of(kind: str) -> list[str]:
-        return [r["text"] for r in miss_records if r["kind"] == kind]
+    def _of(kind: str) -> list:
+        return [record_finding(r) for r in miss_records if r["kind"] == kind]
 
-    misses = [r["text"] for r in miss_records]
+    misses = [record_finding(r) for r in miss_records]
     schema_misses = _of(KIND_SCHEMA)
     f11_misses = _of(KIND_F11)
     contract_misses = _of(KIND_CONTRACT)

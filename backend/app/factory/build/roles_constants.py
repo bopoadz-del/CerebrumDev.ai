@@ -789,6 +789,9 @@ def pytest_configure(config):
     xml = getattr(config.option, "xmlpath", None)
     if xml:
         os.environ[#<<REFUSAL_LOG_ENV>>] = str(xml) + #<<REFUSAL_LOG_SUFFIX>>
+        # Which capability each Factory-emitted test found failing, keyed by
+        # the running test -- the gate's typed source for capability_id.
+        os.environ[#<<CAPABILITY_LOG_ENV>>] = str(xml) + #<<CAPABILITY_LOG_SUFFIX>>
 '''
 
 # The deploy-time-settings snippet is substituted in, not pasted into the
@@ -807,8 +810,13 @@ def _with_refusal_log(text: str) -> str:
         REFUSAL_LOG_SUFFIX,
     )
 
-    return text.replace("#<<REFUSAL_LOG_ENV>>", repr(REFUSAL_LOG_ENV)).replace(
-        "#<<REFUSAL_LOG_SUFFIX>>", repr(REFUSAL_LOG_SUFFIX)
+    from app.factory.build.findings import CAPABILITY_LOG_ENV, CAPABILITY_LOG_SUFFIX
+
+    return (
+        text.replace("#<<REFUSAL_LOG_ENV>>", repr(REFUSAL_LOG_ENV))
+        .replace("#<<REFUSAL_LOG_SUFFIX>>", repr(REFUSAL_LOG_SUFFIX))
+        .replace("#<<CAPABILITY_LOG_ENV>>", repr(CAPABILITY_LOG_ENV))
+        .replace("#<<CAPABILITY_LOG_SUFFIX>>", repr(CAPABILITY_LOG_SUFFIX))
     )
 
 

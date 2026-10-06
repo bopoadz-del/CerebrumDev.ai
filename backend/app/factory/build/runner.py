@@ -90,6 +90,7 @@ REWORK_CEILING = 6
 
 #: The four things the runner can do with a failed phase verdict. One rule
 #: (``RoleRunner.decide``) picks one, from data, and records it.
+from app.factory.build import findings as _findings  # noqa: E402
 from app.factory.build.rule_decision import (  # noqa: E402
     ADVISORY as DECISION_ADVISORY,
     REGENERATE_TEST as DECISION_REGENERATE_TEST,
@@ -168,7 +169,12 @@ def _writer_gate_items(verdict: Any) -> tuple:
     from app.factory.build.writer_behaviour import SELF_CHECK_COMMAND
 
     items = [
-        f"[{check}] {finding}" for check, finding in brief_gates.failure_checks(verdict)
+        # The bracket names the check for the coder; the typed fields travel
+        # with the item (capability_id drives the ratchet, never this text).
+        finding.with_fields(detail=f"[{check}] {finding.detail}")
+        if isinstance(finding, _findings.Finding)
+        else f"[{check}] {finding}"
+        for check, finding in brief_gates.failure_checks(verdict)
     ]
     items.append(
         f"[{brief_gates.WRITER_BEHAVIOUR_CHECK}] before declaring done, run "
@@ -382,7 +388,8 @@ class BuildBudget:
     ``0`` disables that bound.
     """
 
-    max_rework: int = 3
+    #: Per gate (owner rule): the same REWORK_BUDGET the rule enforces.
+    max_rework: int = REWORK_BUDGET
     wall_clock_s: float = 1800.0
     phase_wall_clock_s: float = 1500.0
     #: The wall may be RAMPED at an inspect, never past this. It is the same
@@ -1041,6 +1048,7 @@ class RoleRunner:
                 "reason": verdict.reason or f"{verdict.gate}_failed",
                 "location": role.value,
                 "findings": list(verdict.findings),
+                _findings.TYPED_KEY: _findings.typed(verdict.findings),
                 "role_detail": result.detail,
                 "wrote": list(ws.written),
             },
@@ -1345,7 +1353,7 @@ class RoleRunner:
         if role is BuildRole.WRITER:
             work = tuple(_writer_gate_items(verdict))
         elif role is BuildRole.STORE_MANAGER:
-            work = tuple(str(f) for f in verdict.findings)
+            work = tuple(verdict.findings)
         else:
             work = tuple(verdict.findings) + tuple(_test_defect_items(defects))
         rec = self._decision_record(
@@ -1357,7 +1365,10 @@ class RoleRunner:
         )
         payload: Dict[str, Any] = {
             "findings": list(verdict.findings),
+            _findings.TYPED_KEY: _findings.typed(verdict.findings),
             "work_list": list(work),
+            "work_list_typed": _findings.typed(work),
+            "capability_ids": sorted(_findings.capability_ids(work)),
             "failure_names": current,
             "source": role.value,
             "gate": verdict.gate,
@@ -1395,6 +1406,7 @@ class RoleRunner:
                     "outcome": decision.outcome.value if decision.outcome else "FAILED_GATE",
                     "decision": decision.record,
                     "findings": list(decision.findings),
+                    _findings.TYPED_KEY: _findings.typed(decision.findings),
                 },
             )
         return decision
@@ -1484,6 +1496,7 @@ class RoleRunner:
             "outcome": outcome.value,
             "rework_used": rework,
             "findings": list(findings),
+            _findings.TYPED_KEY: _findings.typed(findings),
             "cycle": getattr(self, "cycle", "code"),
             "pilot_ready": getattr(self, "cycle", "code") == "pilot"
             and outcome is Outcome.SUCCESS,
@@ -1938,11 +1951,9 @@ class RoleRunner:
             and terminal.role is not None
             and terminal.role == self.ledger.resume_point()
         ):
-            seeded = [
-                str(f)
-                for f in (terminal.payload.get("findings") or [])
-                if str(f).strip()
-            ]
+            # Typed when the ledger recorded them (capability ids survive a
+            # resume); the plain strings of an older ledger otherwise.
+            seeded = [f for f in _findings.from_payload(terminal.payload) if str(f).strip()]
             if not seeded and terminal.detail.strip():
                 seeded = [terminal.detail.strip()]
             work_list = tuple(seeded)
@@ -1955,7 +1966,12 @@ class RoleRunner:
             and reopened is not None
             and reopened.role == self.ledger.resume_point()
         ):
-            work_list = tuple(
+            typed_work = [
+                _findings.Finding.from_json(r)
+                for r in (reopened.payload.get("work_list_typed") or [])
+                if isinstance(r, dict)
+            ]
+            plain = [
                 str(f)
                 for f in (
                     reopened.payload.get("work_list")
@@ -1963,7 +1979,11 @@ class RoleRunner:
                     or []
                 )
                 if str(f).strip()
-            )
+            ]
+            # The typed items replace their own text; untyped items (the
+            # re-check command, test-defect items) keep their text.
+            typed_text = {str(f) for f in typed_work}
+            work_list = tuple(typed_work + [f for f in plain if f not in typed_text])
 
         # A re-entered run (resume, or a pasted build link) carries the
         # Factory files of the Factory that first built it. Re-render them
@@ -2169,6 +2189,7 @@ class RoleRunner:
                             "collect_all": True,
                             "gate": verdict.gate,
                             "findings": list(verdict.findings),
+                            _findings.TYPED_KEY: _findings.typed(verdict.findings),
                         },
                     )
                     done.add(role)

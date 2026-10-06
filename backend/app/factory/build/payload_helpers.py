@@ -38,6 +38,7 @@ from app.factory.build.rejection_contract import (
     REJECTION_REASON_HEADER,
     REJECTION_REASON_KEY,
 )
+from app.factory.build.findings import render_capability_recorder
 from app.factory.build.roles_constants import _SAMPLE_VALUES
 
 
@@ -178,5 +179,19 @@ def render_payload_helpers() -> List[str]:
         "        )",
         "        payload[field] = value",
         "        resp = client.post(path, json=payload, headers=headers)",
+        "    if _still_failed(resp):",
+        "        _record_capability_failure(capability_id)",
         "    return resp, corrections",
+        "",
+        "",
+        "def _still_failed(resp):",
+        "    if resp.status_code != 200:",
+        "        return True",
+        "    try:",
+        '        return resp.json().get("ok") is False',
+        "    except Exception:",
+        "        return False",
+        "",
+        "",
+        *render_capability_recorder(),
     ]
