@@ -69,17 +69,40 @@ def _field_sa_type(field: Dict[str, Any]) -> str:
     return _SA_TYPES.get(key, "sa.Text()")
 
 
+#: Columns the STORE owns on every table: the row id it assigns and the
+#: tenant it scopes by. A product model may list them among its FIELDS (it
+#: carries the id it was given), but they are never declared data: the
+#: store writes them, so they are not inserted from a record, not migrated
+#: as declared columns, and not part of a sample a test expects to read back.
+#: Live 2026-10-06 (879ed1e1, vineyard): the declared-model reader listed
+#: ``id`` as a str field, the lifecycle test inserted ``id='s10-row'`` and
+#: read back the store's own id -> ``assert 1 == 's10-row'``, a Factory
+#: test the writer could never fix. One definition, used by the store
+#: renderer below and by every helper that turns fields into columns.
+STORE_MANAGED_COLUMNS: Tuple[str, ...] = ("id", "tenant_id")
+
+
+def declared_fields(spec: Dict[str, Any] | None) -> List[Dict[str, Any]]:
+    """A spec's declared data fields: named, and not a store-managed column."""
+    return [
+        field
+        for field in (spec or {}).get("fields") or []
+        if isinstance(field, dict)
+        and field.get("name")
+        and field["name"] not in STORE_MANAGED_COLUMNS
+    ]
+
+
 def table_specs(specs: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for spec in sorted(specs.values(), key=lambda s: s["entity"]):
-        fields = list(spec.get("fields") or [])
-        out.append({"entity": spec["entity"], "fields": fields})
+        out.append({"entity": spec["entity"], "fields": declared_fields(spec)})
     return out
 
 
 def columns_map(specs: Dict[str, Dict[str, Any]]) -> Dict[str, List[str]]:
     return {
-        spec["entity"]: [f["name"] for f in spec.get("fields") or []]
+        spec["entity"]: [f["name"] for f in declared_fields(spec)]
         for spec in specs.values()
     }
 
@@ -95,9 +118,7 @@ def sample_for_spec(
     vs alphabetically-first entity ``availability``).
     """
     sample: Dict[str, Any] = {}
-    for field in (spec or {}).get("fields") or []:
-        if not isinstance(field, dict) or not field.get("name"):
-            continue
+    for field in declared_fields(spec):
         name = field["name"]
         ftype = field.get("type") or "str"
         if field.get("allowed_values"):
@@ -174,7 +195,7 @@ def render_store(specs: Dict[str, Dict[str, Any]]) -> str:
         "    \"\"\"The declared table. An undeclared entity is refused, never named.\"\"\"\n"
         "    if entity not in COLUMNS:\n"
         "        raise QueryError(\"unknown entity: \" + str(entity))\n"
-        "    names = [\"id\", \"tenant_id\", *COLUMNS[entity]]\n"
+        f"    names = [*{list(STORE_MANAGED_COLUMNS)!r}, *COLUMNS[entity]]\n"
         "    return sa.table(entity, *(sa.column(n) for n in dict.fromkeys(names)))\n"
         "\n"
         "\n"
@@ -847,8 +868,27 @@ def render_lifecycle_doc() -> str:
     return json.dumps(lifecycle_declaration(), indent=2, sort_keys=True) + "\n"
 
 
+class EmittedSuiteContractError(ValueError):
+    """The Factory rendered a lifecycle suite that expects to read back a key
+    the product's store never writes as declared data. That is the Factory's
+    defect, raised at render time so it ends the run as a Factory fault --
+    it must never reach the writer as a rework it cannot fix."""
+
+
+def check_sample_is_declared(entity: str, sample: Dict[str, Any], columns: List[str]) -> None:
+    """Every key the suite will insert and read back is a declared column."""
+    stray = sorted(k for k in sample if k not in columns)
+    if stray:
+        raise EmittedSuiteContractError(
+            f"lifecycle sample for {entity!r} expects undeclared column(s) "
+            f"{stray}; declared: {columns}"
+        )
+
+
 def render_product_tests(specs: Dict[str, Dict[str, Any]]) -> str:
     entity, sample = first_entity_sample(specs)
+    if entity:
+        check_sample_is_declared(entity, sample, columns_map(specs).get(entity, []))
     entities = [spec["entity"] for spec in table_specs(specs)]
     return f'''"""S10 data lifecycle — performed, not configured.
 
