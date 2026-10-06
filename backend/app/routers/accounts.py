@@ -16,6 +16,7 @@ from ..core import accounts_store, billing, data_rights, mailer
 from ..core.auth import Principal, require_account_allow_unverified, require_api_key
 from ..core.auth_cookies import clear_login_cookie, cookie_login_token, set_login_cookie
 from ..core.rate_limit import check_rate_limit_for_request
+from ..core.trial_limits import SMOKE_PRINCIPAL_A, SMOKE_PRINCIPAL_B
 
 router = APIRouter()
 
@@ -23,8 +24,8 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MIN_PASSWORD_LEN = 8
 # Ops-only principals for production smoke. The .invalid TLD cannot receive
 # mail; public register never uses these addresses.
-_SMOKE_EMAIL_A = "factory-smoke-a@cerebrum-dev.invalid"
-_SMOKE_EMAIL_B = "factory-smoke-b@cerebrum-dev.invalid"
+_SMOKE_EMAIL_A = SMOKE_PRINCIPAL_A
+_SMOKE_EMAIL_B = SMOKE_PRINCIPAL_B
 
 
 class RegisterBody(BaseModel):
