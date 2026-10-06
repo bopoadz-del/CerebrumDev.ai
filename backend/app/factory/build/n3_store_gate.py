@@ -831,6 +831,48 @@ def split_audit_by_origin(root: Path | str, report: AcceptanceReport) -> List[Di
     return advisory
 
 
+#: Typed row the Store gate attaches to an image-stage line when the image
+#: built but the container died at boot: the innermost frame of the crash
+#: inside the product tree (cerebrum-builds .github/store_gate/boot_crash.py).
+ROW_BOOT_CRASH = "boot_crash"
+
+
+def split_image_by_origin(root: Path | str, report: AcceptanceReport) -> List[str]:
+    """Attribute an image-stage FAIL that is a boot crash to whoever wrote the
+    crashing file, by the build's factory receipt -- never by its name.
+
+    A crash in a file the Factory stamped (app/observe.py, app/health.py, the
+    harness) is the Factory's: listed in factory_owed, never the writer's
+    rework, never the product's failure. A crash in a writer-authored file
+    stays the product's, with that file:line handed to the writer. A line
+    without boot-crash rows (an image that did not build) keeps the owner
+    owner_of gave it. Returns the checks moved to the Factory.
+    """
+    from app.factory.build.acceptance_floor import FACTORY, PRODUCT, image_check_ids
+    from app.factory.build.factory_receipt import WRITER, load_receipt, row_origin, row_text
+
+    image = set(image_check_ids())
+    receipt = load_receipt(root)
+    moved: List[str] = []
+    for line in report.lines:
+        if line.name not in image or not line.failed:
+            continue
+        rows = [r for r in line.evidence_rows if r.get("kind") == ROW_BOOT_CRASH]
+        if not rows:
+            continue
+        writer_rows = [r for r in rows if row_origin(receipt, r).owner == WRITER]
+        if writer_rows:
+            line.owner = PRODUCT
+            line.evidence = "\n".join(row_text(r) for r in writer_rows)[:EVIDENCE_CAP]
+        else:
+            line.owner = FACTORY
+            moved.append(line.name)
+    if moved:
+        finalize_owners(report)
+        report.passed = sum(1 for line in report.lines if line.satisfied)
+    return moved
+
+
 def record_audit_advisory(root: Path | str, advisory: Sequence[Mapping[str, Any]]) -> None:
     """One ledger NOTE carrying ``gate_advisory`` -- the record the build
     status and the export manifest already read (brief_gates.advisory_checks)."""
@@ -1303,6 +1345,11 @@ def ingest_n3_store_gate(
     # scored -- is the Factory's, routed to the factory lane, and can never
     # fail the product (acceptance_floor.owner_of derives this per line).
     report = report_from_snapshot(snap)
+    # A container that died at boot is owned by whoever wrote the crashing
+    # file (the build's factory receipt): a crash in Factory-stamped code is
+    # factory_owed, never the writer's rework.
+    if report.harness_ran and not snap.timeout and not snap.missing:
+        split_image_by_origin(root, report)
     # audit_clean ownership by line origin (the build's factory receipt): a
     # finding in Factory substrate is advisory for this build, never the
     # writer's rework; a gate red only on such lines does not fail the build.

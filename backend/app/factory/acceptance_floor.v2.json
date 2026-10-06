@@ -50,8 +50,8 @@
     },
     {
       "id": "single_persistence_root",
-      "requirement_text": "One storage root, read from STORAGE_PATH. No second database, no stray sqlite file beside it.",
-      "brief_render": "- single_persistence_root: One storage root, read from STORAGE_PATH. No second database, no stray sqlite file beside it.",
+      "requirement_text": "One storage root, read from STORAGE_PATH. No second database, no stray sqlite file beside it. The persistence root is writable by the user the service runs as: the image creates STORAGE_PATH owned by that user before it switches to it, so a fresh volume mounted there starts with that ownership; the service never needs root to write its own data.",
+      "brief_render": "- single_persistence_root: One storage root, read from STORAGE_PATH. No second database, no stray sqlite file beside it. The persistence root is writable by the user the service runs as: the image creates STORAGE_PATH owned by that user before it switches to it, so a fresh volume mounted there starts with that ownership; the service never needs root to write its own data.",
       "gate_fn": "check_single_persistence_root",
       "check": "exactly one persistence root in the tree",
       "universal": true,
