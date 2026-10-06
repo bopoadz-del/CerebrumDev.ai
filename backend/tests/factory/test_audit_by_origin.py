@@ -13,8 +13,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from app.factory.build import factory_receipt as fr
 from app.factory.build.acceptance_floor import FACTORY, PRODUCT, audit_check_ids
 from app.factory.build.brief_gates import advisory_checks
@@ -34,10 +32,13 @@ AUDIT = audit_check_ids()[0]
 
 def _factory_file() -> str:
     """A path the Factory renders that lives under app/ (what bandit scans)."""
-    for rel in factory_rendered_paths():
-        if rel.startswith("app/") and rel.endswith(".py"):
-            return rel
-    pytest.skip("no Factory-rendered app/ module to stamp")
+    rendered = [
+        rel for rel in factory_rendered_paths() if rel.startswith("app/") and rel.endswith(".py")
+    ]
+    # The Factory always stamps runtime modules under app/ (tenancy, observe,
+    # ...); none would be a Factory defect, so this fails rather than skips.
+    assert rendered, "factory_rendered_paths() lists no app/ module"
+    return rendered[0]
 
 
 def _tree(tmp_path: Path, *, writer_deps=("zorblat-sdk",)) -> Path:
