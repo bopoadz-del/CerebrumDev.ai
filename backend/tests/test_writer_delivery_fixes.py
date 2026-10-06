@@ -196,6 +196,10 @@ def test_start_runner_build_binds_tenant_from_session_identity_when_account_abse
         def start(self):
             self._kwargs.get("target", lambda *_: None)(*self._kwargs.get("args", ()))
 
+        def is_alive(self):
+            # Runs inline: once start() returns, the build is not running.
+            return False
+
     monkeypatch.setattr(bj, "_run", fake_run)
     monkeypatch.setattr("threading.Thread", _InlineThread)
     monkeypatch.setenv("STORAGE_PATH", str(tmp_path))
