@@ -1407,7 +1407,69 @@ class RoleRunner:
             ),
             payload=payload,
         )
+        self._grant_rework_wall(role, reopen=reopen, build_round=build_rounds + 1)
         return GateDecision(DECISION_REWORK, work_list=work, record=rec)
+
+    def _grant_rework_wall(
+        self, role: BuildRole, *, reopen: bool = False, build_round: int = 0
+    ) -> None:
+        """A granted REWORK round brings the wall time its re-run is entitled to.
+
+        The owner's rule makes rework rounds the loop (2 per gate, 6 per
+        build) and the wall a ceiling. A fixed whole-build wall cannot hold
+        a run that is inside those budgets: live 2026-10-06 (01a1eed7) a
+        production build reworked its WRITER once and was stopped at the
+        next phase with "wall-clock budget of 2700s spent before TESTER
+        completed". Each granted round therefore extends the wall so the
+        phases it re-runs (REWORK_TARGET through the failed gate) each get
+        their phase allowance from now -- through ``_extend_wall``, which
+        never shrinks the wall and never passes ``hard_ceiling_s``. When the
+        ceiling is reached the existing typed stop still ends the run.
+        """
+        allowance_each = float(self.budget.phase_wall_clock_s or 0.0)
+        if allowance_each <= 0 or not self.budget.wall_clock_s:
+            return
+        if self._run_started is None:
+            return
+        if reopen:
+            rerun = [BuildRole.WRITER, BuildRole.TESTER, role]
+        else:
+            start = BUILD_PHASES.index(REWORK_TARGET)
+            stop = BUILD_PHASES.index(role) if role in BUILD_PHASES else start
+            rerun = list(BUILD_PHASES[start : max(start, stop) + 1])
+        rerun = list(dict.fromkeys(rerun))
+        elapsed = max(0.0, float(self.clock()) - float(self._run_started))
+        requested = elapsed + allowance_each * len(rerun)
+        before = float(self.budget.wall_clock_s or 0.0)
+        if requested > before or (
+            self._deadline is not None
+            and float(self._run_started) + requested > float(self._deadline)
+        ):
+            self._extend_wall(requested)
+        granted = float(self.budget.wall_clock_s or 0.0)
+        ceiling = float(self.budget.hard_ceiling_s or 0.0)
+        self.ledger.append(
+            EventKind.NOTE,
+            role=role,
+            detail=(
+                f"rework round {build_round}: wall {before:g}s -> {granted:g}s "
+                f"for {len(rerun)} phase(s) to re-run "
+                f"({', '.join(r.value for r in rerun)})"
+                + (f"; capped at the {ceiling:g}s ceiling" if ceiling and requested > ceiling else "")
+            ),
+            payload={
+                "wall_grant": {
+                    "round_build": build_round,
+                    "phases": [r.value for r in rerun],
+                    "allowance_each_s": allowance_each,
+                    "requested_s": round(requested, 1),
+                    "wall_before_s": before,
+                    "wall_s": granted,
+                    "ceiling_s": ceiling,
+                    "capped": bool(ceiling and requested > ceiling),
+                }
+            },
+        )
 
     def _foreman_context(self, findings: Sequence[Any] = ()) -> Any:
         """What the foreman's validation knows about this build (all data)."""

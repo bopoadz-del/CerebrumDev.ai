@@ -613,6 +613,13 @@ def _cli_flight(
         # what production runs, was never seen in flight: the ramp never
         # fired and the writer died at its dispatch wall (live 2026-10-06).
         if payload.get("model_call") and is_coding_agent_source(payload.get("source")):
+            # A NEW call (a rework round re-dispatches the writer) re-opens
+            # the flight: ``finished`` describes the LATEST call, never an
+            # earlier one. Without this, the first call's close marked every
+            # later call finished the moment it started, and the ramp never
+            # fired for a rework round's writer.
+            if not payload.get("cli_wall_extended"):
+                finished = False
             dispatched = True
             slot_waiting = False
         slot = payload.get("slot_wait")
