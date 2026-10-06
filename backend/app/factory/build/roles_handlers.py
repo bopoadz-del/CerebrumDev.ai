@@ -21,7 +21,6 @@ from app.factory.build.authority import (
     KERNEL_ROUTE_NAMES,
     BuildRole,
     jobs_manifest,
-    role_contract,
 )
 from app.factory.build.offline_adapters import (
     DOCUMENT_ENGINE_PARSERS_STUB,
@@ -4033,6 +4032,22 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
             source="factory",
         )
 
+    # The published kernel roster (GET /v1/jobs, /v1/catalog, /v1/gates) is
+    # the Factory's role contracts, and TESTER's stamped route suite asserts
+    # it -- but it was stamped only below this branch, so the agent wrote its
+    # own app/jobs.py with an empty CATALOG/GATES and the suite died on
+    # KeyError: 'kernel', a fault no rework could fix (vineyard repro,
+    # dd1b353d). Stamped here from the same source; the product's declared
+    # CAPABILITIES manifest is kept as declared.
+    from app.factory.build.kernel_publish import stamp_roster
+
+    if stamp_roster(ctx):
+        ctx.note(
+            "kernel roster (app/jobs.py) stamped by the factory from the role contracts",
+            stage="substrate",
+            source="factory",
+        )
+
     # The worker subprocess writes into the staging tree directly, so its
     # files are not in the workspace's tracked ``written`` list — commit()
     # would drop every authored handler (live-factory
@@ -4954,106 +4969,17 @@ def run_writer(
             done=len(entries),
             total=len(cap_ids),
         )
-    gaps = {str(g) for g in (ctx.state.get("gaps") or ())}
-    catalog = {
-        "kernel": "COLLECTOR",
-        "title": role_contract(BuildRole.COLLECTOR).title,
-        "mandate": role_contract(BuildRole.COLLECTOR).mandate,
-        "agent": role_contract(BuildRole.COLLECTOR).agent.value,
-        "resolved_blocks": list(
-            ctx.state.get("resolved_blocks") or ctx.state.get("vendored_blocks") or []
-        ),
-        "gaps": list(ctx.state.get("gaps") or []),
-        "bindings": [
-            {
-                "capability_id": cap.capability_id,
-                "block_ids": list(cap.block_ids or []),
-                "gap": cap.capability_id in gaps or not cap.block_ids,
-            }
-            for cap in ctx.plan.capabilities
-        ],
-        "agent_reviews": list(ctx.state.get("agent_binding_reviews") or []),
-        "agent_model": ctx.state.get("agent_binding_model") or "",
-    }
-    capabilities = [
-        {
-            "id": e["capability_id"],
-            "entity": e["entity"],
-            "source": e["source"],
-            "http": {
-                "create": f"POST /v1/{e['name']}",
-                "list": f"GET /v1/{e['name']}",
-                "get": f"GET /v1/{e['name']}/{{id}}",
-                "update": f"PUT /v1/{e['name']}/{{id}}",
-                "delete": f"DELETE /v1/{e['name']}/{{id}}",
-            },
-        }
-        for e in entries
-    ]
-    tester = role_contract(BuildRole.TESTER)
-    gates = {
-        "kernel": tester.role.value,
-        "title": tester.title,
-        "mandate": tester.mandate,
-        "agent": tester.agent.value,
-        "runs_over_http": False,
-        "suite": [
-            {
-                "file": "tests/test_smoke.py",
-                "covers": "import, offline dispatch load, handle() returns a mapping",
-                "gated": True,
-            },
-            {
-                "file": "tests/test_smoke.py",
-                "covers": "Store-backed handle() ok and nested error scan",
-                "marker": "pilot",
-                "gated": False,
-            },
-            {
-                "file": "tests/test_models.py",
-                "covers": "sqlite round-trip via store.save / store.get",
-                "gated": True,
-            },
-            {
-                "file": "tests/test_data_lifecycle.py",
-                "covers": "Alembic up/down on populated v1, restore drill, parallel writes",
-                "gated": True,
-            },
-            {
-                "file": "tests/test_deploy.py",
-                "covers": "Fail-closed /health, correlation logs, revision rollback identity",
-                "gated": True,
-            },
-            {
-                "file": "tests/test_domain_acceptance.py",
-                "covers": "Ten business outcomes through execute_action",
-                "marker": "pilot",
-                "gated": False,
-            },
-            {
-                "file": "tests/test_routes.py",
-                "covers": "HTTP 200 JSON for /health, kernel jobs, and each capability POST",
-                "gated": True,
-            },
-            {
-                "file": "tests/test_routes.py",
-                "covers": "Store-backed POST accepted (ok is not False) and persisted",
-                "marker": "pilot",
-                "gated": False,
-            },
-            {
-                "file": "tests/agent_domain_cases.py",
-                "covers": "optional coding-agent domain mutations of spec payloads",
-                "optional": True,
-                "gated": False,
-            },
-        ],
-    }
+    # One source for the published kernel roster (build/kernel_publish.py):
+    # the CodeWhale path stamps it from the same functions.
+    from app.factory.build.kernel_publish import (
+        JOBS_REL,
+        capabilities_from_entries,
+        render_roster,
+    )
+
     ctx.workspace.write_text(
-        Path("app") / "jobs.py",
-        _render_jobs_module(
-            catalog=catalog, capabilities=capabilities, gates=gates
-        ),
+        JOBS_REL,
+        render_roster(ctx.state, ctx.plan, capabilities_from_entries(entries)),
     )
     sources["jobs"] = fallback_source
     for rel, text in render_routes_files(entries, ctx.blueprint).items():
@@ -5651,6 +5577,10 @@ def run_tester(ctx: RoleContext) -> RoleResult:
     Re-emit the suite from the current specs so ``pytest -m pilot`` matches
     the workspace under test.
     """
+    # The roster the route suite asserts comes from the same role contracts
+    # that stamp app/jobs.py (build/kernel_publish.py) -- one source.
+    from app.factory.build.kernel_publish import render_roster_test as _render_roster_test
+
     # G1 ownership, the honest half: remember which tests THIS function
     # stamps, as a snapshot delta on the workspace's written-list. The
     # runner's factory_test_files is "written under tests/ during the TESTER
@@ -6047,39 +5977,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         "    assert all(item[\"ok\"] for item in body[\"checks\"])",
         "",
         "",
-        "def test_kernel_jobs_roster():",
-        '    """GET /v1/jobs publishes every kernel JD; distinctive routes answer."""',
-        '    resp = client.get("/v1/jobs", headers=AUTH)',
-        "    assert resp.status_code == 200",
-        '    jobs = resp.json()["jobs"]',
-        '    by_kernel = {j["kernel"]: j for j in jobs}',
-        '    assert set(by_kernel) == {',
-        '        "COLLECTOR", "CLONER", "WRITER", "TESTER", "STORE_MANAGER"',
-        "    }",
-        '    assert by_kernel["COLLECTOR"]["title"] == "Binding surveyor"',
-        '    assert by_kernel["CLONER"]["title"] == "Block stocker"',
-        '    assert by_kernel["WRITER"]["title"] == "Platform manufacturer"',
-        '    assert by_kernel["TESTER"]["title"] == "Acceptance inspector"',
-        '    assert by_kernel["STORE_MANAGER"]["title"] == "Store registrar"',
-        "    for job in jobs:",
-        '        assert job["mandate"] and job["http_routes"] and job["agent"]',
-        '    catalog = client.get("/v1/catalog", headers=AUTH)',
-        "    assert catalog.status_code == 200",
-        '    assert catalog.json()["kernel"] == "COLLECTOR"',
-        '    inventory = client.get("/v1/inventory", headers=AUTH)',
-        "    assert inventory.status_code == 200",
-        '    assert inventory.json()["kernel"] == "CLONER"',
-        '    assert "lock" in inventory.json()',
-        '    caps_resp = client.get("/v1/capabilities", headers=AUTH)',
-        "    assert caps_resp.status_code == 200",
-        '    assert isinstance(caps_resp.json()["items"], list)',
-        '    gates = client.get("/v1/gates", headers=AUTH)',
-        "    assert gates.status_code == 200",
-        '    assert gates.json()["kernel"] == "TESTER"',
-        '    assert gates.json()["runs_over_http"] is False',
-        '    prov = client.get("/v1/provenance", headers=AUTH)',
-        "    assert prov.status_code == 200",
-        '    assert prov.json()["kernel"] == "STORE_MANAGER"',
+        *_render_roster_test(),
         "",
         "",
         "def test_every_capability_route_answers():",
