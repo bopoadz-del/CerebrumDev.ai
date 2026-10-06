@@ -193,15 +193,17 @@ def record_architect_call(
     attempt: int,
     model: str,
     tokens: Optional[int] = None,
+    fallback_to: str = "the CONTRACT-only brief",
 ) -> None:
-    """One ledger NOTE per architect call: what went in, what came out."""
+    """One ledger NOTE per architect call: what went in, what came out.
+    ``fallback_to`` names what the entry point falls back to."""
     if note is None:
         return
     inputs_blob = json.dumps(inputs, sort_keys=True, default=str)
     note(
         f"architect {entry} (attempt {attempt}, mode {mode}): "
         + ("lint ok" if lint.ok else "lint refused: " + "; ".join(lint.errors)[:300])
-        + (" -- fell back to the CONTRACT-only brief" if fallback else ""),
+        + (f" -- fell back to {fallback_to}" if fallback else ""),
         stage=LEDGER_STAGE,
         source="architect",
         architect={
