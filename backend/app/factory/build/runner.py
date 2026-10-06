@@ -1397,6 +1397,10 @@ class RoleRunner:
             }
         if reopen:
             payload["reopen"] = [BuildRole.WRITER.value, BuildRole.TESTER.value, role.value]
+        # The grant is recorded BEFORE the REWORK: a reopened run resumes from
+        # the REWORK, and ledger.reopening_rework() reads it only while it is
+        # the last event -- a NOTE after it would hide the reopen.
+        self._grant_rework_wall(role, reopen=reopen, build_round=build_rounds + 1)
         self.ledger.append(
             EventKind.REWORK,
             role=REWORK_TARGET,
@@ -1407,7 +1411,6 @@ class RoleRunner:
             ),
             payload=payload,
         )
-        self._grant_rework_wall(role, reopen=reopen, build_round=build_rounds + 1)
         return GateDecision(DECISION_REWORK, work_list=work, record=rec)
 
     def _grant_rework_wall(

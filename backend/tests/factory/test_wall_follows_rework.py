@@ -219,6 +219,23 @@ def test_a_rework_round_inside_the_budgets_is_not_stopped_by_the_wall(tmp_path):
     assert outcome.outcome is Outcome.SUCCESS, outcome.detail
 
 
+def test_the_grant_never_hides_the_rework_it_belongs_to(tmp_path):
+    """A reopened run resumes from its REWORK, which ledger.reopening_rework()
+    reads only while it is the LAST event. The grant is written before the
+    REWORK, never after it (CI on #680: a grant NOTE after the REWORK made the
+    Store-gate reopen invisible -- 'NoneType' has no attribute 'payload')."""
+    clock = _Clock()
+    runner, _calls = _runner(
+        tmp_path, clock, wall=100.0, phase=80.0, ceiling=1000.0, writer_seconds=70.0
+    )
+    runner.run()
+    events = list(runner.ledger.events())
+    rework_at = [i for i, e in enumerate(events) if e.kind is EventKind.REWORK]
+    grant_at = [i for i, e in enumerate(events) if (e.payload or {}).get("wall_grant")]
+    assert rework_at and grant_at
+    assert grant_at[0] == rework_at[0] - 1, "the grant must sit just before its REWORK"
+
+
 def test_the_grant_never_passes_the_hard_ceiling(tmp_path):
     """Same run, ceiling 120 s: the grant is clamped to the ceiling, the
     ledger says so, and a run that outlives it still stops typed."""
