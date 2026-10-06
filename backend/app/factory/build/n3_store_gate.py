@@ -501,6 +501,9 @@ def report_from_store_gate_payload(raw: Mapping[str, Any]) -> AcceptanceReport:
                 status=str(item.get("status") or "FAIL").upper(),
                 detail=str(item.get("detail") or ""),
                 evidence=str(item.get("evidence") or "")[:EVIDENCE_CAP],
+                evidence_rows=[
+                    dict(r) for r in item.get("evidence_rows") or [] if isinstance(r, Mapping)
+                ],
             )
         )
     by_name = {line.name: line for line in lines}
@@ -760,17 +763,120 @@ def _three_gate_pilot_detail() -> str:
     )
 
 
+#: Why an audit line became advisory: every finding on it is in Factory
+#: substrate, so it is the Factory's to fix and does not fail the build.
+REASON_AUDIT_FACTORY_ORIGIN = (
+    "audit findings only in Factory substrate (by the build's factory receipt)"
+)
+REASON_AUDIT_NO_ROWS = (
+    "the gate attached no typed findings to this audit line: origin unknown, "
+    "a Factory fault"
+)
+
+
+def split_audit_by_origin(root: Path | str, report: AcceptanceReport) -> List[Dict[str, Any]]:
+    """Split each failed audit line's findings by who wrote them.
+
+    Provenance comes from the build's factory receipt (factory_receipt.py),
+    never from a filename. Per failed audit line (the floor's ``stage: audit``):
+
+    * findings in writer-authored files or writer-added dependencies stay on
+      the line -- it stays a PRODUCT failure and those rows (file:line) are
+      what the writer is handed;
+    * findings in Factory substrate are the Factory's and advisory for this
+      build: when they are ALL the line has, the line is satisfied (owner
+      FACTORY, reason recorded); when mixed, only the writer's rows remain;
+    * a line the gate gave no typed rows cannot be attributed: the Factory's
+      (unknown origin is never silently the writer's).
+
+    Mutates and re-scores ``report``; returns the ``gate_advisory`` entries
+    ([{check, reason, findings}]).
+    """
+    from app.factory.build.acceptance_floor import FACTORY, PRODUCT, audit_check_ids
+    from app.factory.build.factory_receipt import load_receipt, row_text, split_rows
+
+    audit = set(audit_check_ids())
+    receipt = load_receipt(root)
+    advisory: List[Dict[str, Any]] = []
+    for line in report.lines:
+        if line.name not in audit or not line.failed:
+            continue
+        if not line.evidence_rows:
+            line.owner = FACTORY
+            line.status = "SKIP"
+            line.detail = f"advisory: {REASON_AUDIT_NO_ROWS}"
+            advisory.append({"check": line.name, "reason": REASON_AUDIT_NO_ROWS, "findings": []})
+            continue
+        writer_rows, factory_rows = split_rows(receipt, line.evidence_rows)
+        if factory_rows:
+            advisory.append(
+                {
+                    "check": line.name,
+                    "reason": "; ".join(sorted({reason for _, reason in factory_rows})),
+                    "findings": [row_text(row) for row, _ in factory_rows],
+                }
+            )
+        if writer_rows:
+            line.owner = PRODUCT
+            line.evidence_rows = [dict(r) for r in writer_rows]
+            line.evidence = "\n".join(row_text(r) for r in writer_rows)[:EVIDENCE_CAP]
+        else:
+            line.owner = FACTORY
+            line.status = "SKIP"
+            line.detail = f"advisory: {REASON_AUDIT_FACTORY_ORIGIN}"
+    if advisory:
+        finalize_owners(report)
+        report.passed = sum(1 for line in report.lines if line.satisfied)
+        report.ok = bool(report.harness_ran) and all(line.satisfied for line in report.lines)
+    return advisory
+
+
+def record_audit_advisory(root: Path | str, advisory: Sequence[Mapping[str, Any]]) -> None:
+    """One ledger NOTE carrying ``gate_advisory`` -- the record the build
+    status and the export manifest already read (brief_gates.advisory_checks)."""
+    if not advisory:
+        return
+    from app.factory.build.authority import BuildRole
+
+    ledger = _ledger(root)
+    if not ledger.exists():
+        ledger.start_run(product_id=Path(root).name, inputs_hash="n3_store_gate")
+    ledger.append(
+        EventKind.NOTE,
+        role=BuildRole.STORE_MANAGER,
+        detail="GATE ADVISORY: "
+        + ", ".join(f"{a['check']} ({a['reason']})" for a in advisory),
+        payload={
+            "gate_advisory": [dict(a) for a in advisory],
+            "gate": "store_acceptance",
+            "factory_owed": [a["check"] for a in advisory],
+        },
+    )
+
+
 def apply_store_gate_success(
     output_dir: Path | str,
     snap: StoreGateSnapshot,
     *,
     cli_authored_ids: Optional[Sequence[str]] = None,
+    report: Optional[AcceptanceReport] = None,
 ) -> None:
-    """Stamp acceptance k/k + STORE-green SUCCESS. Does not claim SCAFFOLD."""
+    """Stamp acceptance k/k + STORE-green SUCCESS. Does not claim SCAFFOLD.
+
+    ``report`` is the origin-split report (split_audit_by_origin): a gate that
+    went red ONLY on audit findings in Factory substrate passes here with the
+    line recorded advisory -- never on any other red line."""
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
-    report = report_from_snapshot(snap)
-    if not snap.is_12_of_12 or not report.ok:
+    split = report is not None
+    if report is None:
+        report = report_from_snapshot(snap)
+    green = snap.is_12_of_12 and report.ok
+    if split and not green:
+        green = (
+            not snap.missing and not snap.timeout and bool(report.harness_ran) and report.ok
+        )
+    if not green:
         raise BuildsPushError(
             "refuse N3 SUCCESS: store-gate is not 12/12 ok=true "
             f"(score={snap.score!r} state={snap.state!r})"
@@ -1197,6 +1303,27 @@ def ingest_n3_store_gate(
     # scored -- is the Factory's, routed to the factory lane, and can never
     # fail the product (acceptance_floor.owner_of derives this per line).
     report = report_from_snapshot(snap)
+    # audit_clean ownership by line origin (the build's factory receipt): a
+    # finding in Factory substrate is advisory for this build, never the
+    # writer's rework; a gate red only on such lines does not fail the build.
+    advisory = (
+        split_audit_by_origin(root, report)
+        if report.harness_ran and not snap.timeout and not snap.missing
+        else []
+    )
+    if advisory:
+        record_audit_advisory(root, advisory)
+        if report.ok:
+            apply_store_gate_success(root, snap, report=report)
+            return IngestResult(
+                honesty=N3_STORE_GATE_GREEN,
+                ok=True,
+                detail=(
+                    f"ingested store-gate {snap.score} on {snap.sha[:12]}; advisory: "
+                    + ", ".join(a["check"] for a in advisory)
+                ),
+                snapshot=snap,
+            )
     if not snap.timeout and not snap.missing and (
         not report.harness_ran or (report.product_ok and report.factory_owed)
     ):
