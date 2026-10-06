@@ -540,11 +540,15 @@ def approve_and_generate(
 
     sync_blueprint_intake(pd)  # the user's declared locale and build level, never a guess
     bp = ProductBlueprint.model_validate(pd.blueprint)
+    was_approved = bool(pd.blueprint_approved)
     pd.blueprint_approved = True
     gated = _compile_and_lint_approved(state, bp)
     lint = gated["lint"]
     if not lint.ok:
         pd.last_error = "BRIEF_LINT_REJECTED: " + "; ".join(lint.errors)
+        # No build started: the feature list stays approvable, never frozen
+        # behind a run that does not exist.
+        pd.blueprint_approved = was_approved
         return {
             "ok": False,
             "sse": "error",
@@ -554,17 +558,21 @@ def approve_and_generate(
             ),
             "brief_lint": lint.to_dict(),
             "plain_language": gated.get("plain_language"),
-            "blueprint_approved": True,
+            "blueprint_approved": bool(pd.blueprint_approved),
         }
     if not pd.plan:
         pd.plan = gated["plan"].to_dict()
 
-    if has_running_build(state) or _live_build_thread(bp.product_id) is not None:
+    out = _session_output(state.session_id, bp.product_id, output_root)
+    if has_running_build(state) or _live_build_thread(out) is not None:
+        if not pd.generation:
+            # Nothing of THIS session's is running or recorded: an approve
+            # that starts nothing must not leave "approved, no generation".
+            pd.blueprint_approved = was_approved
         reply = running_build_reply(state)
         reply["already_running"] = True
         return reply
 
-    out = _session_output(state.session_id, bp.product_id, output_root)
     try:
         result = generate_product(
             bp,
@@ -576,6 +584,7 @@ def approve_and_generate(
             platform_id=ensure_platform_id(state.product_design),
         )
     except CodeCliUnavailable as exc:
+        pd.blueprint_approved = was_approved
         return _cli_unavailable_reply(pd, exc)
     if result.get("already_running"):
         _record_generation(pd, result, triggered_by=triggered_by, resumed=False)
@@ -713,19 +722,17 @@ def _ledger_for(output_dir: Path):
     return BuildLedger(Path(output_dir) / "build_ledger.jsonl")
 
 
-def _live_build_thread(product_id: str):
-    """The in-process runner thread for this product, if this worker still has it.
+def _live_build_thread(output_dir: Path | str):
+    """The in-process runner thread of the build at ``output_dir``, if any.
 
+    Keyed by the build's workspace of record -- never by product id, which
+    two tenants share whenever neither declared a vertical ("product").
     After a deploy / disconnect the thread is gone even while the ledger
     still reads "building". That is the case continue must restart.
     """
-    import threading
+    from app.factory.build_jobs import live_runner_thread
 
-    name = f"build-{product_id}"
-    for thread in threading.enumerate():
-        if thread.name == name and thread.is_alive():
-            return thread
-    return None
+    return live_runner_thread(output_dir)
 
 
 def _generation_status(state: Any, output_root: Optional[Path] = None) -> Dict[str, Any]:
@@ -1233,7 +1240,11 @@ def start_fresh_generation(
     if not pd.plan:
         pd.plan = plan_blueprint(bp, blocks_root=_blocks_root()).to_dict()
 
-    live = _live_build_thread(bp.product_id)
+    from app.factory.build_jobs import next_fresh_output
+
+    prior = _generation_output_dir(state, output_root)
+    base = prior or _session_output(state.session_id, bp.product_id, output_root)
+    live = _live_build_thread(base)
     if live is not None:
         st = _generation_status(state, output_root)
         return {
@@ -1249,10 +1260,6 @@ def start_fresh_generation(
             "build": st,
         }
 
-    from app.factory.build_jobs import next_fresh_output
-
-    prior = _generation_output_dir(state, output_root)
-    base = prior or _session_output(state.session_id, bp.product_id, output_root)
     out = next_fresh_output(base) if prior else Path(base)
     prior_hash = (pd.generation or {}).get("inputs_hash")
     try:
@@ -1359,7 +1366,7 @@ def resume_failed_platform(
             "stream_delta": True,
         }
 
-    live = _live_build_thread(bp.product_id)
+    live = _live_build_thread(prior)
     if live is not None:
         reply = running_build_reply(state)
         reply["already_running"] = True
@@ -1601,7 +1608,7 @@ def resume_generation(
     if out is None:
         out = _session_output(state.session_id, bp.product_id, output_root)
 
-    live = _live_build_thread(bp.product_id)
+    live = _live_build_thread(out)
     if live is not None:
         st = _generation_status(state, output_root)
         activity = st.get("activity") or "writing the platform"
@@ -1725,7 +1732,7 @@ def resume_pilot_cycle(
     out = _generation_output_dir(state, output_root)
     if out is None:
         out = _session_output(state.session_id, bp.product_id, output_root)
-    live = _live_build_thread(bp.product_id)
+    live = _live_build_thread(out)
     if live is not None:
         st = _generation_status(state, output_root)
         return {

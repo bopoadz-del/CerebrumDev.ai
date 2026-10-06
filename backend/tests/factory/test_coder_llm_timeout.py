@@ -35,13 +35,15 @@ from app.factory.llm_watchdog import (
 
 
 @contextmanager
-def _hold_build_thread(product_id: str):
-    """Keep ``build-{product_id}`` alive so status may claim a live model call."""
+def _hold_build_thread(output_dir):
+    """Keep a live runner registered for THIS workspace (keyed by path, never
+    by product id) so status may claim a live model call."""
+    from app.factory.build_jobs import register_runner_thread
+
     stop = threading.Event()
-    thread = threading.Thread(
-        target=stop.wait, name=f"build-{product_id}", daemon=True
-    )
+    thread = threading.Thread(target=stop.wait, daemon=True)
     thread.start()
+    register_runner_thread(output_dir, thread)
     try:
         yield
     finally:
@@ -489,7 +491,7 @@ def test_calling_note_does_not_claim_handler_progress(tmp_path):
         },
     )
 
-    with _hold_build_thread("vet"):
+    with _hold_build_thread(out):
         status = build_status(out)
     assert status["state"] == "building"
     assert status["model_call_in_progress"] is True
@@ -688,7 +690,7 @@ def test_in_flight_call_at_510s_is_still_building(tmp_path):
         aged.append(json.dumps(payload, sort_keys=True))
     (out / "build_ledger.jsonl").write_text("\n".join(aged) + "\n", encoding="utf-8")
 
-    with _hold_build_thread("makers"):
+    with _hold_build_thread(out):
         status = build_status(out)
     assert status["state"] == "building", status
     assert status["model_call_in_progress"] is True
@@ -729,7 +731,7 @@ def test_in_flight_call_does_not_stall_before_the_watchdog_wall(tmp_path):
         aged.append(json.dumps(payload, sort_keys=True))
     (out / "build_ledger.jsonl").write_text("\n".join(aged) + "\n", encoding="utf-8")
 
-    with _hold_build_thread("lettings"):
+    with _hold_build_thread(out):
         status = build_status(out)
     assert status["state"] == "building", status
     assert "timed out" not in str(status.get("detail") or "")
@@ -768,7 +770,7 @@ def test_cli_dispatch_1896s_against_7230s_is_still_building(tmp_path):
         aged.append(json.dumps(payload, sort_keys=True))
     (out / "build_ledger.jsonl").write_text("\n".join(aged) + "\n", encoding="utf-8")
 
-    with _hold_build_thread("insurehub"):
+    with _hold_build_thread(out):
         status = build_status(out)
     assert status["state"] == "building", status
     assert status["model_call_in_progress"] is True
@@ -850,7 +852,7 @@ def test_cli_stdout_note_does_not_drop_7230s_watchdog(tmp_path):
         payload={"stage": "dispatch", "source": "coder CLI"},
     )
 
-    with _hold_build_thread("insurehub"):
+    with _hold_build_thread(out):
         status = build_status(out)
     assert status["state"] == "building", status
     assert status["model_call_in_progress"] is True
