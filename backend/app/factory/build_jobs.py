@@ -747,6 +747,12 @@ def _advisory_checks(events: Any) -> List[Dict[str, Any]]:
     return advisory_checks(events)
 
 
+def _suggested_checks(events: Any) -> List[Dict[str, Any]]:
+    from app.factory.build.foreman import suggested_checks
+
+    return suggested_checks(events)
+
+
 def build_status(
     output_dir: Path | str,
     *,
@@ -960,6 +966,9 @@ def build_status(
         # Every check this build moved to advisory -- a gate its brief never
         # defined -- with the reason, so none is silenced out of sight.
         "advisory_checks": _advisory_checks(events),
+        # F4/F2: checks the foreman PROPOSED for a human to accept into the
+        # floor -- read-only suggestions, never a verdict.
+        "suggested_checks": _suggested_checks(events),
         # The runner rule's every decision (gate, class, round n/2 and build
         # n/6, check, finding) and, when it stopped the build, the stop.
         "decisions": [

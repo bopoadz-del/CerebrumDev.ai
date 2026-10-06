@@ -531,6 +531,17 @@ export interface BuildActivityLine {
   text: string
 }
 
+/** One check the foreman proposed. `floor_entry` is a pre-filled
+ *  acceptance_floor.v2.json entry for a human to review and paste; the
+ *  Floor only copies it -- nothing writes the floor file from the UI. */
+export interface SuggestedCheck {
+  name: string
+  rule: string
+  evidence_count: number
+  source: string
+  floor_entry: Record<string, unknown>
+}
+
 export interface BuildDecision {
   class: 'REWORK' | 'ADVISORY' | 'REGENERATE_TEST' | 'STOP' | string
   gate: string
@@ -594,6 +605,10 @@ export type BuildStatus = {
   decisions?: BuildDecision[]
   /** The STOP decision that ended the build, when the rule stopped it. */
   stopped?: BuildDecision | null
+  /** Checks the foreman PROPOSED (audit pass after TESTER green, or a rework
+   *  round) for a human to accept into the acceptance floor. Read-only
+   *  suggestions -- never a verdict. */
+  suggested_checks?: SuggestedCheck[]
   /** The first failure of a run that went on to SUCCEED -- history, not an alert. */
   recovered_failure?: BuildFailure | null
   /** Client's delivery choice + repo URL when github_repo was delivered. */

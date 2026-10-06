@@ -34,6 +34,10 @@ A refused instruction is regenerated ONCE with the refusal; a second refusal
 falls back to the raw typed findings (the behaviour before the foreman) and
 is recorded. ``FACTORY_FOREMAN`` = ``off`` (default) | ``shadow`` | ``on``:
 shadow calls, validates and records, and leaves the work list untouched.
+
+A third entry point, :func:`audit_workspace` (F4), runs once per build after
+TESTER passes and only PROPOSES checks for a human (``FACTORY_FOREMAN_AUDIT``);
+:func:`suggested_checks` is the one reader the build status uses.
 """
 
 from __future__ import annotations
@@ -475,10 +479,18 @@ def instruction_work(ri: ReworkInstruction, *, gate: str, check: str) -> Tuple[F
     )
 
 
-def write_proposed_gates(session_id: str, ri: ReworkInstruction, *, root: Optional[Path] = None) -> Optional[Path]:
-    """Append this call's proposed gates to artifacts/proposed_gates/<session>.json.
-    A suggestion for a human to accept into the floor -- never a verdict."""
-    if not ri.proposed_gates:
+#: The ledger NOTE payload key every proposed-gate write carries; the build
+#: status reads it back as ``suggested_checks`` (one reader, both sources).
+SUGGESTED_KEY = "suggested_checks"
+
+
+def append_proposed_rows(
+    session_id: str, rows: Sequence[Mapping[str, Any]], *, root: Optional[Path] = None
+) -> Optional[Path]:
+    """Append rows to artifacts/proposed_gates/<session>.json, deduped by name
+    (the first suggestion of a name is kept). A suggestion for a human to
+    accept into the floor -- never a verdict."""
+    if not rows:
         return None
     if root is None:
         from app.factory.paths import factory_outputs_root
@@ -491,11 +503,35 @@ def write_proposed_gates(session_id: str, ri: ReworkInstruction, *, root: Option
         existing = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
         if not isinstance(existing, list):
             existing = []
-        existing.extend(asdict(g) | {"source": ENTRY} for g in ri.proposed_gates)
+        seen = {str(r.get("name")) for r in existing if isinstance(r, Mapping)}
+        for row in rows:
+            key = str(row.get("name") or "")
+            if key and key not in seen:
+                existing.append(dict(row))
+                seen.add(key)
         path.write_text(json.dumps(existing, indent=2, sort_keys=True), encoding="utf-8")
     except (OSError, ValueError):
         return None
     return path
+
+
+def record_suggested(note: Optional[Callable[..., None]], rows: Sequence[Mapping[str, Any]], *, source: str) -> None:
+    """One ledger NOTE listing what was proposed (for the Floor; never a verdict)."""
+    if note is None or not rows:
+        return
+    note(
+        f"{len(rows)} suggested check(s) recorded for human review ({source}); never a verdict",
+        stage=architect.LEDGER_STAGE,
+        source=source,
+        **{SUGGESTED_KEY: [dict(r) for r in rows]},
+    )
+
+
+def write_proposed_gates(session_id: str, ri: ReworkInstruction, *, root: Optional[Path] = None) -> Optional[Path]:
+    """The foreman's proposed gates into the shared review sink."""
+    return append_proposed_rows(
+        session_id, [asdict(g) | {"source": ENTRY} for g in ri.proposed_gates], root=root
+    )
 
 
 # -- the entry point ---------------------------------------------------------------------
@@ -563,6 +599,7 @@ def review(
         if lint.ok and ri is not None:
             result.instruction = ri
             write_proposed_gates(session_id, ri, root=proposed_root)
+            record_suggested(note, [asdict(g) | {"source": ENTRY} for g in ri.proposed_gates], source=ENTRY)
             if ri.recommend == RECOMMEND_STOP and ri.confidence >= STOP_CONFIDENCE and active == "on":
                 result.stop = True
                 result.stop_reason = str(ri.stop_reason or "")
@@ -575,3 +612,389 @@ def review(
         result.errors = list(errors)
     result.fallback = True
     return result
+
+
+# -- the third entry point: the audit pass (F4) ----------------------------------------
+#
+# After TESTER passes, the foreman reads the workspace for intent defects the
+# gates cannot see -- handlers that pass but do nothing, the same logic under
+# different names, placeholders presented as features -- and writes ONLY
+# proposed gates (a structural rule + evidence) to the review sink. Never a
+# verdict, never a rework, never a change to the work list or the outcome.
+# ``FACTORY_FOREMAN_AUDIT`` = off (default) | shadow | on. Because nothing ever
+# acts on the output, shadow and on do the same thing; both exist so the flag
+# reads like its siblings and the ledger records which one ran.
+
+AUDIT_FLAG_ENV = "FACTORY_FOREMAN_AUDIT"
+AUDIT_ENTRY = "audit"
+#: Sources the model reads are bounded so one call stays one call.
+AUDIT_FILE_CHARS = 4000
+AUDIT_SOURCES_CHARS = 40000
+AUDIT_FILES_LISTED = 200
+AUDIT_FINDINGS_MAX = 40
+#: Shape caps on what the model may propose.
+AUDIT_GATES_MAX = 8
+AUDIT_NAME_MAX = 64
+AUDIT_RULE_MAX = 600
+AUDIT_EXCERPT_MAX = 400
+#: A rule that quotes more literals than this is a word list, not a structure.
+AUDIT_QUOTED_LITERALS_MAX = 2
+
+
+def audit_mode() -> str:
+    raw = str(os.getenv(AUDIT_FLAG_ENV, "") or "").strip().lower()
+    return raw if raw in MODES else "off"
+
+
+@dataclass(frozen=True)
+class Evidence:
+    file: str
+    line: Optional[int]
+    excerpt: str
+
+
+@dataclass(frozen=True)
+class AuditGate:
+    name: str
+    structural_rule: str
+    evidence: Tuple[Evidence, ...]
+
+    def to_json(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "structural_rule": self.structural_rule,
+            "evidence": [asdict(e) for e in self.evidence],
+        }
+
+
+@dataclass
+class AuditResult:
+    mode: str
+    gates: Tuple[AuditGate, ...] = ()
+    attempts: int = 0
+    fallback: bool = False
+    errors: List[str] = field(default_factory=list)
+
+
+def parse_audit(raw: Any) -> Tuple[Tuple[AuditGate, ...], List[str]]:
+    """The model's JSON as proposed gates, or the schema errors."""
+    if not isinstance(raw, Mapping):
+        return (), ["output is not an object"]
+    items = raw.get("proposed_gates")
+    if not isinstance(items, list):
+        return (), ["proposed_gates must be a list"]
+    errors: List[str] = []
+    gates: List[AuditGate] = []
+    if len(items) > AUDIT_GATES_MAX:
+        errors.append(f"more than {AUDIT_GATES_MAX} proposed gates")
+    for n, item in enumerate(items[:AUDIT_GATES_MAX]):
+        if not isinstance(item, Mapping):
+            errors.append(f"proposed gate {n} is not an object")
+            continue
+        name, rule = _text(item.get("name")), _text(item.get("structural_rule"))
+        ev_raw = item.get("evidence")
+        if not (name and rule) or not isinstance(ev_raw, list) or not ev_raw:
+            errors.append(f"proposed gate {n} needs name, structural_rule and a non-empty evidence list")
+            continue
+        evidence: List[Evidence] = []
+        for k, ev in enumerate(ev_raw):
+            if not isinstance(ev, Mapping):
+                errors.append(f"proposed gate {n} evidence {k} is not an object")
+                continue
+            file_, excerpt = _text(ev.get("file")), _text(ev.get("excerpt"))
+            line = ev.get("line")
+            if line is not None and (isinstance(line, bool) or not isinstance(line, int) or line < 1):
+                errors.append(f"proposed gate {n} evidence {k}: line must be a positive integer or null")
+                continue
+            if not (file_ and excerpt):
+                errors.append(f"proposed gate {n} evidence {k} needs file and excerpt")
+                continue
+            evidence.append(Evidence(file_, line, excerpt))
+        if evidence:
+            gates.append(AuditGate(name, rule, tuple(evidence)))
+    return tuple(gates), errors
+
+
+def _quoted_literals(text: str) -> int:
+    """How many quoted segments a rule carries (counted by characters)."""
+    count, open_quote = 0, ""
+    for ch in str(text or ""):
+        if open_quote:
+            if ch == open_quote:
+                count += 1
+                open_quote = ""
+        elif ch in "\"'`":
+            open_quote = ch
+    return count
+
+
+def _collapse(text: str) -> str:
+    return " ".join(str(text or "").split())
+
+
+def _workspace_file(workspace: Path, rel: str) -> Optional[Path]:
+    norm = str(rel or "").replace("\\", "/").strip()
+    parts = [p for p in norm.split("/") if p]
+    if not parts or norm.startswith("/") or ".." in parts or ":" in parts[0]:
+        return None
+    path = Path(workspace).joinpath(*parts)
+    return path if path.is_file() else None
+
+
+def validate_audit(gates: Sequence[AuditGate], ctx: ForemanContext, workspace: Path) -> List[str]:
+    """Every reason a proposed gate may not be recorded (empty = ok).
+
+    A rule must describe a structural property every product of this shape
+    can be measured against -- so it may not name a capability id, the
+    product, a probe or stage id, or quote a list of literals (a word list);
+    and the shared architect lint applies (session ids, another product's
+    literals, unresolved block ids, template slots, ``[check:]`` tags).
+    Evidence must point at a file that exists and contain what it quotes."""
+    errors: List[str] = []
+    probes = _probe_ids()
+    names = set(ctx.capabilities) | set(ctx.own_names)
+    for n, g in enumerate(gates):
+        if len(g.name) > AUDIT_NAME_MAX or not all(ch.isalnum() or ch == "_" for ch in g.name):
+            errors.append(f"gate {n}: name must be a short identifier (letters, digits, underscore)")
+        if len(g.structural_rule) > AUDIT_RULE_MAX:
+            errors.append(f"gate {n}: structural_rule is over the {AUDIT_RULE_MAX}-character cap")
+        toks = _tokens(g.structural_rule) | _tokens(g.name)
+        named = sorted(toks & names)
+        rule_lower = g.structural_rule.lower()
+        named += sorted(n for n in ctx.own_names if " " in n and n.lower() in rule_lower)
+        if named:
+            errors.append(
+                f"gate {n}: a structural rule must hold for every capability; it names "
+                + ", ".join(named[:4])
+            )
+        named_probes = sorted(toks & probes)
+        if named_probes:
+            errors.append(f"gate {n}: names a probe or stage id: " + ", ".join(named_probes[:4]))
+        if _quoted_literals(g.structural_rule) > AUDIT_QUOTED_LITERALS_MAX:
+            errors.append(f"gate {n}: quotes a list of literals (a word list), not a structural property")
+        lint = architect.lint_architect_text(
+            f"{g.name}\n{g.structural_rule}",
+            resolved_blocks=set(ctx.resolved_blocks),
+            store_blocks=set(ctx.store_blocks),
+            capabilities=set(ctx.capabilities),
+            own_names=set(ctx.own_names),
+            known_literals=ctx.known_literals,
+            max_chars=AUDIT_NAME_MAX + AUDIT_RULE_MAX + 1,
+        )
+        errors.extend(f"gate {n}: {e}" for e in lint.errors)
+        for k, ev in enumerate(g.evidence):
+            path = _workspace_file(workspace, ev.file)
+            if path is None:
+                errors.append(f"gate {n} evidence {k}: {ev.file!r} is not a file in the workspace")
+                continue
+            if len(ev.excerpt) > AUDIT_EXCERPT_MAX:
+                errors.append(f"gate {n} evidence {k}: excerpt is over the {AUDIT_EXCERPT_MAX}-character cap")
+            try:
+                body = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                errors.append(f"gate {n} evidence {k}: {ev.file} is unreadable")
+                continue
+            if ev.line is not None and ev.line > body.count("\n") + 1:
+                errors.append(f"gate {n} evidence {k}: line {ev.line} is past the end of {ev.file}")
+            if _collapse(ev.excerpt) not in _collapse(body):
+                errors.append(f"gate {n} evidence {k}: the excerpt does not appear in {ev.file}")
+    return list(dict.fromkeys(errors))
+
+
+def contract_part(brief_text: str) -> str:
+    """The code-owned CONTRACT of a dispatched brief (F0): what follows the
+    narrative separator, or the whole brief when no narrative was attached."""
+    text = str(brief_text or "")
+    sep = architect.NARRATIVE_SEPARATOR
+    return text.split(sep, 1)[1] if sep in text else text
+
+
+def audit_sources(workspace: Path, capabilities: Sequence[str]) -> Tuple[List[str], Dict[str, str]]:
+    """The writer-lane file list and the capability handler sources, bounded."""
+    from app.factory.build.authority import BuildRole, role_contract
+
+    lanes = role_contract(BuildRole.WRITER).write_lanes
+    root = Path(workspace)
+    files: List[str] = []
+    if root.is_dir():
+        protected = protected_paths()
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(root).as_posix()
+            if rel in protected or not _in_lanes(rel, lanes):
+                continue
+            files.append(rel)
+    caps = set(capabilities)
+    handlers = [f for f in files if f.endswith(".py") and Path(f).stem in caps]
+    others = [f for f in files if f.endswith(".py") and f not in handlers]
+    sources: Dict[str, str] = {}
+    budget = AUDIT_SOURCES_CHARS
+    for rel in handlers + others:
+        if budget <= 0:
+            break
+        try:
+            body = (root / rel).read_text(encoding="utf-8", errors="replace")[:AUDIT_FILE_CHARS]
+        except OSError:
+            continue
+        body = body[:budget]
+        sources[rel] = body
+        budget -= len(body)
+    return files[:AUDIT_FILES_LISTED], sources
+
+
+def findings_history(ledger: Any) -> List[Dict[str, Any]]:
+    """Every typed finding this build's gates recorded (bounded)."""
+    from app.factory.build.findings import TYPED_KEY
+
+    out: List[Dict[str, Any]] = []
+    try:
+        for event in ledger.events():
+            for row in (getattr(event, "payload", None) or {}).get(TYPED_KEY) or []:
+                if isinstance(row, Mapping):
+                    out.append(dict(row))
+    except Exception:  # noqa: BLE001 -- an unreadable ledger has no history
+        return []
+    return out[-AUDIT_FINDINGS_MAX:]
+
+
+def _audit_messages(inputs: Mapping[str, Any], refusals: Sequence[str]) -> List[Dict[str, str]]:
+    system = (
+        "You are the foreman auditing a coding build that has just passed its tests. "
+        "Read the product's files for INTENT defects the tests cannot see: handlers "
+        "that pass but do nothing, the same logic under different names, placeholders "
+        "presented as features. You do not judge this build and nothing you write "
+        "changes it: you only PROPOSE checks a human may add to the acceptance floor. "
+        "Each proposal is a structural property any product of this shape can be "
+        "measured against -- never a list of names, never one capability or one case "
+        "-- with evidence quoted exactly from the files. Reply as JSON: "
+        '{"proposed_gates": [{"name": "snake_case_id", "structural_rule": "...", '
+        '"evidence": [{"file": "path/in/workspace", "line": 12, "excerpt": "exact text"}]}]}. '
+        "line may be null. Propose nothing (an empty list) when you find no such defect."
+    )
+    msgs = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": json.dumps(inputs, sort_keys=True, default=str)},
+    ]
+    if refusals:
+        msgs.append(
+            {
+                "role": "user",
+                "content": "Your previous proposals were refused: "
+                + "; ".join(refusals)
+                + ". Propose them again without those defects, or propose nothing.",
+            }
+        )
+    return msgs
+
+
+def audit_workspace(
+    workspace: Path,
+    *,
+    ctx: ForemanContext,
+    brief_text: str = "",
+    history: Sequence[Mapping[str, Any]] = (),
+    note: Optional[Callable[..., None]] = None,
+    llm: Optional[LlmCall] = None,
+    mode: Optional[str] = None,
+    session_id: str = "",
+    proposed_root: Optional[Path] = None,
+) -> AuditResult:
+    """Call, validate (twice at most) and record the audit's proposed gates.
+    Returns what was proposed; the caller never acts on it."""
+    active = mode if mode in MODES else audit_mode()
+    result = AuditResult(mode=active)
+    if active == "off":
+        return result
+    files, sources = audit_sources(workspace, sorted(ctx.capabilities))
+    inputs = {
+        "capabilities": sorted(ctx.capabilities),
+        "contract": contract_part(brief_text)[:BRIEF_CHARS_MAX],
+        "files": files,
+        "handler_sources": sources,
+        "findings_history": list(history),
+    }
+    model = architect.architect_model()
+    refusals: List[str] = []
+    for attempt in (1, 2):
+        result.attempts = attempt
+        tokens = None
+        output = ""
+        gates: Tuple[AuditGate, ...] = ()
+        try:
+            raw = architect.architect_call(_audit_messages(inputs, refusals), llm=llm)
+            tokens = raw.get("_tokens") if isinstance(raw.get("_tokens"), int) else None
+            body = {k: v for k, v in raw.items() if k != "_tokens"}
+            output = json.dumps(body, sort_keys=True, default=str)
+            gates, errors = parse_audit(body)
+            if not errors:
+                errors = validate_audit(gates, ctx, workspace)
+        except Exception as exc:  # noqa: BLE001 -- the model failing proposes nothing
+            errors = [f"audit call failed: {type(exc).__name__}"]
+        lint = architect.ArchitectLint(ok=not errors, errors=list(errors))
+        last = attempt == 2 or lint.ok
+        architect.record_architect_call(
+            note,
+            entry=AUDIT_ENTRY,
+            inputs=inputs,
+            output=output,
+            lint=lint,
+            fallback=bool(last and not lint.ok),
+            mode=active,
+            attempt=attempt,
+            model=model,
+            tokens=tokens,
+            fallback_to="no suggested checks",
+        )
+        if lint.ok:
+            result.gates = tuple(gates)
+            rows = [g.to_json() | {"source": AUDIT_ENTRY} for g in gates]
+            append_proposed_rows(session_id, rows, root=proposed_root)
+            record_suggested(note, rows, source=AUDIT_ENTRY)
+            return result
+        refusals = list(errors)
+        result.errors = list(errors)
+    result.fallback = True
+    return result
+
+
+# -- the read side: what the Floor shows ---------------------------------------------------
+
+
+def floor_entry_draft(row: Mapping[str, Any]) -> Dict[str, Any]:
+    """A pre-filled acceptance_floor.v2.json entry for a human to review and
+    paste. ``gate_fn`` is left null on purpose: a check exists only once a
+    person writes the function that measures it."""
+    name = str(row.get("name") or "")
+    rule = str(row.get("structural_rule") or "")
+    return {
+        "id": name,
+        "requirement_text": rule,
+        "brief_render": f"- {name}: {rule}",
+        "gate_fn": None,
+        "check": rule,
+        "universal": False,
+        "subject": "runtime",
+    }
+
+
+def suggested_checks(events: Iterable[Any]) -> List[Dict[str, Any]]:
+    """Every suggested check this build's ledger recorded, deduped by name,
+    each with its evidence count, source and a floor-entry draft."""
+    out: Dict[str, Dict[str, Any]] = {}
+    for event in events or ():
+        for row in (getattr(event, "payload", None) or {}).get(SUGGESTED_KEY) or []:
+            if not isinstance(row, Mapping):
+                continue
+            name = str(row.get("name") or "")
+            if not name or name in out:
+                continue
+            evidence = row.get("evidence")
+            out[name] = {
+                "name": name,
+                "rule": str(row.get("structural_rule") or ""),
+                "evidence_count": len(evidence) if isinstance(evidence, list) else (1 if evidence else 0),
+                "source": str(row.get("source") or ""),
+                "floor_entry": floor_entry_draft(row),
+            }
+    return list(out.values())
