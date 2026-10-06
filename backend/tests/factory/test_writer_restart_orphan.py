@@ -37,12 +37,15 @@ from app.factory.build_jobs import (
 
 
 @contextmanager
-def _hold_build_thread(product_id: str):
+def _hold_build_thread(output_dir):
+    """Keep a live runner registered for THIS workspace (keyed by path, never
+    by product id) so status may claim a live model call."""
+    from app.factory.build_jobs import register_runner_thread
+
     stop = threading.Event()
-    thread = threading.Thread(
-        target=stop.wait, name=f"build-{product_id}", daemon=True
-    )
+    thread = threading.Thread(target=stop.wait, daemon=True)
     thread.start()
+    register_runner_thread(output_dir, thread)
     try:
         yield
     finally:
@@ -137,7 +140,7 @@ def test_orphaned_writer_model_call_is_not_in_progress(tmp_path):
 def test_live_writer_thread_still_claims_in_progress(tmp_path):
     out = tmp_path / "estate-management"
     _estate_zombie_ledger(out, age_s=1896)
-    with _hold_build_thread("estate-management"):
+    with _hold_build_thread(out):
         status = build_status(out)
         assert status["state"] == "building", status
         assert status["model_call_in_progress"] is True
@@ -285,7 +288,7 @@ def test_recover_skips_live_worker(tmp_path, monkeypatch):
         / "estate-management"
     )
     _estate_zombie_ledger(out, age_s=400)
-    with _hold_build_thread("estate-management"):
+    with _hold_build_thread(out):
         results = recover_orphaned_model_calls(
             outputs_root=tmp_path / "factory_outputs"
         )

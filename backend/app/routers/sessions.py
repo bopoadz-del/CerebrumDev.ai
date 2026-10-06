@@ -119,11 +119,12 @@ async def delete_session(
 
     state = owned_session_or_404(session_id, principal)
     try:
-        from app.factory.platform_chat_flow import _live_build_thread
+        from app.factory.platform_chat_flow import _generation_output_dir, _live_build_thread
 
-        blueprint = getattr(state.product_design, "blueprint", None) or {}
-        product_id = str(blueprint.get("product_id") or "")
-        if product_id and _live_build_thread(product_id) is not None:
+        # This session's own workspace -- another tenant's build of the same
+        # product id must never block (or be mistaken for) this one.
+        workspace = _generation_output_dir(state)
+        if workspace is not None and _live_build_thread(workspace) is not None:
             raise HTTPException(
                 status_code=409,
                 detail="a build is running in this session -- stop it first, then delete",

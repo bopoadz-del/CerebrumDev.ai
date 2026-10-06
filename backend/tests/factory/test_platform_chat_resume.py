@@ -262,9 +262,7 @@ def test_resume_after_worker_restart_keeps_hash_and_workspace(tmp_path, monkeypa
     state = _state_with_approved_run(tmp_path)
     out = Path(state.product_design.generation["output_dir"])
     prior_hash = state.product_design.generation["inputs_hash"]
-    assert platform_chat_flow._live_build_thread(
-        state.product_design.generation["product_id"]
-    ) is None
+    assert platform_chat_flow._live_build_thread(out) is None
 
     def fake_generate(bp, output_dir, blocks_root=None, cycle=None, **_kwargs):
         # The generate door must be pointed at the existing tree.

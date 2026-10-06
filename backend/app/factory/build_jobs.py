@@ -224,13 +224,13 @@ def _model_call_fields(
 
 
 def _orphaned_inflight_model_call(
-    calling_note: Any, product_id: str, *, worker_live: Optional[bool] = None
+    calling_note: Any, output_dir: Path | str, *, worker_live: Optional[bool] = None
 ) -> bool:
     """True when a model_call NOTE has no live runner / CLI worker."""
     payload = (getattr(calling_note, "payload", None) or {}) if calling_note else {}
     if not payload.get("model_call"):
         return False
-    live = _live_runner_thread(product_id) if worker_live is None else worker_live
+    live = _live_runner_thread(output_dir) if worker_live is None else worker_live
     return not live
 
 
@@ -292,12 +292,47 @@ def _write_crash_marker(output_dir: Path | str, detail: str) -> None:
         logger.exception("could not write crash marker at %s", output_dir)
 
 
-def _live_runner_thread(product_id: str) -> bool:
-    name = f"build-{product_id}"
-    for thread in threading.enumerate():
-        if thread.name == name and thread.is_alive():
-            return True
-    return False
+#: The runner thread of every build this process is running, keyed by the
+#: build's workspace of record. A thread NAME is not an identity: names were
+#: ``build-{product_id}`` and every platform drafted without a vertical has
+#: the product id "product", so one tenant's running build made every other
+#: tenant's approve read "already running" and start nothing (live
+#: 2026-10-06, 879ed1e1). The workspace path is unique per build.
+_RUNNER_THREADS: Dict[str, threading.Thread] = {}
+_RUNNER_THREADS_GUARD = threading.Lock()
+
+
+def runner_key(output_dir: Path | str) -> str:
+    """The identity a build's runner thread is registered under."""
+    return str(Path(output_dir).resolve())
+
+
+def runner_thread_name(output_dir: Path | str) -> str:
+    """Log-friendly thread name derived from the same identity, never shared."""
+    import hashlib
+
+    digest = hashlib.sha256(runner_key(output_dir).encode("utf-8")).hexdigest()[:16]
+    return f"build-{Path(output_dir).name}-{digest}"
+
+
+def register_runner_thread(output_dir: Path | str, thread: threading.Thread) -> None:
+    """Record ``thread`` as the runner of the build at ``output_dir``."""
+    with _RUNNER_THREADS_GUARD:
+        _RUNNER_THREADS[runner_key(output_dir)] = thread
+
+
+def live_runner_thread(output_dir: Path | str) -> Optional[threading.Thread]:
+    """The live runner thread of THIS build's workspace, or None."""
+    with _RUNNER_THREADS_GUARD:
+        thread = _RUNNER_THREADS.get(runner_key(output_dir))
+        if thread is not None and not thread.is_alive():
+            _RUNNER_THREADS.pop(runner_key(output_dir), None)
+            thread = None
+    return thread
+
+
+def _live_runner_thread(output_dir: Path | str) -> bool:
+    return live_runner_thread(output_dir) is not None
 
 
 def _product_id_of(events: Any, output_dir: Path | str) -> str:
@@ -778,7 +813,7 @@ def build_status(
         terminal is None
         and interrupted is not None
         and quarantined
-        and not _live_runner_thread(_product_id_of(events, output_dir))
+        and not _live_runner_thread(output_dir)
     ):
         from app.factory.build.ledger import LEDGER_EXTERNAL_NOTE_QUARANTINED
 
@@ -825,8 +860,7 @@ def build_status(
     activity_notes = [e for e in notes if e not in inspects]
     last_note = activity_notes[-1] if activity_notes else None
     calling_note = _open_model_call_note(activity_notes)
-    product_id = _product_id_of(events, output_dir)
-    worker_live = _live_runner_thread(product_id)
+    worker_live = _live_runner_thread(output_dir)
     try:
         import time
 
@@ -1085,7 +1119,7 @@ def build_status(
     # the 7230s C-BRIEF wall, but no thread and no FACTORY_CODE_CLI.
     # Do not wait for the deadline — that is the estate-management zombie.
     if _orphaned_inflight_model_call(
-        calling_note or last_note, product_id, worker_live=worker_live
+        calling_note or last_note, output_dir, worker_live=worker_live
     ):
         return _with_level_grade(
             {
@@ -1657,9 +1691,10 @@ def start_runner_build(
             str(brief or "").strip(),
             inputs_hash,
         ),
-        name=f"build-{getattr(blueprint, 'product_id', 'product')}",
+        name=runner_thread_name(out),
         daemon=True,
     )
+    register_runner_thread(out, thread)
     thread.start()
     logger.info("runner build started for %s at %s", inputs_hash[:12], out)
 
