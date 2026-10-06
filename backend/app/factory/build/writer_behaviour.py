@@ -949,7 +949,12 @@ It forces every block call to fail and records what each capability does.
 Each line is one typed record: [halt] or [finding] fails the WRITER gate;
 [miss] is a capability that reported success over a failed block (F1),
 refused its own schema, or declared blocks it never calls (F11) -- fix
-every one. Exit 0 only when there is nothing to fix.
+every one. Then it runs the product-gate suites TESTER stamped (once a
+TESTER pass has put them on disk): the same files that judge you, rendered
+from your own app/models.py. A [suite] line is a failing test -- every field
+a handler requires must be declared in that capability's model FIELDS, and
+a payload built from those FIELDS must be accepted. Exit 0 only when there
+is nothing to fix.
 """
 
 import json
@@ -959,7 +964,32 @@ import sys
 
 PROBE = {probe}
 RECORD_LEVELS = {levels}
+SUITES = {suites}
 TIMEOUT_S = 900
+
+
+def run_suites(root, env):
+    """The TESTER suites on disk, every marker; one [suite] line per failure."""
+    present = [s for s in SUITES if os.path.isfile(os.path.join(root, s))]
+    if not present:
+        print("[suite] none on disk yet (first writer pass): TESTER stamps them; "
+              "the probe above already checks the same schema contract")
+        return []
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-rfE", "-p", "no:cacheprovider",
+         "-m", "pilot or not pilot", *present],
+        cwd=root, capture_output=True, text=True, env=env, timeout=TIMEOUT_S,
+    )
+    failures = [
+        line for line in (proc.stdout or "").splitlines()
+        if line.startswith("FAILED ") or line.startswith("ERROR ")
+    ]
+    if proc.returncode not in (0, 5) and not failures:
+        failures.append("ERROR pytest exited " + str(proc.returncode) + ": "
+                        + (proc.stdout or proc.stderr or "")[-600:])
+    for line in failures:
+        print("[suite] " + line)
+    return failures
 
 
 def main():
@@ -994,7 +1024,10 @@ def main():
         else str(len(to_fix)) + " capability record(s) to fix" if to_fix
         else "every capability fails closed when its blocks fail"
     )
-    return 1 if (halted or to_fix) else 0
+    suite_failures = run_suites(root, env)
+    if suite_failures:
+        print(str(len(suite_failures)) + " product-gate test(s) failing")
+    return 1 if (halted or to_fix or suite_failures) else 0
 
 
 if __name__ == "__main__":
@@ -1003,11 +1036,15 @@ if __name__ == "__main__":
 
 
 def render_self_check() -> str:
-    """The stamped self-check: the SAME rendered probe the gate runs."""
+    """The stamped self-check: the SAME rendered probe the gate runs, then
+    the product-gate suites TESTER stamped (product_suites)."""
+    from app.factory.build.product_suites import PRODUCT_SUITES
+
     return _SELF_CHECK_TEMPLATE.format(
         command=SELF_CHECK_COMMAND,
         probe=repr(_render_probe()),
         levels=repr(RECORD_LEVELS),
+        suites=repr(PRODUCT_SUITES),
     )
 
 
