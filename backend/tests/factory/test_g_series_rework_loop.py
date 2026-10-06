@@ -249,7 +249,9 @@ def test_start_runner_build_records_resumed_on_the_same_workspace(
     started = []
     monkeypatch.setattr(
         build_jobs.threading, "Thread",
-        lambda *a, **k: SimpleNamespace(start=lambda: started.append(True), name="t"),
+        lambda *a, **k: SimpleNamespace(
+            start=lambda: started.append(True), name="t", is_alive=lambda: bool(started)
+        ),
     )
 
     result = build_jobs.start_runner_build(blueprint, out)
