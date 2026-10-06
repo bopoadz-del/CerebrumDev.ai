@@ -264,19 +264,14 @@ def test_the_product_owned_image_fail_reaches_the_writer_as_a_typed_rework_item(
     assert "--self-check" in item  # the re-check command
 
 
-# -- the writer's self-check never PASSes the image ---------------------------
+# -- the writer's self-check: SKIP with a reason, never a local measurement ---
 
 
-def test_the_self_check_image_build_never_returns_pass():
-    tree = ast.parse(render_acceptance_script())
-    fn = next(
-        n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_self_check_image_build"
-    )
-    verdicts = {
-        ret.value.elts[0].value
-        for ret in ast.walk(fn)
-        if isinstance(ret, ast.Return)
-        and isinstance(ret.value, ast.Tuple)
-        and isinstance(ret.value.elts[0], ast.Constant)
-    }
-    assert verdicts == {"FAIL", "SKIP"}
+def test_the_self_check_never_measures_the_image_itself():
+    # Owner rule: gate-only legs print SKIP+reason locally, never PASS -- and
+    # never a local docker run either, daemon or not. The harness spawns no
+    # process; the reason carries the build command as advice.
+    src = render_acceptance_script()
+    assert "_self_check_image_build" not in src
+    assert '"docker", "build"' not in src
+    assert "docker build ." in src  # advice in the SKIP reason

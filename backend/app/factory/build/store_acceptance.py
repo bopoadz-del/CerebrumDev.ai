@@ -2043,40 +2043,20 @@ def check_openapi_committed() -> Tuple[str, str]:
     return "PASS", "openapi 3.x with %d paths" % len(paths)
 
 
-def _self_check_image_build():
-    """A self-check on a box with a Docker daemon builds the image exactly as
-    the Store gate does: a build that fails here fails there (FAIL, with the
-    build's tail); a build that succeeds still leaves /health to the gate
-    (SKIP). No docker binary or daemon: None -- the caller reports SKIP with
-    its reason. Never PASS from a self-check."""
-    import shutil
-    import subprocess
-
-    if not shutil.which("docker"):
-        return None
-    try:
-        if subprocess.run(["docker", "info"], capture_output=True, timeout=20).returncode != 0:
-            return None
-    except Exception:
-        return None
-    try:
-        built = subprocess.run(
-            ["docker", "build", "-q", "-t", "acceptance-self-check", "."],
-            cwd=str(ROOT), capture_output=True, text=True, timeout=1800,
-        )
-    except Exception as exc:
-        return "FAIL", "docker build did not finish: %s" % exc
-    if built.returncode != 0:
-        tail = ((built.stderr or "") + (built.stdout or ""))[-1500:]
-        return "FAIL", "the image did not build from Dockerfile (docker build exit %d): %s" % (built.returncode, tail)
-    return "SKIP", "the image builds; its /health is measured only by the Store gate"
+#: Advice only, appended to the self-check's SKIP reason: the image is measured
+#: by the Store gate alone, but the writer may build it itself to catch a
+#: Dockerfile that cannot build before the gate does.
+IMAGE_BUILD_ADVICE = (
+    "; build it yourself with `docker build .` -- the Dockerfile must build "
+    "without dev dependencies or running the test suite"
+)
 
 
 def check_docker_health_200(http: _Http) -> Tuple[str, str]:
     unmeasured = _only_the_gate_measures("STORE_DOCKER_HEALTH")
     if unmeasured is not None:
-        built = _self_check_image_build()
-        return built if built is not None else unmeasured
+        status, reason = unmeasured
+        return status, reason + IMAGE_BUILD_ADVICE
     measured = (os.environ.get("STORE_DOCKER_HEALTH") or "").strip()
     if measured != "200":
         return "FAIL", "STORE_DOCKER_HEALTH=%r (Store gate must measure container /health=200)" % measured
