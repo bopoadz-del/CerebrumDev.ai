@@ -571,11 +571,15 @@ def _cli_attempted(
     dispatch = dict((state or {}).get("brief_dispatch") or {})
     if str(dispatch.get("via") or "") == "cli":
         return True
-    from app.factory.build.authorship import SOURCE_CODER_CLI
+    from app.factory.build.authorship import SOURCE_CODER_CLI, is_coding_agent_source
 
     for event in events:
         payload = getattr(event, "payload", None) or {}
-        if str(payload.get("source") or "") == SOURCE_CODER_CLI:
+        source = payload.get("source")
+        if str(source or "") == SOURCE_CODER_CLI:
+            return True
+        # The codewhale worker's model call is a CLI attempt too.
+        if payload.get("model_call") and is_coding_agent_source(source):
             return True
     return False
 
@@ -592,12 +596,17 @@ def _cli_flight(
     dispatched = False
     finished = False
     deadline_s: Optional[float] = None
-    from app.factory.build.authorship import SOURCE_CODER_CLI
+    from app.factory.build.authorship import is_coding_agent_source
     from app.factory.build.model_call import closes_model_call
 
     for event in events:
         payload = getattr(event, "payload", None) or {}
-        if payload.get("model_call") and str(payload.get("source") or "") == SOURCE_CODER_CLI:
+        # Any coding-agent CLI's model call -- the C-BRIEF "coder CLI" and
+        # the codewhale worker ("codewhale_worker") alike. Matching only the
+        # one exact "coder CLI" string meant the codewhale path, which is
+        # what production runs, was never seen in flight: the ramp never
+        # fired and the writer died at its dispatch wall (live 2026-10-06).
+        if payload.get("model_call") and is_coding_agent_source(payload.get("source")):
             dispatched = True
         if closes_model_call(payload):
             finished = True

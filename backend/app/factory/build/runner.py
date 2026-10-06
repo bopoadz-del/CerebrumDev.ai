@@ -1757,6 +1757,62 @@ class RoleRunner:
             new_wall,
             extra,
         )
+        self._record_lifted_model_call_deadline()
+
+    def _record_lifted_model_call_deadline(self) -> None:
+        """Write the lifted deadline onto the open coding-agent model call.
+
+        ONE source of truth for "this model call's deadline": the ledger's
+        latest open model-call NOTE. The worker writes it once at dispatch
+        (deadline_s = the dispatch wall); build_jobs._model_call_overdue
+        judges the latest open NOTE by its age and deadline_s. A lift that
+        writes nothing leaves the reader timing the call out at the dispatch
+        wall while the runner and the worker have moved on (live 2026-10-06:
+        "coder LLM timed out after 1803s (deadline 1800s)").
+
+        The NOTE carries the box's remaining time -- the live deadline the
+        worker now waits on, already clamped to hard_ceiling_s by
+        _extend_wall -- and the open call's own source, so it is the same
+        call, not a new one. Nothing is written when no coding-agent call is
+        in flight.
+
+        Boundary: the ramp fires once the box has <= CLI_PHASE_RAMP_HEADROOM_S
+        left, its pulse arrives at least every worker heartbeat, and the
+        dispatch NOTE's deadline is never earlier than box end minus the
+        writer's grace -- so the lift is recorded before the reader may time
+        the dispatch NOTE out (pinned by a test on those three constants).
+        """
+        from app.factory.build.authorship import is_coding_agent_source
+        from app.factory.build.model_call import closes_model_call
+
+        boxed = self._deadline_box.get("at")
+        if boxed is None:
+            return
+        source = None
+        for event in reversed(list(self.ledger.events())):
+            payload = getattr(event, "payload", None) or {}
+            if closes_model_call(payload):
+                return
+            if payload.get("model_call"):
+                if is_coding_agent_source(payload.get("source")):
+                    source = payload.get("source")
+                break
+        if source is None:
+            return
+        remaining = max(0.0, float(boxed) - float(self.clock()))
+        self.ledger.append(
+            EventKind.NOTE,
+            detail=(
+                "coder CLI still in flight — live deadline lifted to "
+                f"{remaining:.0f}s from now"
+            ),
+            payload={
+                "model_call": True,
+                "source": source,
+                "deadline_s": round(remaining, 1),
+                "cli_wall_extended": True,
+            },
+        )
 
     def _cli_in_flight(self) -> bool:
         from app.factory.build.budget_inspect import _cli_flight
