@@ -12,7 +12,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger("cerebrumdev.factory.roles_handlers")
 
@@ -3779,6 +3779,31 @@ def _writer_worker_timeout_s(ctx: RoleContext) -> Optional[float]:
     return max(float(DEFAULT_WORKER_TIMEOUT_S), float(left) - MODEL_CALL_GRACE_S)
 
 
+def _writer_worker_live_time_left(ctx: RoleContext) -> Optional[Callable[[], Optional[float]]]:
+    """The run's remaining budget as the worker reads it, live, every tick.
+
+    ``ctx.coder_time_left()`` reads ``deadline_box['at']`` -- the one value
+    the runner's budget ramp lifts (``_extend_wall``, clamped there to
+    ``hard_ceiling_s``). Handing the worker a reader of that box, not a
+    number taken at dispatch, is what lets a ramp reach the wait it was
+    meant for. The same grace as ``_writer_worker_timeout_s`` keeps the
+    worker dying just before the run's own wall. ``None`` when the run is
+    unbounded: the worker keeps its dispatch wall.
+    """
+    from app.factory.llm_watchdog import MODEL_CALL_GRACE_S
+
+    if ctx.coder_time_left() is None:
+        return None
+
+    def _left() -> Optional[float]:
+        left = ctx.coder_time_left()
+        if left is None:
+            return None
+        return float(left) - MODEL_CALL_GRACE_S
+
+    return _left
+
+
 def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
     """Phase 5: the WRITER role runs headless through `codewhale exec`.
 
@@ -3877,6 +3902,10 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
                     # 1800s that kills the writer before the phase inspector's
                     # in-flight bump can fire.
                     timeout_s=_writer_worker_timeout_s(ctx),
+                    # ...and the wall follows the run's LIVE deadline, so the
+                    # budget ramp reaches this wait (live 2026-10-06: killed
+                    # at 1800s while producing work).
+                    live_time_left=_writer_worker_live_time_left(ctx),
                 )
                 break
             except WorkerError as exc:
