@@ -284,6 +284,29 @@ def test_runner_hard_stops_at_stage_1_without_progress(tmp_path):
     assert "stub_rate" in status["budget_inspect"]
 
 
+def _wall_is_inspect_or_granted(runner) -> float:
+    """The wall the INSPECT set, after checking any growth past it was granted.
+
+    Since a granted REWORK round brings its own wall (runner._grant_rework_wall),
+    a stub writer that fails its gate legitimately grows the wall past the
+    staged ramp. That growth must be a ledgered ``wall_grant`` -- never the
+    inspect. Returns the wall as it stood before the first grant (the
+    inspect's), so the caller pins the staged ramp exactly.
+    """
+    grants = [
+        (e.payload or {}).get("wall_grant")
+        for e in runner.ledger.events()
+        if (e.payload or {}).get("wall_grant")
+    ]
+    if not grants:
+        return runner.budget.wall_clock_s
+    assert runner.budget.wall_clock_s == grants[-1]["wall_s"], (
+        "the wall grew past the inspect without a ledgered rework grant"
+    )
+    assert all(g["wall_s"] <= g["ceiling_s"] for g in grants if g["ceiling_s"])
+    return grants[0]["wall_before_s"]
+
+
 def test_runner_ramps_to_45m_only_when_inspect_sees_agent_work(tmp_path):
     now = {"t": 0.0}
 
@@ -337,8 +360,13 @@ def test_runner_ramps_to_45m_only_when_inspect_sees_agent_work(tmp_path):
     decisions = [e.payload.get("decision") for e in inspects]
     assert "continue_stage_2" in decisions
     assert CEILING_S not in decisions
-    assert runner.budget.wall_clock_s == STAGE_2_S
-    assert runner.budget.wall_clock_s != CEILING_S
+    # The inspect's own bump is the staged one -- 30 -> 45 min, never the
+    # ceiling. (The replaced WRITER may fail its gate; a REWORK the rule
+    # grants then brings its own wall, ledgered as a wall_grant -- that is
+    # not the inspect, so it is checked apart.)
+    bumps = [e.payload.get("next_wall_s") for e in inspects if e.payload.get("next_wall_s")]
+    assert bumps == [STAGE_2_S]
+    assert _wall_is_inspect_or_granted(runner) == STAGE_2_S
     # Replaced WRITER may fail later gates; the contract is the staged ramp.
     assert runner.ledger.pilot_ready() is False
     assert outcome.outcome is not None
@@ -568,7 +596,7 @@ def test_runner_inflight_cli_stage_1_extends_wall_not_unused(tmp_path):
     assert snap.get("next_wall_s") == STAGE_2_S
     assert "hard-stop" not in str(snap.get("reason") or "")
     assert "not FACTORY_CODE_CLI_UNUSED" in str(snap.get("reason") or "")
-    assert runner.budget.wall_clock_s == STAGE_2_S
+    assert _wall_is_inspect_or_granted(runner) == STAGE_2_S
     extends = [
         e
         for e in runner.ledger.events()

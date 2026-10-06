@@ -108,8 +108,7 @@ def test_the_runner_ramps_a_live_codewhale_writer_past_its_phase_wall(tmp_path, 
                     tenant_store=ctx.state["tenant_store"],
                     progress=lambda line, info: ctx.note(
                         line[:200], source="codewhale_worker",
-                        **{k: info[k] for k in ("model_call", "deadline_s", "provider")
-                           if isinstance(info, dict) and info.get(k) is not None},
+                        **roles_handlers.relayed_call_fields(info),
                     ),
                     timeout_s=roles_handlers._writer_worker_timeout_s(ctx),
                     live_time_left=roles_handlers._writer_worker_live_time_left(ctx),

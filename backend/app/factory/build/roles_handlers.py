@@ -116,6 +116,29 @@ from app.factory.build.supply_chain import (
 
 from app.factory.build.vendored_integrity import LOCK_KEY as _INTEGRITY_KEY
 from app.factory.build.vendored_integrity import lock_record as _integrity_record
+from app.factory.build.model_call import MODEL_CALL_STATE as _MODEL_CALL_STATE
+
+#: The worker info fields the WRITER relay copies onto its ledger NOTE. The
+#: model-call lifecycle (``model_call_state`` OPEN/CLOSED) is one of them:
+#: the relay used to copy only {model_call, deadline_s, provider}, so the
+#: worker's CLOSED never reached the ledger, every codewhale call read as
+#: open forever, and at the build wall the inspector answered "await_cli"
+#: for a CLI that had exited minutes earlier (live 2026-10-06, 01a1eed7:
+#: "wall-clock budget of 2700s spent before TESTER completed; inspect wall:
+#: FACTORY_CODE_CLI in-flight").
+RELAYED_CALL_FIELDS: Tuple[str, ...] = (
+    "model_call",
+    "deadline_s",
+    "provider",
+    _MODEL_CALL_STATE,
+)
+
+
+def relayed_call_fields(info: Any) -> Dict[str, Any]:
+    """The model-call fields of one worker progress record, as the ledger keeps them."""
+    if not isinstance(info, dict):
+        return {}
+    return {key: info[key] for key in RELAYED_CALL_FIELDS if info.get(key) is not None}
 
 
 def _from_facade(name: str, fallback):
@@ -3856,11 +3879,7 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
             # look at: every CodeWhale build read "model_call: none", so a
             # server restart mid-WRITER was never auto-resumed (live:
             # FleetOps sat dead for 20+ minutes). Never throttle it either.
-            call = {
-                key: info[key]
-                for key in ("model_call", "deadline_s", "provider")
-                if isinstance(info, dict) and info.get(key) is not None
-            }
+            call = relayed_call_fields(info)
             if not is_narration_line(line) and not call:
                 if now - throttle["last"] < 3.0:
                     return
