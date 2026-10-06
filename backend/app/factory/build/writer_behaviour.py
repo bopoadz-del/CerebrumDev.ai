@@ -49,6 +49,8 @@ import re
 import sys
 from typing import TYPE_CHECKING, Optional
 
+from app.factory.build.entity_contract import ENTITY_RESOLVER_SLOT, ENTITY_RESOLVER_SRC
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.factory.build.gates import GateContext, GateResult
 
@@ -237,30 +239,15 @@ def _payload(cls):
     return {n: _value(cls, n) for n in getattr(cls, "FIELDS", [])}
 
 
-def _entity_map():
-    """capability_id -> store entity, from the emitted capability manifest.
-
-    The entity is not derivable from the capability id: LotDesk's
-    ``vehicle_inventory`` persists to ``vehicle``. Guessing makes the
-    row-count assertion silently inert, which is the failure this gate is
-    supposed to catch.
-    """
-    try:
-        from app.jobs import CAPABILITIES
-    except Exception:
-        return {}
-    out = {}
-    for item in CAPABILITIES or []:
-        if isinstance(item, dict) and item.get("id") and item.get("entity"):
-            out[item["id"]] = item["entity"]
-    return out
-
-
-ENTITIES = _entity_map()
+ENTITY_RESOLVER = None  # rendered in by _render_probe (entity_contract)
 
 
 def _entity_of(cap_id, cls):
-    return ENTITIES.get(cap_id) or getattr(cls, "ENTITY", None) or cap_id
+    """The declared store entity, or None when there is nothing to read back:
+    a declared read-only capability, or no declaration at all (product_gate
+    names a missing declaration). Never the capability id."""
+    entity, declared = _declared_entity(cap_id, cls)
+    return entity if (declared and entity) else None
 
 
 def _rows(entity):
@@ -270,8 +257,11 @@ def _rows(entity):
     accident whenever the entity name is wrong -- the check would look
     green while never having run.
     """
+    if not entity:
+        # Nothing declared to read: never judged as a row count.
+        return None
     try:
-        return len(store.list_all(entity, tenant_id="local"))
+        return len(_list_entity(entity))
     except Exception:
         return None
 
@@ -510,7 +500,7 @@ def _check_round_trip(cap_id, cls, body):
             % (cap_id, entity),
         ))
         return
-    stored = store.list_all(entity, tenant_id="local")
+    stored = _list_entity(entity)
     if not any(_record_matches(r, body) for r in stored):
         roundtrip_misses.append(_miss(
             cap_id,
@@ -928,6 +918,7 @@ def _render_probe() -> str:
             "RESOURCE_OBLIGATIONS = " + repr(dict(resource_obligations())),
             1,
         ).replace("HALTS = {}", "HALTS = " + repr(dict(HALT_SENTENCES)), 1)
+        .replace(ENTITY_RESOLVER_SLOT, ENTITY_RESOLVER_SRC, 1)
     )
 
 

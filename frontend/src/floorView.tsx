@@ -15,6 +15,7 @@ import {
   type TypedFloorAction,
 } from './api/factory'
 import { FactoryCodeCliStatus, useFactoryCodeCliHonesty } from './factoryReadinessView'
+import { SuggestedChecks } from './suggestedChecks'
 import {
   exportAffordance,
   formatFinishedAuthorship,
@@ -1157,6 +1158,9 @@ export function Floor({
                 </li>
               ))}
             </ol>
+          )}
+          {(liveCoderBuild?.suggested_checks?.length ?? 0) > 0 && (
+            <SuggestedChecks checks={liveCoderBuild!.suggested_checks!} />
           )}
           {!liveCoderBuild?.failure && liveCoderBuild?.recovered_failure && (
             <p className="coder-recovered-line" data-testid="floor-recovered-line">
