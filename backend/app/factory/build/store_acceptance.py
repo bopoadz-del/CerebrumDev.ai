@@ -952,9 +952,14 @@ def render_acceptance_script(blueprint: Any = None) -> str:
         render_github_ci().replace("\r\n", "\n").encode("utf-8")
     ).hexdigest()
     advisory = ", ".join(repr(n) for n in sorted(_floor_advisory_ids(blueprint)))
-    from app.factory.build.acceptance_floor import brief_signals, image_check_ids
+    from app.factory.build.acceptance_floor import (
+        audit_check_ids,
+        brief_signals,
+        image_check_ids,
+    )
 
     image_checks = ", ".join(repr(n) for n in image_check_ids())
+    audit_checks = ", ".join(repr(n) for n in audit_check_ids())
     from app.factory.build.writer_phases import RAG_INGEST_PATHS, RAG_QUERY_PATHS
 
     # Decided here, from the build's declared contract: does a capability bind
@@ -1101,6 +1106,10 @@ ADVISORY = [{advisory}]
 # product's Dockerfile does not build, the Store gate scores THESE as FAIL and
 # the rest NOT_RUN, reading this constant -- the gate names no check itself.
 IMAGE_CHECKS = [{image_checks}]
+# Checks whose verdict is the gate's security scan (the floor's ``stage:
+# audit``). The gate attaches the scan's findings to THESE lines as evidence,
+# reading this constant -- it names no check itself.
+AUDIT_CHECKS = [{audit_checks}]
 REQUIRED = {ACCEPTANCE_REQUIRED}
 # Keys of the typed records the Factory reads from this harness's stdout --
 # the same constants the Factory's parser uses (store_acceptance.py).

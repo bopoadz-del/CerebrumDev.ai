@@ -182,7 +182,8 @@
       "gate_fn": "check_audit_clean",
       "check": "CI runs pip-audit and bandit",
       "applies_when": "production",
-      "subject": "tree:requirements.txt"
+      "subject": "tree:requirements.txt",
+      "stage": "audit"
     },
     {
       "id": "no_token_literal",
