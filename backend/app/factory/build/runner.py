@@ -1409,6 +1409,69 @@ class RoleRunner:
         )
         return GateDecision(DECISION_REWORK, work_list=work, record=rec)
 
+    def _foreman_context(self, findings: Sequence[Any] = ()) -> Any:
+        """What the foreman's validation knows about this build (all data)."""
+        from app.factory.build import foreman as fm
+
+        caps = [c.capability_id for c in getattr(self.plan, "capabilities", None) or []]
+        resolved = {
+            str(b)
+            for c in getattr(self.plan, "capabilities", None) or []
+            for b in (c.block_ids or [])
+        }
+        store = resolved | {str(b) for b in getattr(self.plan, "dual_registered_blocks", None) or []}
+        own = {
+            str(v)
+            for v in (
+                getattr(self.blueprint, "product_name", ""),
+                getattr(self.blueprint, "product_id", ""),
+            )
+            if v
+        } | set(caps)
+        return fm.ForemanContext(
+            capabilities=frozenset(caps),
+            finding_capabilities=frozenset(_findings.capability_ids(findings) & set(caps)),
+            resolved_blocks=frozenset(resolved),
+            store_blocks=frozenset(store),
+            own_names=frozenset(own),
+        )
+
+    def _foreman_audit(self) -> Any:
+        """F4: once per build, after TESTER passes, the foreman reads the
+        workspace and PROPOSES checks for a human. Nothing here touches the
+        verdict, the work list or the outcome, and any failure of the audit
+        itself is a NOTE -- the build carries on exactly as it would have."""
+        from app.factory.build import foreman as fm
+
+        mode = fm.audit_mode()
+        if mode == "off" or self.state.get("foreman_audit_done"):
+            return fm.AuditResult(mode=mode)
+        self.state["foreman_audit_done"] = True
+        try:
+            brief_path = self.workspace / "docs" / "coder_brief.md"
+            brief_text = brief_path.read_text(encoding="utf-8") if brief_path.is_file() else ""
+
+            def note(detail: str, **payload: Any) -> None:
+                self.ledger.append(EventKind.NOTE, role=BuildRole.TESTER, detail=detail, payload=payload)
+
+            return fm.audit_workspace(
+                self.workspace,
+                ctx=self._foreman_context(),
+                brief_text=brief_text,
+                history=fm.findings_history(self.ledger),
+                note=note,
+                mode=mode,
+                session_id=str(self.state.get("session_id") or ""),
+            )
+        except Exception as exc:  # noqa: BLE001 -- the audit never breaks a build
+            self.ledger.append(
+                EventKind.NOTE,
+                role=BuildRole.TESTER,
+                detail=f"foreman audit unavailable ({type(exc).__name__}); no suggested checks",
+                payload={"foreman_audit_error": type(exc).__name__},
+            )
+            return fm.AuditResult(mode=mode, fallback=True)
+
     def _foreman_review(self, role: BuildRole, verdict: Any, work: Sequence[Any]) -> Any:
         """One foreman call for a REWORK round (no call when FACTORY_FOREMAN=off).
         Any failure of the foreman itself leaves the round exactly as it was."""
@@ -1419,28 +1482,7 @@ class RoleRunner:
         if mode == "off":
             return fm.ForemanResult(mode=mode)
         try:
-            caps = [c.capability_id for c in getattr(self.plan, "capabilities", None) or []]
-            resolved = {
-                str(b)
-                for c in getattr(self.plan, "capabilities", None) or []
-                for b in (c.block_ids or [])
-            }
-            store = resolved | {str(b) for b in getattr(self.plan, "dual_registered_blocks", None) or []}
-            own = {
-                str(v)
-                for v in (
-                    getattr(self.blueprint, "product_name", ""),
-                    getattr(self.blueprint, "product_id", ""),
-                )
-                if v
-            } | set(caps)
-            ctx = fm.ForemanContext(
-                capabilities=frozenset(caps),
-                finding_capabilities=frozenset(_findings.capability_ids(verdict.findings) & set(caps)),
-                resolved_blocks=frozenset(resolved),
-                store_blocks=frozenset(store),
-                own_names=frozenset(own),
-            )
+            ctx = self._foreman_context(verdict.findings)
             pairs = brief_gates.failure_checks(verdict)
             check = pairs[0][0] if pairs else str(getattr(verdict, "gate", ""))
             brief_path = self.workspace / "docs" / "coder_brief.md"
@@ -2248,6 +2290,9 @@ class RoleRunner:
                             detail=f"CHECKPOINT {role.value} -> {attached}@{sha[:7]}",
                             payload={"checkpoint": sha, "attached_branch": attached},
                         )
+                    if role is BuildRole.TESTER:
+                        # F4: proposals only, after green; never a verdict.
+                        self._foreman_audit()
                     done.add(role)
                     work_list = ()
                     index += 1
