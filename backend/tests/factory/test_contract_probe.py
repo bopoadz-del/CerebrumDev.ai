@@ -524,6 +524,9 @@ def _round_trip_flow(rows, listed, get_status=200, entity="unit"):
     ns["store"] = _Store()
     ns["_entity_of"] = lambda cap, cls: entity
     ns["_rows"] = lambda e: (None if rows is None else len(rows))
+    # Rows are read through the probe's entity resolver (the tenant the
+    # route wrote under), stubbed here like the store it wraps.
+    ns["_list_entity"] = lambda e: _Store.list_all(e)
     return ns
 
 
