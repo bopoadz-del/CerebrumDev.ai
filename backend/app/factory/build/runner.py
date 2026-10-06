@@ -2438,6 +2438,12 @@ class RoleRunner:
                             dispatch_store_gate,
                         )
 
+                        # The Factory's receipt -- what it stamped, vendored
+                        # and declared -- taken after the last restamp, so the
+                        # gate's audit findings are owned by provenance.
+                        from app.factory.build.factory_receipt import record_receipt
+
+                        record_receipt(self.workspace)
                         attached = self._branch_of_record()
                         if attached:
                             # R3: a platform's Docker gate runs on its OWN

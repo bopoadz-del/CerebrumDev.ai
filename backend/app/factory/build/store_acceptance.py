@@ -134,6 +134,10 @@ class AcceptanceLine:
     #: tail naming a Factory script the product's Dockerfile chose to run must
     #: not move the failure onto the Factory.
     evidence: str = ""
+    #: The gate's TYPED evidence rows for this line (factory_receipt.ROW_*):
+    #: an audit line's bandit/pip-audit findings as mappings, so ownership is
+    #: read per row from provenance and never parsed out of ``evidence`` text.
+    evidence_rows: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def satisfied(self) -> bool:
@@ -346,6 +350,9 @@ def _report_from_mapping(raw: Mapping[str, Any]) -> AcceptanceReport:
                 status=str(item.get("status") or "FAIL").upper(),
                 detail=str(item.get("detail") or ""),
                 evidence=str(item.get("evidence") or ""),
+                evidence_rows=[
+                    dict(r) for r in item.get("evidence_rows") or [] if isinstance(r, Mapping)
+                ],
             )
         )
     if not lines:

@@ -92,6 +92,9 @@ FACTORY_INTERNAL_PATHS = frozenset(
         "docs/writer_progress.jsonl",
         "docs/writer_progress.log",
         "docs/build_provenance.json",
+        # The Factory's receipt of what it stamped/vendored/declared: read
+        # locally at gate ingest to own audit findings, never shipped.
+        "docs/factory_receipt.json",
     }
 )
 
