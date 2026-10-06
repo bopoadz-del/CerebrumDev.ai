@@ -2778,7 +2778,11 @@ def _workspace_root(ctx: Any) -> Path:
 
 def write_brief_artifacts(ctx: Any, compiled: Any) -> None:
     """Persist the compiled brief + a running control file (WRITER lanes)."""
-    text = compiled.text if hasattr(compiled, "text") else str(compiled)
+    from app.factory.build.architect import dispatch_text
+
+    # NARRATIVE (architect, when attached) + CONTRACT verbatim; the CONTRACT
+    # alone when no narrative is attached (FACTORY_BRIEF_NARRATIVE off/shadow).
+    text = dispatch_text(compiled) if hasattr(compiled, "text") else str(compiled)
     ctx.workspace.write_text(BRIEF_REL, text if text.endswith("\n") else text + "\n")
     if not (Path(_workspace_root(ctx)) / CONTROL_REL).is_file():
         ctx.workspace.write_text(
@@ -2805,7 +2809,9 @@ def _brief_text(root: Path, compiled: Any) -> str:
             text = ""
         if (text or "").strip():
             return text
-    return str(getattr(compiled, "text", None) or "")
+    from app.factory.build.architect import dispatch_text
+
+    return dispatch_text(compiled)
 
 
 def _feed_cli_stdin(proc: subprocess.Popen, payload: str) -> None:
