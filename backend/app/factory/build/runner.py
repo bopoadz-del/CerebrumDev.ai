@@ -178,6 +178,36 @@ def _writer_gate_items(verdict: Any) -> tuple:
     return tuple(items)
 
 
+def _tester_recheck_item(verdict: Any) -> str:
+    """The TESTER rework round's re-check: the failing product-gate tests by
+    node id, and the self-check that runs the same suites TESTER stamped.
+    Every finding row already names the capability and field it refused."""
+    from app.factory.build import failure_owner
+    from app.factory.build.brief_gates import PRODUCT_GATE_CHECK
+    from app.factory.build.product_suites import RECHECK_TAG
+    from app.factory.build.writer_behaviour import SELF_CHECK_COMMAND
+
+    nodes = [
+        str(name).rsplit(" [", 1)[0]
+        for name in failure_owner.failure_names(verdict)
+        if "::" in str(name)
+    ]
+    rerun = (
+        " and `python -m pytest -m \"pilot or not pilot\" "
+        + " ".join(nodes)
+        + "`"
+        if nodes
+        else ""
+    )
+    return (
+        f"{RECHECK_TAG} [{PRODUCT_GATE_CHECK}] the suites that failed are on disk (Factory-"
+        f"owned; TESTER re-stamps them from your app/models.py): run "
+        f"`{SELF_CHECK_COMMAND}`{rerun} before declaring done. A payload "
+        "\"built from its own schema\" uses the model's FIELDS -- declare in "
+        "that capability's model every field its handler or route requires"
+    )
+
+
 def landed_capability_ids(ledger: Any, inputs_hash: str) -> list:
     """Capabilities already checkpointed for this ``blueprint_hash``.
 
@@ -261,45 +291,12 @@ def checkpoint_landed_capability(ctx: Any, capability_id: str) -> None:
         )
 
 
-_SPECS_DUMP = """
-import json, sys, typing
-sys.path.insert(0, ".")
-from app.models import MODELS
-kinds = {int: "int", float: "float", bool: "bool"}
-out = {}
-for cap, cls in MODELS.items():
-    try:
-        hints = typing.get_type_hints(cls)
-    except Exception:
-        hints = {}
-    c = dict(getattr(cls, "CONSTRAINTS", {}) or {})
-    out[cap] = {"entity": getattr(cls, "ENTITY", cap),
-                "fields": [{"name": n, "type": kinds.get(hints.get(n, str), "str"), **c.get(n, {})}
-                           for n in getattr(cls, "FIELDS", [])]}
-print(json.dumps(out))
-"""
-
-
 def _specs_from_product_models(workspace: Path) -> Dict[str, Any]:
-    """``model_specs`` read back off the product's ``app/models.py``.
+    """``model_specs`` read back off the product's ``app/models.py`` (one
+    source: declared_specs, which TESTER also reads every pass)."""
+    from app.factory.build.declared_specs import specs_from_product_models
 
-    In a subprocess, because the product's package is also called ``app``.
-    Empty on any failure: re-entry then behaves as it always did.
-    """
-    import subprocess
-    import sys
-
-    try:
-        proc = subprocess.run(
-            [sys.executable, "-c", _SPECS_DUMP],
-            cwd=str(workspace), capture_output=True, text=True, timeout=180,
-        )
-        if proc.returncode != 0:
-            return {}
-        lines = (proc.stdout or "").strip().splitlines()
-        return json.loads(lines[-1]) if lines else {}
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return {}
+    return specs_from_product_models(workspace)
 
 
 def frozen_blueprint(blueprint: Any) -> Any:
@@ -1347,7 +1344,11 @@ class RoleRunner:
         elif role is BuildRole.STORE_MANAGER:
             work = tuple(str(f) for f in verdict.findings)
         else:
-            work = tuple(verdict.findings) + tuple(_test_defect_items(defects))
+            work = (
+                tuple(verdict.findings)
+                + tuple(_test_defect_items(defects))
+                + (_tester_recheck_item(verdict),)
+            )
         rec = self._decision_record(
             DECISION_REWORK,
             role=role,
