@@ -31,6 +31,18 @@ MARK_BASELINE = "baseline"
 MARK_CHANGED = "changed"
 REQUEST_ID_HEADER = "x-request-id"
 
+# The /health response shape -- ONE definition. render_health() emits it,
+# and every stamped test that reads a health body (tests/test_deploy.py and
+# test_routes.py::test_health) asserts it from these same names.
+HEALTH_CHECK_NAMES = ("process", "persistent_disk", "database", "migrations")
+HEALTH_STATUS_OK = "ok"
+HEALTH_STATUS_NOT_READY = "not_ready"
+
+# Factory-owned deploy modules: the stamped suite imports names from them AND
+# reads their response/log shapes, so the Factory stamps them outright on the
+# CodeWhale path (stamp_factory_deploy_modules) instead of gap-filling.
+FACTORY_OWNED_DEPLOY_MODULES = ("app/revision.py", "app/health.py", "app/observe.py")
+
 # Unconditional liveness that cannot fail when the app, disk, or schema is
 # gone. LotDesk ships this. RoleRunner must not.
 
@@ -228,7 +240,7 @@ def render_health() -> str:
         "\n"
         "    checks.append(\n"
         "        {\n"
-        '            "name": "process",\n'
+        f'            "name": {json.dumps(HEALTH_CHECK_NAMES[0])},\n'
         '            "ok": True,\n'
         '            "detail": f"pid={os.getpid()}",\n'
         "        }\n"
@@ -244,7 +256,7 @@ def render_health() -> str:
         "    else:\n"
         "        disk_ok, disk_detail = True, str(storage)\n"
         "    checks.append(\n"
-        '        {"name": "persistent_disk", "ok": disk_ok, "detail": disk_detail}\n'
+        f'        {{"name": {json.dumps(HEALTH_CHECK_NAMES[1])}, "ok": disk_ok, "detail": disk_detail}}\n'
         "    )\n"
         "\n"
         "    # The database the platform actually runs on -- app.db decides\n"
@@ -277,7 +289,7 @@ def render_health() -> str:
         "                db_detail = backend\n"
         "        except Exception as exc:  # noqa: BLE001 -- health must not raise\n"
         "            db_detail = type(exc).__name__\n"
-        "    checks.append({\"name\": \"database\", \"ok\": db_ok, \"detail\": db_detail})\n"
+        f"    checks.append({{\"name\": {json.dumps(HEALTH_CHECK_NAMES[2])}, \"ok\": db_ok, \"detail\": db_detail}})\n"
         "\n"
         "    mig_ok = False\n"
         '    mig_detail = "not checked"\n'
@@ -293,12 +305,12 @@ def render_health() -> str:
         '            mig_detail = f"current={current} head={head}"\n'
         "        except Exception as exc:  # noqa: BLE001 — health must not raise\n"
         "            mig_detail = type(exc).__name__\n"
-        "    checks.append({\"name\": \"migrations\", \"ok\": mig_ok, \"detail\": mig_detail})\n"
+        f"    checks.append({{\"name\": {json.dumps(HEALTH_CHECK_NAMES[3])}, \"ok\": mig_ok, \"detail\": mig_detail}})\n"
         "\n"
         "    ok = all(bool(item[\"ok\"]) for item in checks)\n"
         "    body = {\n"
         '        "ok": ok,\n'
-        '        "status": "ok" if ok else "not_ready",\n'
+        f'        "status": {json.dumps(HEALTH_STATUS_OK)} if ok else {json.dumps(HEALTH_STATUS_NOT_READY)},\n'
         '        "checks": checks,\n'
         '        "revision": current_app_revision(),\n'
         '        "mark": current_app_mark(),\n'
@@ -538,7 +550,7 @@ def deploy_declaration() -> Dict[str, Any]:
         "health": {
             "path": "/health",
             "fail_closed": True,
-            "checks": ["process", "persistent_disk", "database", "migrations"],
+            "checks": list(HEALTH_CHECK_NAMES),
             "unconditional_ok_is": probe_set.code_for("health_unconditional_ok"),
             "render": "healthCheckPath: /health (same probe; 503 takes the instance out)",
         },
@@ -620,9 +632,9 @@ def test_health_is_fail_closed_when_disk_missing(monkeypatch, tmp_path):
     code, body = evaluate_health()
     assert code == 503
     assert body["ok"] is False
-    assert body["status"] == "not_ready"
+    assert body["status"] == {HEALTH_STATUS_NOT_READY!r}
     names = {{item["name"]: item for item in body["checks"]}}
-    assert names["persistent_disk"]["ok"] is False
+    assert names[{json.dumps(HEALTH_CHECK_NAMES[1])}]["ok"] is False
 
 
 def test_health_is_fail_closed_when_migrations_missing(monkeypatch, tmp_path):
@@ -633,7 +645,7 @@ def test_health_is_fail_closed_when_migrations_missing(monkeypatch, tmp_path):
     assert code == 503
     assert body["ok"] is False
     names = {{item["name"]: item for item in body["checks"]}}
-    assert names["database"]["ok"] is False or names["migrations"]["ok"] is False
+    assert names[{json.dumps(HEALTH_CHECK_NAMES[2])}]["ok"] is False or names[{json.dumps(HEALTH_CHECK_NAMES[3])}]["ok"] is False
 
 
 def test_health_is_200_only_when_process_disk_db_and_head(client):
@@ -641,9 +653,9 @@ def test_health_is_200_only_when_process_disk_db_and_head(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["ok"] is True
-    assert body["status"] == "ok"
+    assert body["status"] == {HEALTH_STATUS_OK!r}
     names = {{item["name"] for item in body["checks"]}}
-    assert {{"process", "persistent_disk", "database", "migrations"}} <= names
+    assert set({list(HEALTH_CHECK_NAMES)!r}) <= names
     assert all(item["ok"] for item in body["checks"])
     assert body["revision"]
     assert body["mark"] == MARK_BASELINE or body["mark"]
@@ -702,6 +714,48 @@ def test_revision_identity_and_row_survive_mark_change(client, monkeypatch):
     for key, value in SAMPLE.items():
         assert rolled[key] == value
 '''
+
+
+def render_health_route_test() -> List[str]:
+    """test_routes.py::test_health, asserting the shape render_health() emits.
+
+    GET /health is the writer's route in app/main.py; the floor's
+    health_fail_closed line declares it returns ``app.health.health_response()``,
+    so the body is this module's shape.
+    """
+    return [
+        "def test_health():",
+        '    resp = client.get("/health")',
+        "    assert resp.status_code == 200",
+        "    body = resp.json()",
+        f'    assert body["status"] == {HEALTH_STATUS_OK!r}',
+        '    assert body["ok"] is True',
+        '    names = {item["name"] for item in body["checks"]}',
+        f"    assert set({list(HEALTH_CHECK_NAMES)!r}) <= names",
+        '    assert all(item["ok"] for item in body["checks"])',
+    ]
+
+
+def stamp_factory_deploy_modules(workspace: Any) -> List[str]:
+    """Stamp the Factory-owned deploy modules outright; returns what changed.
+
+    ``backfill_deploy_substrate`` keeps any copy that provides the imported
+    NAMES -- but the stamped suite also reads the health body, the log line
+    and the revision identity these modules produce. A copy with the right
+    names and another shape passed the name check and failed the suite on a
+    KeyError the writer cannot fix (Factory data). These three are never the
+    agent's to invent (deploy_substrate), so the Factory stamps them.
+    """
+    rendered = dict(deploy_substrate())
+    changed: List[str] = []
+    for rel in FACTORY_OWNED_DEPLOY_MODULES:
+        text = rendered[rel]
+        current = workspace.read_text(rel) if workspace.exists(rel) else None
+        if current is not None and current.replace("\r\n", "\n") == text:
+            continue
+        workspace.write_text(Path(rel), text)
+        changed.append(rel)
+    return changed
 
 
 def emit_writer_artifacts(workspace: Any) -> None:
