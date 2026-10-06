@@ -50,17 +50,38 @@ class GateResult:
     #: F1: named reason token (writer_no_output, suite_red, ...).
     reason: str = ""
     #: Machine-readable specifics the runner records in the ledger and the
-    #: next WRITER pass reads as its work list.
+    #: next WRITER pass reads as its work list. Typed (build/findings.py):
+    #: every item is a Finding -- a human line carrying gate, check_id,
+    #: capability_id, file, line and finding_shape.
     findings: List[str] = field(default_factory=list)
     payload: Mapping[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        from app.factory.build.findings import coerce
+
+        payload = self.payload or {}
+        object.__setattr__(
+            self,
+            "findings",
+            coerce(
+                self.findings,
+                gate=self.gate,
+                default_check=str(payload.get("check") or self.gate),
+                per_index_checks=list(payload.get("finding_checks") or []),
+                shape=payload.get("finding_shape") or self.reason,
+            ),
+        )
+
     def to_json(self) -> Dict[str, Any]:
+        from app.factory.build.findings import TYPED_KEY, typed
+
         return {
             "ok": self.ok,
             "gate": self.gate,
             "detail": self.detail,
             "reason": self.reason,
-            "findings": list(self.findings),
+            "findings": [str(f) for f in self.findings],
+            TYPED_KEY: typed(self.findings),
             "payload": dict(self.payload),
         }
 
@@ -594,9 +615,20 @@ def _verdict_from_junit(
         read_refusal_log,
     )
 
+    from app.factory.build.findings import CAPABILITY_LOG_SUFFIX, read_capability_log
+
     refusals = read_refusal_log(str(junit_path) + REFUSAL_LOG_SUFFIX)
+    # Which capability each failing test found failing: the emitted tests'
+    # own typed record (findings.render_capability_recorder), never a parse
+    # of the assertion message.
+    cap_log = read_capability_log(str(junit_path) + CAPABILITY_LOG_SUFFIX)
     for row in failing:
         row["placeholder_refusals"] = list(refusals.get(row["nodeid"]) or [])
+        caps = list(cap_log.get(row["nodeid"]) or [])
+        for cap in row["placeholder_refusals"]:
+            if cap not in caps:
+                caps.append(cap)
+        row["capabilities"] = caps
     if returncode in (3, 4) or (returncode == 2 and not failing):
         return GateResult(
             ok=False,
@@ -627,7 +659,9 @@ def _verdict_from_junit(
             )
     if not failing:
         return None
-    findings = [f"FAILED {f['nodeid']} - {f['message']}" for f in failing][:20]
+    from app.factory.build.findings import junit_row_findings
+
+    findings = junit_row_findings(failing, gate=gate_name)
     return GateResult(
         ok=False,
         gate=gate_name,
@@ -641,7 +675,7 @@ def _verdict_from_junit(
                     k: f[k]
                     for k in (
                         "nodeid", "file", "name", "kind", "message", "innermost",
-                        "placeholder_refusals",
+                        "placeholder_refusals", "capabilities",
                     )
                 }
                 for f in failing

@@ -98,6 +98,8 @@ from app.factory.build.roles_constants import (
 )
 from app.factory.build.roles_models import RoleContext, RoleError, RoleResult
 from app.factory.build.payload_helpers import render_payload_helpers
+from app.factory.build.findings import render_capability_recorder
+from app.factory.build.findings import rework_targets as _rework_targets
 from app.factory.build.rejection_contract import (
     ALLOWED_VALUES_KEY,
     MISSING_REQUIRED,
@@ -3429,34 +3431,6 @@ def _coder_readme(
     return text, f"coder LLM ({model_used})"
 
 
-def _failing_capability_ids(work_list: Sequence[str], cap_ids: Sequence[str]) -> set:
-    """Which capabilities the TESTER's findings actually implicate.
-
-    On the seventh live build the loop fixed defect_register and REGRESSED
-    site_inspection_log, because every rework round regenerated every
-    handler -- a nondeterministic coder given the whole platform each round
-    plays whack-a-mole. A rework pass must be a ratchet: touch only what
-    failed, keep what passed.
-
-    Empty findings (the first pass) mean everything. Findings that name no
-    capability mean everything too -- an infrastructure failure cannot be
-    localised, and guessing "nothing" would end the rework with the suite
-    still red.
-    """
-    if not work_list:
-        return set(cap_ids)
-    text = "\n".join(str(item) for item in work_list)
-    failing = {
-        cap_id
-        for cap_id in cap_ids
-        # Word-bounded: a short capability id must not match inside an
-        # unrelated word of the traceback.
-        if re.search(rf"\b{re.escape(cap_id)}\b", text)
-        or re.search(rf"\b{re.escape(cap_id.replace('-', '_'))}\b", text)
-    }
-    return failing or set(cap_ids)
-
-
 def _vendor_product_kernel(ctx: RoleContext) -> None:
     """Copy the host kernel into the generated product (U12).
 
@@ -4418,7 +4392,10 @@ def run_writer(
 
     vendored = set(ctx.state.get("vendored_blocks", ()))
     cap_ids = [cap.capability_id for cap in ctx.plan.capabilities]
-    failing = _failing_capability_ids(ctx.work_list, cap_ids)
+    # The ratchet: regenerate only the capabilities the typed findings name
+    # (build/findings.py rework_targets) -- decided by capability_id fields,
+    # never by searching the finding text.
+    failing = _rework_targets(ctx.work_list, cap_ids)
     previous_specs: Dict[str, Any] = dict(ctx.state.get("model_specs") or {})
     previous_sources: Dict[str, str] = dict(ctx.state.get("artifact_sources") or {})
     previous_routes: Dict[str, str] = dict(ctx.state.get("route_bodies") or {})
@@ -5795,6 +5772,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             '    assert kits.is_dir(), "kits/ missing from the delivered platform"',
             '    assert list(kits.glob("*/manifest.json")), "no kit pack manifests"',
         ]
+    smoke += ["", "", *render_capability_recorder()]
     smoke += [
         "",
         "",
@@ -5817,6 +5795,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             "    if not isinstance(out, dict):",
             f"        failures.append('{name} handle() must return a dict, got '"
             " + type(out).__name__)",
+            f"        _record_capability_failure({cap.capability_id!r})",
         ]
     if caps:
         smoke.append('    assert not failures, "; ".join(failures)')
@@ -5846,14 +5825,17 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             f"    out = {name}.handle({sample!r})",
             "    if not isinstance(out, dict):",
             f"        failures.append('{name} returned a non-dict: ' + repr(out)[:120])",
+            f"        _record_capability_failure({cap.capability_id!r})",
             '    elif out.get("ok") is False:',
             f"        failures.append('{name} rejected a payload built from its own "
             "schema: ' + str(out.get('error')))",
+            f"        _record_capability_failure({cap.capability_id!r})",
             "    elif '\\\"status\\\": \\\"error\\\"' in "
             "_json.dumps(out, default=str) or "
             "'\\\"status\\\": \\\"failed\\\"' in _json.dumps(out, default=str):",
             f"        failures.append('{name} reported ok around a failed block "
             "call: ' + _json.dumps(out, default=str)[:300])",
+            f"        _record_capability_failure({cap.capability_id!r})",
         ]
     if caps:
         smoke.append('    assert not failures, "; ".join(failures)')

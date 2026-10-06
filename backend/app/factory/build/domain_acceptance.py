@@ -950,7 +950,12 @@ async def perform_all(capability_id: Optional[str] = None) -> Dict[str, Any]:
 
 
 def render_product_tests(specs: Dict[str, Dict[str, Any]]) -> str:
+    from app.factory.build.findings import render_capability_recorder
+
     cap_id = first_capability_id(specs)
+    # Which capability failed is recorded as data (findings.py), not read
+    # out of the assertion message.
+    recorder = "\n".join(render_capability_recorder())
     return f'''"""S12 domain acceptance — performed through execute_action.
 
 Factory code-phase names the ten outcomes. Pilot performs them against
@@ -970,6 +975,9 @@ EXPECTED = {list(OUTCOMES)!r}
 CAPABILITY = {cap_id!r}
 
 
+{recorder}
+
+
 def test_ten_named_outcomes_are_the_contract():
     assert list(OUTCOMES) == EXPECTED
     assert len(OUTCOMES) == 10
@@ -983,6 +991,8 @@ def test_ten_business_outcomes_are_performed_through_the_kernel(tmp_path, monkey
     monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "data"))
     upgrade_head()
     result = asyncio.run(perform_all(CAPABILITY or None))
+    if result.get("ok") is not True or result.get("failed"):
+        _record_capability_failure(result.get("capability_id") or CAPABILITY)
     assert result["kernel"] == "execute_action"
     assert result["ok"] is True, result
     assert result["failed"] == []

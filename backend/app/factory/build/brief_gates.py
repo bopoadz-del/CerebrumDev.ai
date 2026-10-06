@@ -80,13 +80,19 @@ def failure_checks(verdict: Any) -> List[Tuple[str, str]]:
     payload = getattr(verdict, "payload", None) or {}
     own = _norm(payload.get("check") or getattr(verdict, "gate", ""))
     per = list(payload.get("finding_checks") or [])
-    findings = [str(f) for f in (getattr(verdict, "findings", None) or [])]
+    # Findings stay themselves (typed Finding objects keep their fields);
+    # a typed finding names its own check, decided by data, never its text.
+    findings = [
+        f if isinstance(f, str) else str(f)
+        for f in (getattr(verdict, "findings", None) or [])
+    ]
     if not findings:
         return [(own, str(getattr(verdict, "detail", "") or own))]
     out = []
     for index, finding in enumerate(findings):
         named = _norm(per[index]) if index < len(per) else ""
-        out.append((named or own, finding))
+        typed_check = _norm(getattr(finding, "check_id", ""))
+        out.append((named or typed_check or own, finding))
     return out
 
 
