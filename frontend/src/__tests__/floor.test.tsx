@@ -1422,6 +1422,32 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.queryByText(/^Last: /)).not.toBeInTheDocument()
   })
 
+  it('shows a queued writer its place for a build slot', async () => {
+    // Owner, 2026-10-06: a full build slot queues, never fails -- and the
+    // Floor says where the build stands in the queue.
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'building',
+        current_phase: { id: 'WRITER', label: 'Platform manufacturer' },
+        phase_index: 3,
+        phase_total: 5,
+        last_event: 'waiting for a build slot -- position 2 (1 ahead)',
+        last_event_age_s: 4,
+        stale: false,
+        queued: { position: 2, ahead: 1, since: '2026-10-06T10:00:00Z', waited_s: 30 },
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'vineyard', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_queued" goPlatforms={() => {}} />)
+
+    const queued = await screen.findByText(/Waiting for a build slot — position 2/)
+    expect(queued).toHaveTextContent('Waiting for a build slot — position 2 (1 ahead)')
+  })
+
   it('shows a TESTER mid-fail as an orange rework, red only when the run stops', async () => {
     // Live automotive build: TESTER went suite_red, the writer took the work
     // back (WORKERS 3/5 still moving) -- and the Floor painted TESTER the same

@@ -230,6 +230,7 @@ def inspect_build(
         "progressing": progressing,
         "cli_attempted": cli_attempted,
         "cli_in_flight": flight["cli_in_flight"],
+        "slot_waiting": flight["slot_waiting"],
         "cli_finished": flight["cli_finished"],
         "model_call_deadline_s": flight["model_call_deadline_s"],
         "cli_blocker": flight["cli_blocker"],
@@ -375,7 +376,7 @@ def inspect_decision(
             f"inspect {stage}: leftover wall {current_wall_s:g}s honoured "
             f"(no cut, no silent extra ceiling)"
         )
-    elif snapshot.get("cli_in_flight"):
+    elif snapshot.get("cli_in_flight") or snapshot.get("slot_waiting"):
         # sess_9d8e9a2dc01b40a1: UI still inside the CLI watchdog while
         # stage_1 hard-stopped as FACTORY_CODE_CLI_UNUSED at ~1800s.
         # Mid-run inspect may bump 30→45; it must not kill the live call.
@@ -595,6 +596,11 @@ def _cli_flight(
     dispatch = dict((state or {}).get("brief_dispatch") or {})
     dispatched = False
     finished = False
+    # A coding agent queued for a build slot (typed ``slot_wait`` NOTE, open
+    # until it holds its slot). It has no model call open, but it is the
+    # run's live work: the budget must not kill it at the phase box -- the
+    # wait is bounded by the phase-wall ceiling only (owner, 2026-10-06).
+    slot_waiting = False
     deadline_s: Optional[float] = None
     from app.factory.build.authorship import is_coding_agent_source
     from app.factory.build.model_call import closes_model_call
@@ -608,6 +614,12 @@ def _cli_flight(
         # fired and the writer died at its dispatch wall (live 2026-10-06).
         if payload.get("model_call") and is_coding_agent_source(payload.get("source")):
             dispatched = True
+            slot_waiting = False
+        slot = payload.get("slot_wait")
+        if slot is not None and is_coding_agent_source(payload.get("source")):
+            from app.factory.build.codewhale_worker import SLOT_WAIT_OPEN
+
+            slot_waiting = slot == SLOT_WAIT_OPEN
         if closes_model_call(payload):
             finished = True
         if payload.get("model_call"):
@@ -625,6 +637,7 @@ def _cli_flight(
     blocker = str(dispatch.get("blocker") or "") or None
     return {
         "cli_in_flight": bool(dispatched and not finished),
+        "slot_waiting": bool(slot_waiting),
         "cli_finished": bool(dispatched and finished),
         "model_call_deadline_s": deadline_s,
         "cli_blocker": blocker,

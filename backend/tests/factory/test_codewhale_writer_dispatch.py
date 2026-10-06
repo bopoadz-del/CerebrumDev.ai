@@ -105,7 +105,7 @@ def test_writer_worker_gets_the_phase_budget_not_a_flat_wall(tmp_path, monkeypat
 
     captured = {}
 
-    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None, slot_wait_left=None, on_slot_wait=None):
         captured["timeout_s"] = timeout_s
         return _receipt(tools=[{"tool": "write", "path": "app/actions/cap.py"}])
 
@@ -129,7 +129,7 @@ def test_code_only_writer_budget_keeps_the_1800s_floor(tmp_path, monkeypatch):
 
     captured = {}
 
-    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None, slot_wait_left=None, on_slot_wait=None):
         captured["timeout_s"] = timeout_s
         return _receipt(tools=[{"tool": "write", "path": "app/actions/cap.py"}])
 
@@ -144,7 +144,7 @@ def test_unbounded_budget_falls_back_to_the_worker_default(tmp_path, monkeypatch
     run_worker_job apply its own default rather than inventing a wall."""
     captured = {"timeout_s": "unset"}
 
-    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None, slot_wait_left=None, on_slot_wait=None):
         captured["timeout_s"] = timeout_s
         return _receipt(tools=[{"tool": "write", "path": "app/actions/cap.py"}])
 
@@ -185,7 +185,7 @@ def test_worker_dispatch_records_the_receipt(tmp_path, monkeypatch):
     ctx = _ctx(tmp_path)
     _plant_authored_handler(tmp_path / "build")
 
-    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None, slot_wait_left=None, on_slot_wait=None):
         return _receipt(tools=[{"tool": "write", "path": "app/actions/cap.py"}])
 
     monkeypatch.setattr(
@@ -206,7 +206,7 @@ def test_worker_succeeded_but_wrote_nothing_is_refused(tmp_path, monkeypatch):
     """E1: a 'completed' receipt with zero tool calls or zero stamped
     handlers is the same silent success the writer_contract gate refuses â€”
     the role must refuse it, not report ok=True."""
-    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None, slot_wait_left=None, on_slot_wait=None):
         return _receipt(tools=[])
 
     monkeypatch.setattr(
@@ -222,7 +222,7 @@ def test_worker_succeeded_with_tools_but_no_stamped_handlers_is_refused(
 ):
     """E1: tool calls alone are not authorship â€” the disk-level stamp
     count is what counts."""
-    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None, slot_wait_left=None, on_slot_wait=None):
         return _receipt(tools=[{"tool": "write", "path": "notes.txt"}])
 
     monkeypatch.setattr(
@@ -234,7 +234,7 @@ def test_worker_succeeded_with_tools_but_no_stamped_handlers_is_refused(
 
 
 def test_worker_failure_raises_a_named_role_error(tmp_path, monkeypatch):
-    def boom(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None):
+    def boom(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None, slot_wait_left=None, on_slot_wait=None):
         raise WorkerError("worker_exec_failed: nope")
 
     monkeypatch.setattr(
@@ -289,7 +289,7 @@ def test_worker_output_in_staging_survives_commit(tmp_path, monkeypatch):
         state={},
     )
 
-    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None, slot_wait_left=None, on_slot_wait=None):
         # The worker subprocess writes directly into the staging dir.
         actions = Path(dest) / "app" / "actions"
         actions.mkdir(parents=True, exist_ok=True)
@@ -315,79 +315,69 @@ def test_worker_output_in_staging_survives_commit(tmp_path, monkeypatch):
     assert dest_receipt.is_file(), "worker receipt was dropped by commit"
 
 
-def test_tenant_capped_writer_waits_then_runs(tmp_path, monkeypatch):
-    """Live 2026-09-30: the automotive re-run died terminally on
-    tenant_slots_exhausted while the owner's other build held the slot.
-    A tenant-scope cap is the owner's own other build -- transient. The
-    WRITER waits (narrated, bounded), it does not bury the run."""
-    import time as _time
+def test_queued_writer_narrates_its_place_then_runs(tmp_path, monkeypatch):
+    """Owner, 2026-10-06: a full slot QUEUES, never fails. The writer hands
+    the worker a queue-place callback; each place lands as a typed
+    ``slot_wait`` NOTE (open, with position), and the wait closes when the
+    worker starts talking. (Was: a 900s retry loop on tenant caps only.)"""
+    from app.factory.build.codewhale_worker import SLOT_WAIT_CLOSED, SLOT_WAIT_OPEN
 
-    from app.factory.build.codewhale_worker import TENANT_SLOTS_EXHAUSTED
+    seen = {}
 
-    calls = {"n": 0}
-    naps = []
-
-    def capped_twice(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None):
-        calls["n"] += 1
-        if calls["n"] <= 2:
-            raise WorkerError(
-                f"worker_concurrency_capped: {TENANT_SLOTS_EXHAUSTED} "
-                "scope=tenant — tenant deadbeef holds 1/1"
-            )
+    def queued_then_runs(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None, slot_wait_left=None, on_slot_wait=None):
+        seen["slot_wait_left"] = slot_wait_left
+        assert on_slot_wait is not None, "the writer must narrate its queue place"
+        on_slot_wait({"position": 2, "ahead": 1, "since_s": 0.0})
+        on_slot_wait({"position": 1, "ahead": 0, "since_s": 30.0})
+        progress("STEP 1: started", {})
         return _receipt([{"tool": "write_file"}])
 
     monkeypatch.setattr(
-        "app.factory.build.codewhale_worker.run_worker_job", capped_twice
+        "app.factory.build.codewhale_worker.run_worker_job", queued_then_runs
     )
-    monkeypatch.setattr(_time, "sleep", lambda s: naps.append(s))
     ctx = _ctx(tmp_path)
     _plant_authored_handler(tmp_path / "build")
     notes = []
-    ctx.note = lambda text, **kw: notes.append(str(text))
+    ctx.note = lambda text, **kw: notes.append(dict(kw, text=str(text)))
 
     result = _run_writer_via_codewhale_worker(ctx)
     assert result.ok, result.detail
-    assert calls["n"] == 3
-    assert naps, "the retry must wait between attempts, not spin"
-    assert any("wait" in n.lower() for n in notes), notes
+    assert callable(seen["slot_wait_left"]), "the wait must be bounded by the run ceiling"
+    waits = [n for n in notes if "slot_wait" in n]
+    assert [w["slot_wait"] for w in waits] == [SLOT_WAIT_OPEN, SLOT_WAIT_OPEN, SLOT_WAIT_CLOSED]
+    assert [w.get("slot_queue", {}).get("position") for w in waits[:2]] == [2, 1]
 
 
-def test_process_capped_writer_fails_immediately(tmp_path, monkeypatch):
-    """A full box is other tenants' work -- refuse fast, never camp on it."""
-    from app.factory.build.codewhale_worker import PROCESS_SLOTS_EXHAUSTED
+def test_slot_wait_spent_at_the_ceiling_is_a_typed_timeout(tmp_path, monkeypatch):
+    """The only bound on a slot wait is the run's ceiling, and spending it is
+    a TIMEOUT (slot_wait_exhausted) -- never "slots full", never the generic
+    worker failure. (Was: process caps failed immediately.)"""
+    from app.factory.build.codewhale_worker import SLOT_WAIT_EXHAUSTED
 
-    calls = {"n": 0}
-
-    def box_full(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None):
-        calls["n"] += 1
-        raise WorkerError(
-            f"worker_concurrency_capped: {PROCESS_SLOTS_EXHAUSTED} scope=process — 3/3"
-        )
+    def ceiling_spent(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None, slot_wait_left=None, on_slot_wait=None):
+        raise WorkerError(f"{SLOT_WAIT_EXHAUSTED}: waited 7200s for a build slot")
 
     monkeypatch.setattr(
-        "app.factory.build.codewhale_worker.run_worker_job", box_full
+        "app.factory.build.codewhale_worker.run_worker_job", ceiling_spent
     )
     with pytest.raises(RoleError) as exc:
         _run_writer_via_codewhale_worker(_ctx(tmp_path))
-    assert "codewhale_worker_failed" in str(exc.value)
-    assert calls["n"] == 1
+    assert exc.value.reason == SLOT_WAIT_EXHAUSTED
+    assert "slots_exhausted" not in str(exc.value)
 
 
-def test_slot_wait_budget_zero_fails_without_retry(tmp_path, monkeypatch):
-    from app.factory.build.codewhale_worker import TENANT_SLOTS_EXHAUSTED
+def test_slot_wait_bound_is_the_run_ceiling(tmp_path):
+    """The writer's slot-wait reader returns the run's own remaining ceiling
+    (deadline_box['ceiling_at']) -- not a separate, shorter timeout.
+    (Was: FACTORY_WORKER_SLOT_WAIT_S, a 900s knob, now gone.)"""
+    from app.factory.build.roles_handlers import _writer_slot_wait_left
 
-    monkeypatch.setenv("FACTORY_WORKER_SLOT_WAIT_S", "0")
-    calls = {"n": 0}
-
-    def capped(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None):
-        calls["n"] += 1
-        raise WorkerError(
-            f"worker_concurrency_capped: {TENANT_SLOTS_EXHAUSTED} scope=tenant — 1/1"
-        )
-
-    monkeypatch.setattr(
-        "app.factory.build.codewhale_worker.run_worker_job", capped
-    )
-    with pytest.raises(RoleError):
-        _run_writer_via_codewhale_worker(_ctx(tmp_path))
-    assert calls["n"] == 1
+    now = {"t": 1000.0}
+    ctx = _ctx(tmp_path)
+    ctx.deadline_box = {"ceiling_at": 1000.0 + 7200.0, "clock": lambda: now["t"]}
+    left = _writer_slot_wait_left(ctx)
+    assert left() == pytest.approx(7200.0)
+    now["t"] = 1000.0 + 7200.0
+    assert left() == pytest.approx(0.0)
+    ctx.deadline_box = {}
+    assert _writer_slot_wait_left(ctx)() is None
