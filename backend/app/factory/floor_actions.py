@@ -43,6 +43,13 @@ class FloorAction(str, Enum):
     #: it in the ledger; nothing is deleted. Continue (and every other run
     #: action) resumes the platform's one branch instead.
     START_OVER = "start_over"
+    #: On a FAILED build: take the platform as it is -- the as-is export, its
+    #: MANIFEST naming FAILED(gate, check, finding) and ``certified: false``.
+    TAKE_COPY = "take_copy"
+    #: On a FAILED build: re-open the intake (country, currency, build level,
+    #: vertical) for this platform. Nothing runs until the typed
+    #: ``confirm_intake``, which then resumes the SAME branch of record.
+    CONTINUE_WITH_INTAKE = "continue_with_intake"
     #: The legacy kit-chain configurator (chain suggestion over the user's
     #: documents) -- reached by this typed action, never by kit vocabulary.
     CHAIN = "chain"
@@ -66,6 +73,11 @@ INTAKE_ACTIONS = frozenset({FloorAction.SET_BUILD_LEVEL, FloorAction.CONFIRM_INT
 #: Actions that need a value (a capability id, a name, a vertical, a level).
 VALUE_REQUIRED = frozenset(
     (REFINEMENT_ACTIONS - {FloorAction.LIST_CAPABILITIES}) | {FloorAction.SET_BUILD_LEVEL}
+)
+
+#: The three choices a FAILED build offers -- typed only, never read from chat.
+FAILURE_ACTIONS = frozenset(
+    {FloorAction.TAKE_COPY, FloorAction.CONTINUE_WITH_INTAKE, FloorAction.START_OVER}
 )
 
 #: Actions that start or resume the coding agent.

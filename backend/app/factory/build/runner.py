@@ -1603,6 +1603,8 @@ class RoleRunner:
             detail=detail,
             payload=payload,
         )
+        if kind is EventKind.RUN_FAILED:
+            self._attach_failure_narrative(phase)
         if (
             outcome is Outcome.SUCCESS
             and getattr(self, "cycle", "code") == "pilot"
@@ -1620,6 +1622,25 @@ class RoleRunner:
             findings=list(findings),
             ledger_path=str(self.ledger.path),
         )
+
+    def _attach_failure_narrative(self, phase: Optional[BuildRole]) -> None:
+        """F5: a FAILED run explains itself from its own ledger (what was
+        tried, where it stopped, why). The narrative never changes the
+        verdict, and its own failure never breaks the run."""
+        from app.factory.build import failure_narrative as fn
+
+        def note(detail: str, **payload: Any) -> None:
+            self.ledger.append(EventKind.NOTE, role=phase, detail=detail, payload=payload)
+
+        try:
+            narrative = fn.compose_failure_narrative(
+                list(self.ledger.events()),
+                note=note,
+                llm=getattr(self, "narrative_llm", None),
+            )
+            fn.attach(self.ledger, narrative, role=phase)
+        except Exception as exc:  # noqa: BLE001 -- telemetry for the owner, never a verdict
+            logger.warning("failure narrative unavailable: %s", type(exc).__name__)
 
     def _climbs_past_code(self) -> bool:
         """True when this run continues past code SUCCESS: the declared

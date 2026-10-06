@@ -912,6 +912,21 @@ export function Floor({
     }
   }
 
+  async function takeCopy() {
+    // The typed take_copy records the choice; the copy is the as-is export,
+    // its MANIFEST naming FAILED(gate, check, finding), never certified.
+    await sendTyped({ action: 'take_copy' })
+    setDownloading(true)
+    setDownloadError(null)
+    try {
+      await downloadProductPackage(sessionId, { asIs: true })
+    } catch (e) {
+      setDownloadError(e instanceof Error ? e.message : 'export failed')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   async function download() {
     const aff = exportAffordance(liveCoderBuild)
     if (aff.disabled) return
@@ -1280,8 +1295,15 @@ export function Floor({
               {liveCoderBuild.next_continue}
             </p>
           )}
+          {coderFailed && liveCoderBuild?.failure_narrative?.text && (
+            <p className="muted" data-testid="floor-failure-narrative">
+              {liveCoderBuild.failure_narrative.text}
+            </p>
+          )}
           {coderFailed && (
-            <div className="card-actions">
+            // A FAILED build offers exactly three TYPED choices. Chat text
+            // never triggers any of them.
+            <div className="card-actions" data-testid="floor-failure-choices">
               <span className="status-pill status-pill-failed" data-testid="floor-failed-pill">
                 {liveCoderBuild?.failure
                   ? `${liveCoderBuild.failure.location || liveCoderBuild.failure.phase || 'Build'} failed`
@@ -1289,45 +1311,33 @@ export function Floor({
               </span>
               <button
                 type="button"
-                data-testid="floor-rerun-writer"
-                disabled={busy || rerunBusy || accessPaused}
-                onClick={() => void rerunWriter()}
+                data-testid="floor-take-copy"
+                title="Download the platform as it stands. The export is labelled FAILED and names the failing gate, check and finding; it is not certified."
+                disabled={busy || downloading || accessPaused}
+                onClick={() => void takeCopy()}
               >
-                Re-run the writer
+                {downloading ? 'Packing…' : 'Take a copy'}
               </button>
               <button
                 type="button"
                 className="ghost"
-                disabled={exportAffordance(liveCoderBuild).disabled || downloading}
-                title={exportAffordance(liveCoderBuild).title}
-                onClick={() => void download()}
+                data-testid="floor-continue-with-intake"
+                title="Reopen the intake (country, currency, build level, vertical). Confirm resumes this platform's own branch with a fresh rework budget."
+                disabled={busy || accessPaused}
+                onClick={() => void sendTyped({ action: 'continue_with_intake' })}
               >
-                {exportAffordance(liveCoderBuild).label}
-              </button>
-              <button type="button" className="ghost" onClick={goPlatforms}>
-                Open Your Platforms
+                Continue with new answers
               </button>
               <button
                 type="button"
                 className="ghost"
                 data-testid="floor-start-over"
                 title="Build this platform again from the approved feature list on a fresh workspace. The current head is kept as an archive tag; nothing is deleted."
-                disabled={busy || rerunBusy || accessPaused}
+                disabled={busy || accessPaused}
                 onClick={() => void sendTyped({ action: 'start_over' })}
               >
                 Start over
               </button>
-              {onNewSession && (
-                <button
-                  type="button"
-                  className="ghost"
-                  data-testid="floor-new-product"
-                  disabled={busy || newSessionBusy || accessPaused}
-                  onClick={() => void startNewSession()}
-                >
-                  Start a new product
-                </button>
-              )}
             </div>
           )}
           {downloadError && <div className="error-box">{downloadError}</div>}

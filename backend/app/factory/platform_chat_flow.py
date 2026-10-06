@@ -176,7 +176,8 @@ def apply_intake_action(
     any blueprint exists. Refused once the blueprint is approved: the level is
     part of the frozen blueprint hashed at approval, never added afterwards."""
     pd = state.product_design
-    if pd.blueprint_approved or has_running_build(state):
+    reopened = bool(getattr(pd, "intake_reopened", False)) and not has_running_build(state)
+    if (pd.blueprint_approved and not reopened) or has_running_build(state):
         return {
             "sse": "info",
             "ok": False,
@@ -1316,6 +1317,7 @@ def resume_failed_platform(
     state: Any,
     output_root: Optional[Path] = None,
     triggered_by: str = "continue",
+    intake_changed: bool = False,
 ) -> Dict[str, Any]:
     """Continue / Build again / Rebuild with new intake on a FAILED platform.
 
@@ -1376,6 +1378,7 @@ def resume_failed_platform(
             tenant_identity=getattr(state, "user_id", None),
             brief=str(getattr(pd, "brief", "") or "").strip(),
             platform_id=ensure_platform_id(pd),
+            intake_changed=intake_changed,
         )
     except CodeCliUnavailable as exc:
         return _cli_unavailable_reply(pd, exc)
@@ -1459,6 +1462,83 @@ def start_over(
     reply["archived"] = (
         {"tag": archived.tag, "sha": archived.sha} if archived else None
     )
+    return reply
+
+
+def take_copy(state: Any, output_root: Optional[Path] = None) -> Dict[str, Any]:
+    """The typed "Take a copy" on a FAILED build: the as-is export, whose
+    MANIFEST.json names FAILED(gate, check, finding) and ``certified: false``.
+    It changes nothing: the platform and its branch stay as they are."""
+    if not is_generation_terminal_failure(state, output_root):
+        return {
+            "sse": "info",
+            "ok": False,
+            "summary": "There is no failed build to take a copy of.",
+        }
+    return {
+        "sse": "info",
+        "ok": True,
+        "summary": (
+            "Your copy is the platform as it stands: the export is labelled "
+            "FAILED, its MANIFEST.json names the failing gate, check and finding, "
+            "and it is not certified. Nothing about the platform changes."
+        ),
+        "download": {"as_is": True},
+    }
+
+
+def continue_with_intake(state: Any, output_root: Optional[Path] = None) -> Dict[str, Any]:
+    """The typed "Continue with new answers" on a FAILED build: the intake
+    line opens again, pre-filled with the declared answers. Nothing runs until
+    the typed ``confirm_intake``, which resumes this platform's own branch."""
+    pd = state.product_design
+    if not is_generation_terminal_failure(state, output_root):
+        return {
+            "sse": "info",
+            "ok": False,
+            "summary": "There is no failed build to continue.",
+            "intake": intake_state(pd),
+        }
+    declared = {
+        k: v
+        for k, v in intake_state(pd)["declared"].items()
+        if isinstance(v, str) and v
+    }
+    pd.intake_reopened = True
+    pd.intake_proposal = declared or None
+    return {
+        "sse": "info",
+        "ok": True,
+        "summary": (
+            "Change any answer on the intake line, then press Confirm. The build "
+            "resumes on this platform's own branch with a fresh rework budget; "
+            "nothing runs until you confirm."
+        ),
+        "intake": intake_state(pd),
+    }
+
+
+def intake_reopened(state: Any) -> bool:
+    return bool(getattr(getattr(state, "product_design", None), "intake_reopened", False))
+
+
+def confirm_and_continue(state: Any, output_root: Optional[Path] = None) -> Dict[str, Any]:
+    """The typed Confirm on a re-opened intake: store the answers, then resume
+    the SAME branch of record. Unchanged answers resume at the failing phase;
+    changed ones change the frozen blueprint's inputs, so the run is rebased
+    onto them on the same workspace (start_runner_build ``intake_changed``)."""
+    pd = state.product_design
+    stored = confirm_intake(pd)
+    pd.intake_reopened = False
+    if isinstance(pd.blueprint, dict) and pd.vertical and pd.blueprint.get("vertical") != pd.vertical:
+        pd.blueprint["vertical"] = pd.vertical
+    reply = resume_failed_platform(
+        state, output_root=output_root, triggered_by="continue_with_intake", intake_changed=True
+    )
+    reply["intake"] = intake_state(pd)
+    if stored:
+        parts = [f"{k.replace('_', ' ')} {v}" for k, v in stored.items()]
+        reply["summary"] = "Confirmed: " + ", ".join(parts) + ". " + str(reply.get("summary") or "")
     return reply
 
 

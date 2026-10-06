@@ -85,6 +85,9 @@ LEDGER_SCHEMA = "build_ledger.v1"
 
 #: NOTE payload keys recording a platform's identity and its branch of record.
 PLATFORM_ID_KEY = "platform_id"
+#: NOTE payload key of a typed inputs rebase ("Continue with new answers"):
+#: the run continues on the same workspace from new inputs, every phase anew.
+INPUTS_REBASED_KEY = "inputs_rebased"
 PLATFORM_BRANCH_KEY = "platform_branch"
 
 
@@ -397,6 +400,22 @@ class BuildLedger:
             },
         )
 
+    def rebase_inputs(self, inputs_hash: str, *, reason: str) -> BuildEvent:
+        """Continue the SAME run from new inputs (the typed "Continue with new
+        answers"). Append-only: the old verdicts stay in the record, but every
+        phase must pass again against the new inputs, and the resume guard
+        reads the new hash from here on."""
+        return self.append(
+            EventKind.NOTE,
+            detail=f"INPUTS REBASED: {reason}",
+            payload={
+                INPUTS_REBASED_KEY: True,
+                "inputs_hash": inputs_hash,
+                "previous_inputs_hash": self.inputs_hash(),
+                "reason": reason,
+            },
+        )
+
     def open_pilot_cycle(
         self,
         *,
@@ -440,10 +459,16 @@ class BuildLedger:
     # -- derived state ---------------------------------------------------
 
     def inputs_hash(self) -> Optional[str]:
+        """The hash the run is pinned to: RUN_STARTED's, or the latest typed
+        rebase's (``rebase_inputs``)."""
+        current: Optional[str] = None
         for event in self.events():
-            if event.kind is EventKind.RUN_STARTED:
-                return str(event.payload.get("inputs_hash") or "") or None
-        return None
+            payload = event.payload or {}
+            if event.kind is EventKind.RUN_STARTED and current is None:
+                current = str(payload.get("inputs_hash") or "") or None
+            elif event.kind is EventKind.NOTE and payload.get(INPUTS_REBASED_KEY):
+                current = str(payload.get("inputs_hash") or "") or current
+        return current
 
     def completed_roles(self) -> Set[BuildRole]:
         """Roles whose most recent *completed* attempt was a pass.
@@ -470,6 +495,10 @@ class BuildLedger:
                 state.pop(BuildRole.STORE_MANAGER, None)
                 if (event.payload or {}).get("reopen_writer"):
                     state.pop(BuildRole.WRITER, None)
+                continue
+            if event.kind is EventKind.NOTE and (event.payload or {}).get(INPUTS_REBASED_KEY):
+                # New inputs: nothing passed against them yet.
+                state.clear()
                 continue
             if event.kind is EventKind.REWORK and (event.payload or {}).get("reopen"):
                 # A rework that re-opens a finished run (a product-owned
@@ -543,6 +572,8 @@ class BuildLedger:
             if event.kind in (EventKind.RUN_SUCCEEDED, EventKind.RUN_FAILED):
                 last = event
             elif event.kind is EventKind.PILOT_OPENED:
+                last = None
+            elif event.kind is EventKind.NOTE and (event.payload or {}).get(INPUTS_REBASED_KEY):
                 last = None
             elif event.kind is EventKind.REWORK and (event.payload or {}).get("reopen"):
                 last = None

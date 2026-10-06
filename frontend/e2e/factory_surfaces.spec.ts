@@ -307,7 +307,10 @@ test('Floor New session starts a clean workspace after a failed run', async ({ p
   await expect(page.locator('.bp-drafting-mode', { hasText: 'coding agent' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'New session' })).toBeEnabled()
-  await page.getByRole('button', { name: 'Start a new product' }).click()
+  // A new product is the header's New session; the failure panel offers
+  // only its three typed choices.
+  await expect(page.getByTestId('floor-failure-choices').getByRole('button')).toHaveCount(3)
+  await page.getByRole('button', { name: 'New session' }).click()
   await expect.poll(() => created).toEqual(['sess_e2e_fresh'])
   await expect(page.getByRole('heading', { name: 'Coding agent stopped' })).toHaveCount(0)
   await expect(page.getByTestId('floor-failed-pill')).toHaveCount(0)
@@ -404,9 +407,11 @@ test('Floor ?session= deep-link selects that session — not list[0] Download', 
   await expect(page.getByRole('heading', { name: 'Coding agent stopped' })).toBeVisible()
   await expect(page.getByTestId('floor-failed-pill')).toContainText('Pilot suite failed')
   await expectNoGoldFinished(page)
-  // Failed panel offers the honest exits: enabled as-is download + rerun.
-  await expect(page.getByRole('button', { name: 'Download as-is (failed gates)' })).toBeEnabled()
-  await expect(page.getByTestId('floor-rerun-writer')).toBeEnabled()
+  // Failed panel offers the three typed choices: an as-is copy, Continue
+  // with new answers, Start over.
+  await expect(page.getByTestId('floor-take-copy')).toBeEnabled()
+  await expect(page.getByTestId('floor-continue-with-intake')).toBeEnabled()
+  await expect(page.getByTestId('floor-start-over')).toBeEnabled()
 })
 
 /** Live sess_cec9a1345b2049bb 1449 photograph — thin authorship, package 409. */

@@ -1022,6 +1022,7 @@ def build_status(
             failure_triple,
             next_continue_line,
         )
+        from app.factory.build.failure_narrative import read_narrative
 
         triple = failure_triple(payload, progress.get("failure"))
         failed = {
@@ -1041,6 +1042,8 @@ def build_status(
             "failed": triple,
             "failed_label": failed_label(triple) if triple else None,
             "next_continue": next_continue_line(triple),
+            # F5: what was tried, where it stopped, why -- from the ledger.
+            "failure_narrative": read_narrative(output_dir),
         }
         if payload.get("repo_url"):
             failed["repo_url"] = payload.get("repo_url")
@@ -1436,6 +1439,7 @@ def start_runner_build(
     attach_passed: Optional[Sequence[str]] = None,
     platform_id: Optional[str] = None,
     start_over: bool = False,
+    intake_changed: bool = False,
 ) -> Dict[str, Any]:
     """Start a background runner build and return immediately.
 
@@ -1554,6 +1558,16 @@ def start_runner_build(
             )
         if status.get("state") == "failed" and not start_over:
             resumed_failed = True
+            if intake_changed and ledger.inputs_hash() not in (None, inputs_hash):
+                # Continue with new answers: the intake (locale, level,
+                # vertical) is part of the frozen blueprint, so the inputs
+                # changed. Same platform, same branch, same workspace -- the
+                # run is REBASED onto the new inputs and every phase runs
+                # again on the kept tree (the writer reworks what is there).
+                # Mixing inputs without this typed rebase is still refused.
+                ledger.rebase_inputs(
+                    inputs_hash, reason="intake changed on Continue with new answers"
+                )
         if status.get("state") == "failed":
             # G2: re-enter the SAME workspace when it is intact and its
             # ledger shows COLLECTOR/CLONER/WRITER passed; fresh only when it
