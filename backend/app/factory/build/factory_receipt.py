@@ -103,13 +103,30 @@ def base_requirement_dists(root: Path) -> FrozenSet[str]:
     )
 
 
-def record_receipt(root: Path | str) -> Dict[str, Any]:
-    """Write the receipt for the workspace as it is now; return it."""
+def factory_stamped_paths() -> Tuple[str, ...]:
+    """Every file the Factory writes into a build and the writer may not own.
+
+    The harness files (factory_rendered_paths) AND the deploy modules the
+    Factory stamps outright on every writer path (deploy.FACTORY_OWNED_DEPLOY_
+    MODULES): a crash inside the Factory's own app/observe.py is the
+    Factory's, and a receipt that left it off called it the writer's.
+    """
+    from app.factory.build.deploy import FACTORY_OWNED_DEPLOY_MODULES
     from app.factory.build.store_acceptance import factory_rendered_paths
 
+    seen: Dict[str, None] = {}
+    for rel in (*factory_rendered_paths(), *FACTORY_OWNED_DEPLOY_MODULES):
+        rel = _norm_rel(rel)
+        if rel:
+            seen.setdefault(rel, None)
+    return tuple(seen)
+
+
+def record_receipt(root: Path | str) -> Dict[str, Any]:
+    """Write the receipt for the workspace as it is now; return it."""
     root = Path(root)
     files: Dict[str, str] = {}
-    for rel in factory_rendered_paths():
+    for rel in factory_stamped_paths():
         rel = _norm_rel(rel)
         path = root / rel
         if rel and path.is_file():
