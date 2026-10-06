@@ -15,9 +15,9 @@ from pathlib import Path
 import pytest
 
 from app.factory.build.authority import BuildRole
+from app.factory.build.findings import Finding, rework_targets
 from app.factory.build.roles import (
     RoleContext,
-    _failing_capability_ids,
     run_writer,
 )
 from app.factory.build.workspace import RoleWorkspace
@@ -28,24 +28,27 @@ def _no_paid_calls(monkeypatch):
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
 
 
+def _typed(capability_id, text="E  AssertionError: the payload was refused"):
+    """A TESTER finding as the gate now emits it: the capability is a field.
+    The text deliberately names no capability -- the ratchet must not read it."""
+    return Finding(text, gate="tests_green", check_id="gates", capability_id=capability_id)
+
+
 def test_no_findings_means_everything_is_fair_game():
-    assert _failing_capability_ids((), ["a", "b"]) == {"a", "b"}
+    assert rework_targets((), ["a", "b"]) == {"a", "b"}
 
 
 def test_named_findings_implicate_only_their_capabilities():
-    findings = [
-        "E  AssertionError: site_inspection_log rejected a payload built "
-        "from its own schema: Missing required fields",
-    ]
+    findings = [_typed("site_inspection_log")]
     caps = ["site_inspection_log", "defect_register", "crew_assignment"]
-    assert _failing_capability_ids(findings, caps) == {"site_inspection_log"}
+    assert rework_targets(findings, caps) == {"site_inspection_log"}
 
 
 def test_findings_naming_nothing_regenerate_everything():
     """An infrastructure failure cannot be localised; guessing 'nothing'
     would end the rework with the suite still red."""
-    findings = ["E  ImportError: cannot import name 'app'"]
-    assert _failing_capability_ids(findings, ["a", "b"]) == {"a", "b"}
+    findings = [_typed(None, "E  ImportError: cannot import name 'app'")]
+    assert rework_targets(findings, ["a", "b"]) == {"a", "b"}
 
 
 class _Cap:
@@ -95,7 +98,7 @@ def test_a_green_capability_survives_a_rework_round_untouched(tmp_path, stub_cod
 
     rework = _writer_ctx(
         tmp_path,
-        work_list=["E  AssertionError: beta_cap rejected a payload"],
+        work_list=[_typed("beta_cap")],
         state=state,
     )
     result = run_writer(rework)
@@ -123,7 +126,7 @@ def test_a_failing_capability_is_regenerated(tmp_path, stub_coder):
 
     rework = _writer_ctx(
         tmp_path,
-        work_list=["E  AssertionError: beta_cap rejected a payload"],
+        work_list=[_typed("beta_cap")],
         state=state,
     )
     run_writer(rework)
@@ -144,7 +147,7 @@ def test_specs_of_green_capabilities_are_reused(tmp_path, stub_coder):
 
     rework = _writer_ctx(
         tmp_path,
-        work_list=["E  beta_cap exploded"],
+        work_list=[_typed("beta_cap", "E  exploded")],
         state=state,
     )
     reworked = run_writer(rework)
