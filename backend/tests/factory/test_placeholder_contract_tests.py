@@ -205,7 +205,7 @@ def _probe_values() -> str:
     from app.factory.build.product_gate import ROUND_TRIP_PROBE
 
     start = ROUND_TRIP_PROBE.index("def _ann(")
-    end = ROUND_TRIP_PROBE.index("def _entity_map(")
+    end = ROUND_TRIP_PROBE.index("AUTH = {")
     return ROUND_TRIP_PROBE[start:end]
 
 

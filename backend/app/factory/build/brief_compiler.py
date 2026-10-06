@@ -805,9 +805,11 @@ def render_slot_bodies(
         "ACCEPTANCE is run by the harness, not the coder.",
         "- the product boots  [check:boot]",
         f"- own gates green  [check:{SUITE_CHECK}]",
-        "- one-record round-trip per capability (POST creates, GET returns it); a capability "
-        "calling a declared placeholder connector answers HTTP 503 error_kind unavailable "
-        f"instead and is not judged  [check:{PRODUCT_ROUND_TRIP_CHECK}]",
+        "- one-record round-trip per capability (POST creates, GET returns it); the store entity "
+        "read back is the one its route declares it saves to (ROUTE_ENTITIES in the Factory's "
+        "app/routes.py) -- your migration's table and your handler's ENTITY use that same "
+        "name; a capability calling a declared placeholder connector answers HTTP 503 "
+        f"error_kind unavailable instead and is not judged  [check:{PRODUCT_ROUND_TRIP_CHECK}]",
         persist_accept_acceptance_line(),
         schema_accept_acceptance_line(),
         *writer_gate_acceptance_lines(),

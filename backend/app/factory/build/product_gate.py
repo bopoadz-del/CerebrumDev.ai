@@ -38,6 +38,8 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING, List
 
+from app.factory.build.entity_contract import ENTITY_RESOLVER_SLOT, ENTITY_RESOLVER_SRC
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.factory.build.gates import GateContext, GateResult
 
@@ -57,6 +59,7 @@ GATE_SCOPES = {
         "authorship floor is not acceptance"
     ),
 }
+
 
 #: Boots the product and asks every capability to remember one record.
 #:
@@ -133,19 +136,6 @@ def _payload(cls):
     return {n: _value(cls, n) for n in getattr(cls, "FIELDS", [])}
 
 
-def _entity_map():
-    try:
-        from app.jobs import CAPABILITIES
-    except Exception:
-        return {}
-    out = {}
-    for item in CAPABILITIES or []:
-        if isinstance(item, dict) and item.get("id") and item.get("entity"):
-            out[item["id"]] = item["entity"]
-    return out
-
-
-ENTITIES = _entity_map()
 AUTH = {"Authorization": "Bearer " + os.environ.get("PLATFORM_TOKEN", "dev-local-token")}
 
 # The Factory-written declaration of placeholder connectors. A product built
@@ -157,13 +147,11 @@ except Exception:
         return False
 
 
-def _entity_of(cap_id, cls):
-    return ENTITIES.get(cap_id) or getattr(cls, "ENTITY", None) or cap_id
-
+ENTITY_RESOLVER = None  # rendered in at definition (entity_contract)
 
 def _rows(entity):
     try:
-        return len(store.list_all(entity))
+        return len(_list_entity(entity))
     except Exception:
         return None
 
@@ -234,13 +222,30 @@ for cap_id, cls in MODELS.items():
         )
         continue
 
-    entity = _entity_of(cap_id, cls)
+    entity, declared = _declared_entity(cap_id, cls)
+    if not declared:
+        # Where it persists is the product's declaration (the ENTITY its
+        # handler module carries, which the route saves to). Never guessed
+        # from the capability id.
+        misses.append(
+            "%s: declares no store entity -- neither app/routes.py ROUTE_ENTITIES "
+            "nor app/actions/%s.py ENTITY says where its route saves (ENTITY = "
+            "None for a capability that persists nothing)"
+            % (cap_id, str(cap_id).replace("-", "_"))
+        )
+        continue
+    if not entity:
+        # Declared read-only/aggregate: nothing to remember. Named rather
+        # than counted as a pass, so a product made entirely of these cannot
+        # be reported as round-tripping.
+        unjudged.append("%s (declares no persisted entity)" % cap_id)
+        continue
     rows = _rows(entity)
     if rows is None:
-        # No readable entity: a generate-only capability has nothing to
-        # remember. Named rather than counted as a pass, so a product made
-        # entirely of these cannot be reported as round-tripping.
-        unjudged.append("%s (no readable entity %r)" % (cap_id, entity))
+        misses.append(
+            "%s: declares ENTITY %r but the store cannot read it back"
+            % (cap_id, entity)
+        )
         continue
     if rows < 1:
         misses.append(
@@ -248,7 +253,7 @@ for cap_id, cls in MODELS.items():
             "did not remember what it was told" % (cap_id, entity)
         )
         continue
-    if not any(_record_matches(r, body) for r in store.list_all(entity)):
+    if not any(_record_matches(r, body) for r in _list_entity(entity)):
         misses.append(
             "%s: %s grew to %d row(s) but none carries a value the POST "
             "supplied" % (cap_id, entity, rows)
@@ -256,7 +261,9 @@ for cap_id, cls in MODELS.items():
         continue
 
     try:
-        got = client.get("/v1/" + cap_id)
+        # The same token the POST used: the list route resolves the same
+        # tenant, and a token-guarded GET without one never reads anything.
+        got = client.get("/v1/" + cap_id, headers=AUTH)
     except Exception as exc:
         misses.append("%s: GET raised %s: %s" % (cap_id, type(exc).__name__, exc))
         continue
@@ -295,6 +302,7 @@ sys.stdout.write(
 )
 raise SystemExit(1 if misses else 0)
 '''
+ROUND_TRIP_PROBE = ROUND_TRIP_PROBE.replace(ENTITY_RESOLVER_SLOT, ENTITY_RESOLVER_SRC, 1)
 
 
 def _marked(lines: List[str], prefix: str) -> List[str]:

@@ -568,6 +568,10 @@ def render_auth_module() -> str:
     return "\n".join(lines)
 
 
+#: The tenant a single-tenant product's rows live under: the default the
+#: rendered app/tenancy.py declares. One definition, read by every renderer.
+DEFAULT_TENANT_ID = "local"
+
 TENANCY_REL = "app/tenancy.py"
 
 
@@ -600,7 +604,7 @@ def render_tenancy_module() -> str:
         '#: server-side, resolved from the token, never from the payload.',
         'RESERVED_TENANT_KEYS = ("tenant", "tenant_id", "tenant_name", "org_id", "organisation_id")',
         '',
-        'DEFAULT_TENANT = "local"',
+        'DEFAULT_TENANT = %r' % (DEFAULT_TENANT_ID,),
         '',
         '',
         'class TenantRefused(PermissionError):',
