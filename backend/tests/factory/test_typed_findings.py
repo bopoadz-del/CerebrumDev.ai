@@ -365,6 +365,13 @@ def test_the_writer_receives_typed_ids_and_the_ledger_round_trips_them(
     assert [x.capability_id for x in back] == [cap, None]
     # The writer's rework round was handed typed items; the ratchet target
     # is the named capability only (the unlocalised one does not widen it).
+    from app.factory.build.product_suites import finding_items, recheck_items
+
     handed = seen[-1]
-    assert all(isinstance(x, Finding) for x in handed)
+    # Every FINDING the writer is handed is typed (ids, not text); the one
+    # re-check command (#660, kind "recheck") is guidance, not a finding.
+    found = finding_items(handed)
+    assert found and all(isinstance(x, Finding) for x in found)
+    assert [x.capability_id for x in found] == [cap, None]
+    assert len(recheck_items(handed)) == 1
     assert F.rework_targets(handed, picked["plan"]) == {cap}

@@ -194,7 +194,19 @@ def _lift_from_probe(names):
     assert len(picked) == len(names), (
         "not all of %s found in the probe script" % sorted(names)
     )
-    return compile(ast.Module(body=picked, type_ignores=[]), "<probe>", "exec")
+    # Every miss the probe records is built by its record helpers (the miss
+    # line carries its capability as a field, F1 typed findings). Lift them
+    # with any function, from the same shipped source.
+    helpers = [
+        n for n in tree.body
+        if isinstance(n, (ast.FunctionDef, ast.ClassDef)) and n.name in _MISS_HELPERS
+    ]
+    assert len(helpers) == len(_MISS_HELPERS), "the probe's miss helpers are missing"
+    return compile(ast.Module(body=helpers + picked, type_ignores=[]), "<probe>", "exec")
+
+
+#: The probe's record helpers every miss-producing function calls.
+_MISS_HELPERS = ("_Miss", "_miss", "_cap_of")
 
 
 @pytest.fixture
@@ -423,6 +435,9 @@ def test_the_recording_function_captures_a_refusal(fake_dispatch):
     line = ns["contract_misses"][0]
     assert line.startswith("unit_registry_and_vacancy_tracking: ")
     assert "envelope shape" in line
+    # The capability travels as a field of the miss (typed record), not
+    # only as text the host would have to split.
+    assert ns["_cap_of"](line) == "unit_registry_and_vacancy_tracking"
 
 
 def test_the_recording_function_still_returns_the_block_answer(fake_dispatch):
@@ -528,6 +543,7 @@ def test_nothing_stored_is_named():
     line = ns["roundtrip_misses"][0]
     assert "ROUND-TRIP: nothing stored" in line
     assert "did not remember what it was told" in line
+    assert ns["_cap_of"](line) == "unit_registry"
 
 
 def test_the_exact_lettings_answer_is_named():
@@ -644,7 +660,14 @@ def test_all_capabilities_forgetting_is_a_halt():
     from app.factory.build.writer_behaviour import HALT_SENTENCES, _render_probe
     assert HALT_SENTENCES["roundtrip"] == "no capability could read back a record it stored"
     assert HALT_SENTENCES["roundtrip"] in _render_probe()
-    assert "_rt_caps = set(m.split(\":\", 1)[0] for m in roundtrip_misses)" in BEHAVIOUR_PROBE
+    # The halting set is counted from each miss's capability FIELD (F1 typed
+    # findings), never by splitting the miss text at its first colon.
+    assert "_rt_caps = set(_cap_of(m) for m in roundtrip_misses)" in BEHAVIOUR_PROBE
+    assert 'm.split(":", 1)[0]' not in BEHAVIOUR_PROBE
+    ns: dict = {}
+    exec(_lift_from_probe(set()), ns)
+    misses = [ns["_miss"]("a_cap", "text: with: colons"), ns["_miss"]("b_cap", "other")]
+    assert set(ns["_cap_of"](m) for m in misses) == {"a_cap", "b_cap"}
 
 
 def test_an_isolated_round_trip_miss_does_not_halt():
