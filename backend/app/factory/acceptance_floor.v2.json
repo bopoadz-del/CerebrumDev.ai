@@ -77,8 +77,8 @@
     },
     {
       "id": "health_fail_closed",
-      "requirement_text": "/health reports unhealthy when a dependency it needs is down. A health check that answers 200 regardless is worse than none.",
-      "brief_render": "- health_fail_closed: /health reports unhealthy when a dependency it needs is down. A health check that answers 200 regardless is worse than none.",
+      "requirement_text": "/health reports unhealthy when a dependency it needs is down. A health check that answers 200 regardless is worse than none. The Factory ships app/health.py, app/observe.py and app/revision.py and owns their shape; app/main.py serves GET /health by returning app.health.health_response() and calls app.observe.install_observability(app) -- never a health body or request logger of its own.",
+      "brief_render": "- health_fail_closed: /health reports unhealthy when a dependency it needs is down. A health check that answers 200 regardless is worse than none. The Factory ships app/health.py, app/observe.py and app/revision.py and owns their shape; app/main.py serves GET /health by returning app.health.health_response() and calls app.observe.install_observability(app) -- never a health body or request logger of its own.",
       "gate_fn": "check_health_fail_closed",
       "check": "/health fails closed on a broken dependency",
       "universal": true,

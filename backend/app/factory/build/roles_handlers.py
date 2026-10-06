@@ -3972,8 +3972,23 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
     # owns. Live: sess_42d244d317f042b2 (Cerebrum VenueOps run 2),
     # "suite_red: missing module -- FAILED tests.test_domain_acceptance".
     # Gaps only, same as above: anything the agent wrote stays as written.
-    from app.factory.build.deploy import backfill_deploy_substrate
+    from app.factory.build.deploy import (
+        backfill_deploy_substrate,
+        stamp_factory_deploy_modules,
+    )
     from app.factory.build.domain_acceptance import backfill_domain_substrate
+
+    # health/observe/revision are Factory-owned: the stamped suite reads
+    # their SHAPES (health body, log line, revision identity), not only the
+    # names the backfill checks. Stamped outright, from deploy.py.
+    stamped = stamp_factory_deploy_modules(ctx.workspace)
+    if stamped:
+        ctx.note(
+            "deploy modules stamped by the factory (shape the stamped suite "
+            "reads): " + ", ".join(stamped),
+            stage="substrate",
+            source="factory",
+        )
 
     for label, result in (
         ("deploy", backfill_deploy_substrate(ctx.workspace)),
@@ -5579,6 +5594,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
     """
     # The roster the route suite asserts comes from the same role contracts
     # that stamp app/jobs.py (build/kernel_publish.py) -- one source.
+    from app.factory.build.deploy import render_health_route_test as _render_health_route_test
     from app.factory.build.kernel_publish import render_roster_test as _render_roster_test
 
     # G1 ownership, the honest half: remember which tests THIS function
@@ -5966,15 +5982,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         *render_payload_helpers(),
         "",
         "",
-        "def test_health():",
-        '    resp = client.get("/health")',
-        "    assert resp.status_code == 200",
-        "    body = resp.json()",
-        '    assert body["status"] == "ok"',
-        '    assert body["ok"] is True',
-        '    names = {item["name"] for item in body["checks"]}',
-        '    assert {"process", "persistent_disk", "database", "migrations"} <= names',
-        "    assert all(item[\"ok\"] for item in body[\"checks\"])",
+        *_render_health_route_test(),
         "",
         "",
         *_render_roster_test(),
