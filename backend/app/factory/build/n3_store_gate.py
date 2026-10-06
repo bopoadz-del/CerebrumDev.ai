@@ -38,6 +38,7 @@ from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.build.store_acceptance import (
     ACCEPTANCE_CHECK_NAMES,
     ACCEPTANCE_REQUIRED,
+    NOT_RUN,
     AcceptanceLine,
     AcceptanceReport,
     finalize_owners,
@@ -77,6 +78,18 @@ SCORE_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
 #: authorship counter).
 STORE_GATE_ARTIFACT_NAME = "store-gate"
 STORE_GATE_ARTIFACT_FILE = "store_gate.json"
+
+
+def store_gate_artifact_name(sha: str) -> str:
+    """The artifact name the gate run uploads for ``sha``.
+
+    The workflow uploads ``store-gate-${{ github.sha }}`` and GitHub's
+    ``?name=`` filter is an exact match, so asking for the bare prefix found
+    nothing on every red run: no itemised lines, and the fallback then wore
+    every floor line with the same red status (live 82a19a82: the only FAIL
+    was audit_clean, the writer was handed no_token_401).
+    """
+    return f"{STORE_GATE_ARTIFACT_NAME}-{sha}"
 
 #: N3 G-floor names → Factory ``ACCEPTANCE_CHECK_NAMES`` aliases.
 N3_NAME_ALIASES = {
@@ -421,7 +434,7 @@ def _artifact_lines(
 
     path = (
         f"/repos/{target.owner}/{target.repo}/actions/artifacts"
-        f"?name={quote(STORE_GATE_ARTIFACT_NAME, safe='')}&per_page=100"
+        f"?name={quote(store_gate_artifact_name(target.sha), safe='')}&per_page=100"
     )
     status, body = github_request("GET", path, token=token, opener=opener)
     if status >= 400 or not isinstance(body, Mapping):
@@ -468,11 +481,18 @@ def report_from_store_gate_payload(raw: Mapping[str, Any]) -> AcceptanceReport:
     """Map a GHA ``store_gate.json`` (N3 names) onto Factory aliases."""
     lines: List[AcceptanceLine] = []
     seen: set[str] = set()
+    #: FAIL lines the floor has no entry for. Never relabelled as another
+    #: check: the Factory owes them (its floor and its gate disagree).
+    unknown_failed: List[str] = []
     for item in raw.get("lines") or []:
         if not isinstance(item, Mapping):
             continue
         name = _factory_check_name(str(item.get("name") or ""))
-        if name not in ACCEPTANCE_CHECK_NAMES or name in seen:
+        if name not in ACCEPTANCE_CHECK_NAMES:
+            if name and str(item.get("status") or "").upper() == "FAIL":
+                unknown_failed.append(name)
+            continue
+        if name in seen:
             continue
         seen.add(name)
         lines.append(
@@ -487,7 +507,11 @@ def report_from_store_gate_payload(raw: Mapping[str, Any]) -> AcceptanceReport:
     ordered = [
         by_name.get(
             name,
-            AcceptanceLine(name=name, status="FAIL", detail="omitted"),
+            # The gate reported nothing for this check: not measured, so not
+            # anyone's failure (a FAIL here was billed to the product).
+            AcceptanceLine(
+                name=name, status=NOT_RUN, detail="omitted by the store-gate artifact"
+            ),
         )
         for name in ACCEPTANCE_CHECK_NAMES
     ]
@@ -498,17 +522,21 @@ def report_from_store_gate_payload(raw: Mapping[str, Any]) -> AcceptanceReport:
     ok = bool(raw.get("ok")) and passed >= total and all(
         line.satisfied for line in ordered
     )
-    return finalize_owners(
+    report = finalize_owners(
         AcceptanceReport(
             passed=passed,
             total=total,
-            ok=ok,
+            ok=ok and not unknown_failed,
             lines=ordered,
             missing=False,
             via=str(raw.get("via") or "store_gate.json"),
             detail=str(raw.get("detail") or raw.get("score") or f"{passed}/{total}"),
         )
     )
+    report.factory_owed = list(report.factory_owed) + [
+        name for name in unknown_failed if name not in report.factory_owed
+    ]
+    return report
 
 
 def report_from_snapshot(snap: StoreGateSnapshot) -> AcceptanceReport:
@@ -525,11 +553,12 @@ def report_from_snapshot(snap: StoreGateSnapshot) -> AcceptanceReport:
                 harness_ran=snap.harness_ran,
             )
         )
-    # Not itemised: the status carried a score and nothing else, so every
-    # line wears the score. Nobody can be blamed for a line like that, and
-    # finalize_owners will not: every line is FAIL, so product_ok is False
-    # and the factory lane is not invoked on a guess.
-    status = "PASS" if snap.is_12_of_12 else "FAIL"
+    # Not itemised: the status carried a score and nothing else, so no line
+    # can be anyone's FAIL -- every one is NOT_RUN. Wearing each line with
+    # the red status made every product-owned line "failed", and the first
+    # became the writer's rework item (live 82a19a82: audit_clean failed, the
+    # writer was told to fix no_token_401 and stopped SAME_FAILURE_TWICE).
+    status = "PASS" if snap.is_12_of_12 else NOT_RUN
     detail = snap.description or snap.detail or snap.score or "store-gate"
     lines = [
         AcceptanceLine(name=name, status=status, detail=detail)

@@ -165,12 +165,22 @@ def _load() -> Dict[str, Any]:
 #: failed". Declared here, rendered into the harness as IMAGE_CHECKS, read by
 #: the gate: no check id is named in either.
 STAGE_IMAGE = "image"
-STAGES = frozenset({STAGE_IMAGE})
+#: ``audit``: the check's verdict is the gate's own security scan of the
+#: product (bandit over app/). The gate attaches the scan's findings -- test
+#: id, file and line -- to THESE lines as evidence, so a red audit tells the
+#: writer what to change. Rendered into the harness as AUDIT_CHECKS.
+STAGE_AUDIT = "audit"
+STAGES = frozenset({STAGE_IMAGE, STAGE_AUDIT})
 
 
 def image_check_ids() -> Tuple[str, ...]:
     """The checks a failed image build fails (the floor's ``stage: image``)."""
     return tuple(str(c["id"]) for c in checks() if c.get("stage") == STAGE_IMAGE)
+
+
+def audit_check_ids() -> Tuple[str, ...]:
+    """The checks whose evidence is the gate's security scan (``stage: audit``)."""
+    return tuple(str(c["id"]) for c in checks() if c.get("stage") == STAGE_AUDIT)
 
 
 #: What a check judges. The owner of a failure is derived from this and from
