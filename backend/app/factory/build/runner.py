@@ -2222,7 +2222,10 @@ class RoleRunner:
                                 "docker unavailable — workspace handed off to "
                                 "cerebrum-builds; N3 store-gate is next"
                             ),
-                            payload={"handoff": HANDOFF_TO_N3},
+                            # The gate's branch, recorded where every
+                            # reader looks first (builds_fields_from_ledger):
+                            # the N3 collect never has to guess it.
+                            payload={"handoff": HANDOFF_TO_N3, "builds_branch": gate_branch},
                         )
                         delivery_format = str(
                             getattr(self.blueprint, "delivery_format", "zip")
