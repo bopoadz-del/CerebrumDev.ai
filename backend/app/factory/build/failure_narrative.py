@@ -255,7 +255,7 @@ def compose_failure_narrative(
         output = ""
         tokens = None
         try:
-            raw = architect.architect_call(_messages(facts, refusals), llm=llm)
+            raw = architect.architect_call(_messages(facts, refusals), llm=llm, note=note)
             tokens = raw.get("_tokens") if isinstance(raw.get("_tokens"), int) else None
             body = {k: v for k, v in raw.items() if k != "_tokens"}
             output = json.dumps(body, sort_keys=True, default=str)

@@ -122,10 +122,40 @@ def architect_model() -> str:
         return ""
 
 
-def architect_call(messages: List[Dict[str, str]], *, llm: Optional[LlmCall] = None) -> Dict[str, Any]:
-    """One architect model call. Returns the parsed JSON object."""
+def failover_note(note: Optional[Callable[..., None]]) -> Optional[Callable[[Dict[str, Any]], None]]:
+    """A model-ladder failover sink that writes one ledger NOTE per failover."""
+    if note is None:
+        return None
+
+    def _sink(event: Dict[str, Any]) -> None:
+        note(
+            f"model provider failover: {event.get('provider')} refused "
+            f"({event.get('kind')}"
+            + (f", HTTP {event.get('status')}" if event.get("status") else "")
+            + f"); trying {event.get('next_provider')}",
+            stage=LEDGER_STAGE,
+            source="model_ladder",
+            failover=dict(event),
+        )
+
+    return _sink
+
+
+def architect_call(
+    messages: List[Dict[str, str]],
+    *,
+    llm: Optional[LlmCall] = None,
+    note: Optional[Callable[..., None]] = None,
+) -> Dict[str, Any]:
+    """One architect model call. Returns the parsed JSON object.
+
+    ``note`` (the build ledger's note) receives one NOTE per provider failover.
+    """
+    from app.core.model_ladder import failover_to
+
     call = llm or _default_llm()
-    out = call(messages)
+    with failover_to(failover_note(note)):
+        out = call(messages)
     return out if isinstance(out, dict) else {}
 
 
@@ -320,7 +350,7 @@ def compose_narrative(
     for attempt in (1, 2):
         result.attempts = attempt
         try:
-            raw = architect_call(_narrative_messages(inputs, findings), llm=llm)
+            raw = architect_call(_narrative_messages(inputs, findings), llm=llm, note=note)
             text = str(raw.get("narrative") or "").strip()
             used_blocks = [str(b) for b in raw.get("blocks") or [] if b]
             used_caps = [str(c) for c in raw.get("capabilities") or [] if c]
