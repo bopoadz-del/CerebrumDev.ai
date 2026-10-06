@@ -697,8 +697,17 @@ def run_worker_job(
     session_id: Optional[str] = None,
     product_id: str = "",
     progress: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+    live_time_left: Optional[Callable[[], Optional[float]]] = None,
 ) -> WorkerReceipt:
     """Run one headless CodeWhale exec — non-interactive, JSON summary.
+
+    ``live_time_left`` is the run's own remaining budget, read on every wait
+    tick. The wall is the later of the dispatch wall and ``now + live`` --
+    it extends when the runner's budget ramp lifts the run's deadline (the
+    ramp's pulse fires on the NOTEs this loop relays) and never shrinks
+    below the dispatch wall. Live 2026-10-06: the wall was fixed once at
+    dispatch, the ramp lifted a deadline nobody waited on, and a writer that
+    was still producing work was killed at exactly 1800s.
 
     T5.1: no approval prompt may hang the worker; the CLI's --auto mode is
     the documented non-interactive automation path. The job runs INSIDE a
@@ -1045,6 +1054,13 @@ def run_worker_job(
                     proc.wait(timeout=0.5)
                     break
                 except subprocess.TimeoutExpired:
+                    if live_time_left is not None:
+                        try:
+                            left = live_time_left()
+                        except Exception:  # noqa: BLE001 -- a broken probe keeps the dispatch wall
+                            left = None
+                        if left is not None:
+                            deadline = max(deadline, time.monotonic() + float(left))
                     if time.monotonic() > deadline:
                         proc.kill()
                         proc.wait()
