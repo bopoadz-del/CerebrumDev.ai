@@ -584,12 +584,12 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.queryByText(/Finished —/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Download ready/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
-    // Owner's order: a gate-failed build offers a retry and an honest as-is
-    // download instead of a dead export button.
-    expect(screen.getByTestId('floor-rerun-writer')).toBeEnabled()
-    const asIs = screen.getByRole('button', { name: 'Download as-is (failed gates)' })
-    expect(asIs).toBeEnabled()
-    expect(asIs).toHaveClass('ghost')
+    // F5: a gate-failed build offers exactly the three typed choices -- an
+    // honest as-is copy, Continue with new answers, Start over.
+    expect(screen.getByTestId('floor-take-copy')).toBeEnabled()
+    expect(screen.getByTestId('floor-continue-with-intake')).toBeEnabled()
+    expect(screen.getByTestId('floor-start-over')).toBeEnabled()
+    expect(screen.queryByTestId('floor-rerun-writer')).not.toBeInTheDocument()
   })
 
   it('sess_45729bb 0639 photograph: thin Store-green Floor never claims founding', async () => {
@@ -921,13 +921,15 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.queryByText('coding agent')).not.toBeInTheDocument()
     expect(screen.queryByText('chat LLM')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
-    const failedExport = screen.getByRole('button', { name: 'Download as-is (failed gates)' })
-    expect(failedExport).toBeEnabled()
-    expect(failedExport).toHaveClass('ghost')
-    expect(screen.getByTestId('floor-rerun-writer')).toBeEnabled()
+    const choices = screen.getByTestId('floor-failure-choices')
+    // Exactly three choices on a FAILED build (the status pill is not one).
+    expect(choices.querySelectorAll('button')).toHaveLength(3)
+    expect(screen.getByTestId('floor-take-copy')).toBeEnabled()
+    expect(screen.getByTestId('floor-continue-with-intake')).toBeEnabled()
+    expect(screen.getByTestId('floor-start-over')).toBeEnabled()
     expect(screen.queryByRole('heading', { name: /Coding agent finished/ })).not.toBeInTheDocument()
-    const startNew = screen.getByRole('button', { name: 'Start a new product' })
-    expect(startNew).toBeEnabled()
+    // A new product is the header's New session, not a failure choice.
+    const startNew = screen.getByRole('button', { name: 'New session' })
     fireEvent.click(startNew)
     await waitFor(() => expect(onNewSession).toHaveBeenCalledTimes(1))
   })
@@ -956,14 +958,55 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       'FAILED(STORE_MANAGER, metrics_served, GET /metrics is 404)',
     )
     expect(screen.getByTestId('floor-next-continue')).toHaveTextContent(/Continue will resume/)
-    // Never green: the only export is the labelled as-is download.
+    // Never green: the only export is the labelled as-is copy.
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Download as-is (failed gates)' })).toBeEnabled()
+    expect(screen.getByTestId('floor-take-copy')).toBeEnabled()
     const startOver = screen.getByTestId('floor-start-over')
     fireEvent.click(startOver)
     await waitFor(() =>
       expect(chatStreamMock).toHaveBeenCalledWith(
         'sess_failed_platform', '', expect.any(Function), undefined, undefined, { action: 'start_over' },
+      ),
+    )
+  })
+
+  it('F5: a FAILED build explains itself and offers three typed choices', async () => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'failed',
+        cycle: 'code',
+        pilot_ready: false,
+        certified: false,
+        detail: 'FAILED(TESTER, product_gate, tide_relay refused its own schema)',
+        failed: { gate: 'TESTER', check: 'product_gate', finding: 'tide_relay refused its own schema' },
+        failed_label: 'FAILED(TESTER, product_gate, tide_relay refused its own schema)',
+        failure_narrative: {
+          text: 'What was tried: the run passed COLLECTOR, CLONER and WRITER. Where it stopped: TESTER (product_gate).',
+          source: 'ledger',
+        },
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'zorblat', triggered_by: 'chat_llm' },
+    })
+    downloadMock.mockResolvedValue(undefined)
+    render(<Floor sessionId="sess_f5" goPlatforms={() => {}} />)
+    expect(await screen.findByTestId('floor-failure-narrative')).toHaveTextContent(
+      'Where it stopped: TESTER (product_gate).',
+    )
+    fireEvent.click(screen.getByTestId('floor-take-copy'))
+    await waitFor(() =>
+      expect(chatStreamMock).toHaveBeenCalledWith(
+        'sess_f5', '', expect.any(Function), undefined, undefined, { action: 'take_copy' },
+      ),
+    )
+    await waitFor(() => expect(downloadMock).toHaveBeenCalledWith('sess_f5', { asIs: true }))
+    fireEvent.click(screen.getByTestId('floor-continue-with-intake'))
+    await waitFor(() =>
+      expect(chatStreamMock).toHaveBeenCalledWith(
+        'sess_f5', '', expect.any(Function), undefined, undefined, { action: 'continue_with_intake' },
       ),
     )
   })
@@ -1064,9 +1107,8 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(await screen.findByRole('heading', { name: 'Coding agent stopped' })).toBeInTheDocument()
     expect(screen.queryByText(/Writing your platform/)).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Coding agent has taken over' })).not.toBeInTheDocument()
-    const failedExport = screen.getByRole('button', { name: 'Download as-is (failed gates)' })
-    expect(failedExport).toBeEnabled()
-    expect(screen.getByTestId('floor-rerun-writer')).toBeEnabled()
+    expect(screen.getByTestId('floor-take-copy')).toBeEnabled()
+    expect(screen.getByTestId('floor-continue-with-intake')).toBeEnabled()
   })
 
   it('keeps coding chrome after Approve while generation SSE and status poll are pending', async () => {

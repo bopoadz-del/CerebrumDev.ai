@@ -76,6 +76,10 @@ class ProductDesignState(BaseModel):
     #: country?, currency?, build_level?}. A proposal only: it becomes the
     #: typed fields above solely through the typed ``confirm_intake`` action.
     intake_proposal: Optional[Dict[str, str]] = None
+    #: Set by the typed ``continue_with_intake`` on a FAILED build: the
+    #: intake is editable again, and the next typed ``confirm_intake``
+    #: resumes this platform's branch from the new answers.
+    intake_reopened: bool = False
     #: The platform's identity (``plt_<16 hex>``), minted ONCE at the first
     #: approval and never derived from a name. ``build/<platform_id>`` on
     #: cerebrum-builds is this platform's one branch of record, forever.

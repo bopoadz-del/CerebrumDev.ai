@@ -649,6 +649,7 @@ def generate_product(
     brief: str = "",
     platform_id: Optional[str] = None,
     start_over: bool = False,
+    intake_changed: bool = False,
 ) -> Dict[str, Any]:
     """Build a product. The role runner is the default engine.
 
@@ -705,6 +706,7 @@ def generate_product(
             brief=str(brief or "").strip(),
             platform_id=platform_id,
             start_over=start_over,
+            intake_changed=intake_changed,
         )
 
     factory_root = _repo_root()

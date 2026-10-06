@@ -399,6 +399,37 @@ async def _platform_turn(
 
 async def _typed_action(session_id, state, user_message, action, value, _record):
     """Dispatch a typed Floor action. Deterministic; no model, no prose."""
+    if action is FloorAction.TAKE_COPY:
+        result = platform_chat_flow.take_copy(state)
+        _record(result)
+        async for ev in _yield_platform_result(result):
+            yield ev
+        return
+
+    if action is FloorAction.CONTINUE_WITH_INTAKE:
+        result = platform_chat_flow.continue_with_intake(state)
+        _record(result)
+        async for ev in _yield_platform_result(result):
+            yield ev
+        return
+
+    if action is FloorAction.CONFIRM_INTAKE and platform_chat_flow.intake_reopened(state):
+        # Confirm on a re-opened intake resumes the platform: it spends a
+        # generation exactly as Continue does.
+        try:
+            require_remaining(getattr(state, "user_id", None), "generation")
+        except TrialLimitExceeded as exc:
+            yield _sse_event("error", exc.detail["message"])
+            yield _sse_event("done", "")
+            return
+        result = platform_chat_flow.confirm_and_continue(state)
+        if result.get("ok") and not result.get("already_running"):
+            require_within_limit(getattr(state, "user_id", None), "generation")
+        _record(result)
+        async for ev in _yield_platform_result(result):
+            yield ev
+        return
+
     if action in INTAKE_ACTIONS:
         result = platform_chat_flow.apply_intake_action(state, action, value)
         _record(result)
@@ -533,6 +564,10 @@ def _chat_starts_generation(state: SessionState, action: Optional[FloorAction]) 
     """True when this request's typed action will start or resume a build."""
     if action in RUN_ACTIONS and require_build_level(state.product_design) is not None:
         return False  # refused before anything starts: no level chosen
+    if action is FloorAction.CONFIRM_INTAKE:
+        # Confirm on a re-opened intake (after "Continue with new answers")
+        # resumes the failed platform; any other Confirm only stores fields.
+        return platform_chat_flow.intake_reopened(state)
     if action is FloorAction.APPROVE:
         return platform_chat_flow.has_pending_blueprint(state)
     if action is FloorAction.START_OVER:

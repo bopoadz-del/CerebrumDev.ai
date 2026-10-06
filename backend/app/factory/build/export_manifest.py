@@ -231,6 +231,7 @@ def failed_export_manifest(
         "build_level": status.get("build_level"),
         "advisory_checks": list(status.get("advisory_checks") or []),
         "next_continue": status.get("next_continue") or "",
+        "failure_narrative": status.get("failure_narrative"),
     }
 
 

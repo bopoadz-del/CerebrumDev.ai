@@ -373,5 +373,24 @@ def test_the_foreman_cannot_extend_a_spent_budget(tmp_path, monkeypatch):
     )
     assert out.outcome is Outcome.FAILED_BUDGET_SPENT, out.detail
     assert len(calls) == 3  # first pass + exactly two reworks
-    reworks = [e for e in runner.ledger.events() if (e.payload or {}).get("decision", {}).get("class") == DECISION_REWORK]
-    assert len(reworks) == 2 and llm.calls == 2  # never consulted once the budget was spent
+    events = list(runner.ledger.events())
+    reworks = [e for e in events if (e.payload or {}).get("decision", {}).get("class") == DECISION_REWORK]
+    assert len(reworks) == 2
+    # Every architect model call is one ledger NOTE naming its entry point.
+    # The FOREMAN was consulted exactly once per rework round and never once
+    # the budget was spent: no foreman call after the last REWORK.
+    calls_by = [(i, (e.payload or {}).get("architect", {}).get("entry")) for i, e in enumerate(events)
+                if (e.payload or {}).get("architect")]
+    foreman = [i for i, entry in calls_by if entry == fm.ENTRY]
+    assert len(foreman) == 2
+    last_rework = max(i for i, e in enumerate(events) if e in reworks)
+    assert all(i < last_rework for i in foreman), "the foreman was consulted after the budget was spent"
+    # The other calls are the F5 failure narrative, which runs only after the
+    # run has failed -- it explains the stop, it cannot extend anything.
+    from app.factory.build import failure_narrative as fnar
+    from app.factory.build.ledger import EventKind as _EK
+
+    failed_at = max(i for i, e in enumerate(events) if e.kind is _EK.RUN_FAILED)
+    others = [(i, entry) for i, entry in calls_by if entry != fm.ENTRY]
+    assert all(entry == fnar.ENTRY and i > failed_at for i, entry in others)
+    assert llm.calls == len(foreman) + len(others)

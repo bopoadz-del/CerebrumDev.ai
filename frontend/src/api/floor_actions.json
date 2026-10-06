@@ -45,6 +45,12 @@
     "start_over": {
       "value": null
     },
+    "take_copy": {
+      "value": null
+    },
+    "continue_with_intake": {
+      "value": null
+    },
     "chain": {
       "value": null
     }

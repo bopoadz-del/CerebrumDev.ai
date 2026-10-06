@@ -301,6 +301,9 @@ export interface IntakeFields {
 export interface IntakeState {
   declared: IntakeFields
   proposal: IntakeFields | null
+  /** True after "Continue with new answers" on a FAILED build: Confirm
+   *  resumes the platform's own branch. */
+  reopened?: boolean
 }
 
 export interface TypedFloorAction {
@@ -599,6 +602,10 @@ export type BuildStatus = {
   failed_label?: string | null
   /** One line: what the next Continue will try to fix. */
   next_continue?: string
+  /** F5: what was tried, where it stopped, why -- read from the ledger;
+   *  ``source`` is ``ledger`` (rendered by code) or ``model`` (validated
+   *  against the ledger). */
+  failure_narrative?: { text: string; source: string; cites?: string[] } | null
   /** The runner rule's decisions, in order: gate, class (REWORK / ADVISORY /
    *  REGENERATE_TEST / STOP), this gate's round of its budget, the build's
    *  round of its ceiling, check, finding. */

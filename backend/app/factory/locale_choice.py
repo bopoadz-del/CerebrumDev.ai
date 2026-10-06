@@ -119,4 +119,7 @@ def intake_state(pd: Any) -> Dict[str, Any]:
             "build_level": getattr(pd, "build_level", None),
         },
         "proposal": shaped_proposal(getattr(pd, "intake_proposal", None)),
+        # True after "Continue with new answers" on a FAILED build: the line
+        # is editable again until the typed Confirm resumes the platform.
+        "reopened": bool(getattr(pd, "intake_reopened", False)),
     }
