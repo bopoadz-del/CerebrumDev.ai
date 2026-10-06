@@ -39,6 +39,11 @@ class TenantStoreBinding:
     tenant_key: str
     store_dir: Path
     bound_at: float
+    #: The deploy gate's own principal: its builds may use the worker's
+    #: reserved slot, so a user build can never starve the post-deploy
+    #: smoke. Derived server-side from the authenticated account, like
+    #: ``tenant_key``; the caller never supplies it.
+    reserved: bool = False
 
 
 def tenant_stores_root() -> Path:
@@ -63,6 +68,11 @@ def bind_tenant_store(account_id: Optional[str]) -> Optional[TenantStoreBinding]
         return None
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
     store_dir = tenant_stores_root() / digest
+    from app.core.trial_limits import is_ops_smoke_account
+
     return TenantStoreBinding(
-        tenant_key=digest, store_dir=store_dir, bound_at=time.time()
+        tenant_key=digest,
+        store_dir=store_dir,
+        bound_at=time.time(),
+        reserved=is_ops_smoke_account(identity),
     )

@@ -337,6 +337,12 @@ function CoderProgress({ build, nowMs }: { build: BuildStatus; nowMs: number }) 
         ) : null}
         {next ? <span className="coder-next"> then {next}</span> : null}
       </p>
+      {build.queued ? (
+        <p className="coder-queued" role="status">
+          Waiting for a build slot — position {build.queued.position ?? '?'}
+          {build.queued.ahead ? ` (${build.queued.ahead} ahead)` : ''}
+        </p>
+      ) : null}
       {fraction != null && (
         <div
           className="coder-bar"

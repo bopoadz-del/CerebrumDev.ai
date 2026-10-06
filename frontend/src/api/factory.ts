@@ -534,6 +534,14 @@ export interface BuildActivityLine {
   text: string
 }
 
+/** Where a queued writer stands in the build-slot FIFO. */
+export interface BuildQueuePlace {
+  position?: number | null
+  ahead?: number | null
+  since?: string | null
+  waited_s?: number | null
+}
+
 /** One check the foreman proposed. `floor_entry` is a pre-filled
  *  acceptance_floor.v2.json entry for a human to review and paste; the
  *  Floor only copies it -- nothing writes the floor file from the UI. */
@@ -622,6 +630,9 @@ export type BuildStatus = {
   delivery_format?: string
   repo_url?: string
   last_event?: string | null
+  /** Set while the writer waits its turn for a build slot (a full slot
+   *  queues, never fails): its place in the FIFO and how long it has waited. */
+  queued?: BuildQueuePlace | null
   /** Tail of the agent's own narration, newest last. The Floor renders
    *  it as a live log: a single replaced sentence cannot distinguish a
    *  working agent from a wedged one. */

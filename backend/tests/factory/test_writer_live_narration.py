@@ -40,7 +40,7 @@ def _run_role(tmp_path, monkeypatch, lines):
     notes: list[str] = []
     ctx.progress = lambda detail, payload: notes.append(detail)
 
-    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None, slot_wait_left=None, on_slot_wait=None):
         for line in lines:  # a burst: no time passes between lines
             progress(line, {})
         return _receipt(tools=[{"tool": "write", "path": "app/actions/cap.py"}])
@@ -286,7 +286,7 @@ def test_the_model_call_payload_reaches_the_ledger(tmp_path, monkeypatch):
     seen: list[tuple[str, dict]] = []
     ctx.progress = lambda detail, payload: seen.append((detail, dict(payload)))
 
-    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None, live_time_left=None, slot_wait_left=None, on_slot_wait=None):
         progress("engine turn noise", {})
         progress(
             "codewhale writer CLI started -- model call in flight",
