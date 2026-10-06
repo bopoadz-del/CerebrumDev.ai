@@ -286,6 +286,11 @@ def _invented_product(root: Path, caps, *, declaration: bool = True) -> None:
     )
     (app / "store.py").write_text(_STORE, encoding="utf-8")
     (app / "main.py").write_text(_MAIN % (list(caps),), encoding="utf-8")
+    # The route declaration every Factory-rendered product carries: this
+    # invented route saves each capability under its own id.
+    (app / "routes.py").write_text(
+        "ROUTE_ENTITIES = %r\n" % ({c: c for c in caps},), encoding="utf-8"
+    )
     module = render_product_module(_blueprint()) if declaration else (
         "UNAVAILABLE_STATUS = 503\n"
         "def refusal_for(capability_id):\n    return None\n"

@@ -252,7 +252,7 @@ def _writer_inflight(ledger: Any, calling: Any) -> bool:
 
 def is_orphaned_inflight_workspace(output_dir: Path | str) -> bool:
     """Non-terminal ledger with an open model_call and no live worker."""
-    from app.factory.build_jobs import _live_runner_thread, _product_id_of
+    from app.factory.build_jobs import _live_runner_thread
 
     try:
         ledger, events, calling = _open_calling_note(output_dir)
@@ -260,8 +260,9 @@ def is_orphaned_inflight_workspace(output_dir: Path | str) -> bool:
             return False
         if ledger.terminal_event() is not None:
             return False
-        product_id = _product_id_of(events, output_dir)
-        return not _live_runner_thread(product_id)
+        # Keyed by this workspace: another tenant's build of the same
+        # product id is not this build's worker.
+        return not _live_runner_thread(output_dir)
     except Exception:  # noqa: BLE001 — torn ledger is not a resume source
         logger.warning("could not inspect ledger at %s", output_dir, exc_info=True)
         return False
