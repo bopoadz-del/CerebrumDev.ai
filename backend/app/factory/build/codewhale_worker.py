@@ -78,23 +78,22 @@ MODEL_CALL_CLOSED_DETAIL = (
 PROCESS_SLOTS_EXHAUSTED = "process_slots_exhausted"
 TENANT_SLOTS_EXHAUSTED = "tenant_slots_exhausted"
 
-#: How long a WRITER whose tenant slot is taken by the owner's OWN other
-#: build may wait (narrated on the Floor, retrying) before it fails. A
-#: tenant-scope cap is self-inflicted and transient; process-scope stays an
-#: immediate refusal (other tenants' work is not ours to camp on).
-SLOT_WAIT_ENV = "FACTORY_WORKER_SLOT_WAIT_S"
-DEFAULT_SLOT_WAIT_S = 900.0
+#: A full slot never fails a build (owner, 2026-10-06): a job that cannot get
+#: a slot WAITS, first-in-first-out per tenant, its position narrated on the
+#: Floor and in the ledger. The only bound is the run's own phase-wall
+#: ceiling; when that is spent the job stops with this typed reason -- a
+#: timeout, never "slots full". Live 2026-10-06: the post-deploy smoke died
+#: "worker_concurrency_capped: tenant_slots_exhausted" because a second build
+#: on the same account held the slot.
+SLOT_WAIT_EXHAUSTED = "slot_wait_exhausted"
+#: The typed ``slot_wait`` NOTE payload: a queued writer is OPEN until it
+#: holds its slot (CLOSED). The budget ramp and the Floor read this field,
+#: never the NOTE's prose.
+SLOT_WAIT_OPEN = "open"
+SLOT_WAIT_CLOSED = "closed"
+#: How often a waiting job re-checks (the counter is also notified on every
+#: release, so this is only the narration / deadline cadence).
 SLOT_WAIT_POLL_S = 15.0
-
-
-def worker_slot_wait_s() -> float:
-    raw = str(os.getenv(SLOT_WAIT_ENV, "") or "").strip()
-    if not raw:
-        return DEFAULT_SLOT_WAIT_S
-    try:
-        return max(0.0, float(raw))
-    except ValueError:
-        return DEFAULT_SLOT_WAIT_S
 
 
 #: A handle that carries no server-derived tenant key cannot be accounted
@@ -453,7 +452,16 @@ class InProcessSlotCounter:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        # Every release notifies waiters; a waiting job re-checks its turn.
+        self._turn = threading.Condition(self._lock)
+        # The FIFO of jobs waiting for a slot, in arrival order. Reserved
+        # (smoke-principal) waiters are served ahead of user waiters.
+        self._waiters: list = []
         self._process_active = 0
+        # Slots held by reserved (smoke-principal) jobs. A user job may hold
+        # at most process_cap - RESERVED_SLOTS of the instance, so the smoke
+        # always has a slot a user build cannot take.
+        self._reserved_active = 0
         # A plain dict, deliberately not a defaultdict: a defaultdict
         # materialises an entry on every READ, including the read that is
         # about to refuse, so a refusal storm would grow the map as fast as
@@ -517,15 +525,124 @@ class InProcessSlotCounter:
             # statement of the critical section and `try:` opens immediately
             # after it in worker_job_slot, so no path can decrement a slot it
             # never incremented.
-            self._process_active = active + 1
-            self._tenant_active[key] = held + 1
-            if holder:
-                self._tenant_holders.setdefault(key, []).append(dict(holder))
+            self._take(key, holder, reserved=False)
+
+    # -- the queue -------------------------------------------------------
+
+    def _take(self, key: str, holder: Optional[Dict[str, Any]], *, reserved: bool) -> None:
+        """Both increments together. Caller holds the lock."""
+        self._process_active += 1
+        if reserved:
+            self._reserved_active += 1
+        self._tenant_active[key] = self._tenant_active.get(key, 0) + 1
+        entry = dict(holder or {})
+        entry["_reserved"] = bool(reserved)
+        self._tenant_holders.setdefault(key, []).append(entry)
+
+    def _admissible(self, waiter: Dict[str, Any], process_cap: int, tenant_cap: int) -> bool:
+        """Whether a slot is free for this waiter right now. Caller holds the lock."""
+        if self._tenant_active.get(waiter["key"], 0) >= tenant_cap:
+            return False
+        if waiter["reserved"]:
+            return self._process_active < process_cap
+        user_cap = process_cap - reserved_slots(process_cap)
+        user_active = self._process_active - self._reserved_active
+        return user_active < user_cap and self._process_active < process_cap
+
+    def _serving_order(self) -> list:
+        """Reserved waiters first, then arrival order. Caller holds the lock."""
+        return sorted(self._waiters, key=lambda w: (not w["reserved"], w["seq"]))
+
+    def _turn_for(self, waiter: Dict[str, Any], process_cap: int, tenant_cap: int) -> bool:
+        """FIFO: this waiter may take a slot only if it is the first waiter in
+        serving order that can use one, and no earlier waiter of its OWN tenant
+        is still waiting (a tenant's builds start in the order they asked).
+        Caller holds the lock."""
+        for other in self._serving_order():
+            if other is waiter:
+                return self._admissible(waiter, process_cap, tenant_cap)
+            if other["key"] == waiter["key"]:
+                return False
+            if self._admissible(other, process_cap, tenant_cap):
+                return False
+        return False
+
+    def _position(self, waiter: Dict[str, Any]) -> Dict[str, int]:
+        """1-based place in the serving order, and how many are ahead."""
+        order = self._serving_order()
+        ahead = order.index(waiter) if waiter in order else 0
+        same_tenant = sum(1 for w in order[:ahead] if w["key"] == waiter["key"])
+        return {"position": ahead + 1, "ahead": ahead, "ahead_same_tenant": same_tenant}
+
+    def acquire_waiting(
+        self,
+        key: str,
+        *,
+        process_cap: int,
+        tenant_cap: int,
+        holder: Optional[Dict[str, Any]] = None,
+        reserved: bool = False,
+        time_left: Callable[[], Optional[float]],
+        on_wait: Optional[Callable[[Dict[str, Any]], None]] = None,
+        poll_s: float = SLOT_WAIT_POLL_S,
+    ) -> Dict[str, Any]:
+        """Take a slot, WAITING in FIFO order when none is free.
+
+        Never refuses for lack of a slot. ``time_left`` is the run's own
+        remaining phase-wall ceiling, read live; when it reaches zero the job
+        stops with SLOT_WAIT_EXHAUSTED. ``on_wait`` is told the job's queue
+        place each time it re-checks (the caller narrates it). Returns the
+        wait record: ``{"waited_s", "position"}`` (position 0 = no wait).
+        """
+        import time as _time
+
+        started = _time.monotonic()
+        with self._turn:
+            self._seq = getattr(self, "_seq", 0) + 1
+            waiter = {"key": key, "reserved": bool(reserved), "seq": self._seq}
+            self._waiters.append(waiter)
+            first_place = 0
+            try:
+                while not self._turn_for(waiter, process_cap, tenant_cap):
+                    place = self._position(waiter)
+                    if not first_place:
+                        first_place = place["position"]
+                    left = time_left()
+                    if left is not None and left <= 0:
+                        raise WorkerError(
+                            f"{SLOT_WAIT_EXHAUSTED}: waited "
+                            f"{_time.monotonic() - started:.0f}s for a build slot "
+                            f"(position {place['position']}, {place['ahead']} ahead) "
+                            "and the run's phase-wall ceiling is spent"
+                        )
+                    if on_wait is not None:
+                        info = dict(place)
+                        info["since_s"] = round(_time.monotonic() - started, 1)
+                        # Narrate OUTSIDE the lock: the callback writes the
+                        # ledger and must never block a release.
+                        self._turn.release()
+                        try:
+                            on_wait(info)
+                        finally:
+                            self._turn.acquire()
+                        if self._turn_for(waiter, process_cap, tenant_cap):
+                            break
+                    wait_for = poll_s if left is None else max(0.01, min(poll_s, left))
+                    self._turn.wait(timeout=wait_for)
+                self._take(key, holder, reserved=reserved)
+            finally:
+                self._waiters.remove(waiter)
+                # A departing waiter may unblock the one behind it.
+                self._turn.notify_all()
+        return {"waited_s": round(_time.monotonic() - started, 1), "position": first_place}
 
     def release(self, key: str) -> None:
         """Give the slot back. Mirrors acquire; runs from a finally block."""
         with self._lock:
             self._process_active -= 1
+            holders_now = self._tenant_holders.get(key) or []
+            if holders_now and holders_now[-1].get("_reserved"):
+                self._reserved_active = max(0, self._reserved_active - 1)
             remaining = self._tenant_active.get(key, 0) - 1
             if remaining > 0:
                 self._tenant_active[key] = remaining
@@ -538,6 +655,7 @@ class InProcessSlotCounter:
                 # behind forever.
                 self._tenant_active.pop(key, None)
                 self._tenant_holders.pop(key, None)
+            self._turn.notify_all()
 
     def snapshot(self) -> Dict[str, Any]:
         """Observability + the leak assertion. A copy, never the live map."""
@@ -546,6 +664,24 @@ class InProcessSlotCounter:
                 "total": self._process_active,
                 "by_tenant": dict(self._tenant_active),
             }
+
+    def queue_snapshot(self) -> Dict[str, Any]:
+        """The queue beside the slots: jobs waiting, reserved slots held."""
+        with self._lock:
+            return {
+                "waiting": len(self._waiters),
+                "reserved": self._reserved_active,
+            }
+
+
+def reserved_slots(process_cap: int) -> int:
+    """Slots on this instance only a reserved (smoke-principal) job may hold.
+
+    One, whenever the instance can run more than one job; on a one-slot box
+    a reservation would starve every user, so there the smoke is only served
+    first in the queue (never behind a user waiter), not given a held slot.
+    """
+    return 1 if int(process_cap) >= 2 else 0
 
 
 _COUNTER: Any = InProcessSlotCounter()
@@ -609,10 +745,24 @@ def _tenant_slot_key(tenant_store: Any) -> str:
     )
 
 
+def tenant_reserved(tenant_store: Any) -> bool:
+    """Whether this bound handle may use the reserved slot.
+
+    Read from the BOUND handle only (``reserved``, set server-side by
+    tenant_bind.bind_tenant_store from the authenticated account), the same
+    trust boundary as the tenant key -- the caller never supplies it.
+    """
+    return getattr(tenant_store, "reserved", False) is True
+
+
 @contextmanager
 def worker_job_slot(
-    tenant_store: Any, holder: Optional[Dict[str, Any]] = None
-) -> Iterator[None]:
+    tenant_store: Any,
+    holder: Optional[Dict[str, Any]] = None,
+    *,
+    wait_left: Optional[Callable[[], Optional[float]]] = None,
+    on_wait: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> Iterator[Dict[str, Any]]:
     """Acquire one concurrency slot for this tenant's job.
 
     Phase 1 applies to the builder: the store must already be BOUND for
@@ -621,8 +771,12 @@ def worker_job_slot(
     worker unbound and the suite goes RED.
 
     Two caps gate the job. The PROCESS cap protects the host; the TENANT
-    cap keeps one account from taking the box. Both refusals are named and
-    distinguishable; neither queues.
+    cap keeps one account from taking the box. With ``wait_left`` (the run's
+    remaining phase-wall ceiling, read live) a job that finds no slot QUEUES,
+    FIFO per tenant, and is never failed for lack of a slot; it stops only
+    when ``wait_left`` reaches zero (SLOT_WAIT_EXHAUSTED). Without it (direct
+    callers, the operator probe) the old immediate, named refusal stands.
+    Yields the wait record ``{"waited_s", "position"}``.
     """
     # The tenant boundary comes FIRST and outside the lock: it raises and
     # touches no counter state, so there is nothing to unwind, and an
@@ -636,11 +790,23 @@ def worker_job_slot(
     # exist. These same locals make the decision AND the message.
     process_cap = worker_process_cap()
     tenant_cap = worker_tenant_cap()
-    _COUNTER.acquire(
-        key, process_cap=process_cap, tenant_cap=tenant_cap, holder=holder
-    )
+    record: Dict[str, Any] = {"waited_s": 0.0, "position": 0}
+    if wait_left is not None and hasattr(_COUNTER, "acquire_waiting"):
+        record = _COUNTER.acquire_waiting(
+            key,
+            process_cap=process_cap,
+            tenant_cap=tenant_cap,
+            holder=holder,
+            reserved=tenant_reserved(tenant_store),
+            time_left=wait_left,
+            on_wait=on_wait,
+        )
+    else:
+        _COUNTER.acquire(
+            key, process_cap=process_cap, tenant_cap=tenant_cap, holder=holder
+        )
     try:
-        yield
+        yield record
     finally:
         # An exception inside the yield still releases the slot.
         _COUNTER.release(key)
@@ -698,6 +864,8 @@ def run_worker_job(
     product_id: str = "",
     progress: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     live_time_left: Optional[Callable[[], Optional[float]]] = None,
+    slot_wait_left: Optional[Callable[[], Optional[float]]] = None,
+    on_slot_wait: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> WorkerReceipt:
     """Run one headless CodeWhale exec — non-interactive, JSON summary.
 
@@ -736,6 +904,10 @@ def run_worker_job(
             "session_id": str(session_id or "") or None,
             "product_id": str(product_id or "") or Path(checkout_dir).name,
         },
+        # A job that finds no free slot waits its turn (FIFO per tenant,
+        # smoke principal served first), bounded only by the run's ceiling.
+        wait_left=slot_wait_left,
+        on_wait=on_slot_wait,
     ):
         cwd = Path(checkout_dir)
         cwd.mkdir(parents=True, exist_ok=True)

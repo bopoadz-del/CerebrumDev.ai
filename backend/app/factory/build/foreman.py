@@ -573,7 +573,7 @@ def review(
         tokens = None
         output = ""
         try:
-            raw = architect.architect_call(_messages(inputs, refusals), llm=llm)
+            raw = architect.architect_call(_messages(inputs, refusals), llm=llm, note=note)
             tokens = raw.get("_tokens") if isinstance(raw.get("_tokens"), int) else None
             output = json.dumps({k: v for k, v in raw.items() if k != "_tokens"}, sort_keys=True, default=str)
             ri, errors = parse_instruction({k: v for k, v in raw.items() if k != "_tokens"})
@@ -922,7 +922,7 @@ def audit_workspace(
         output = ""
         gates: Tuple[AuditGate, ...] = ()
         try:
-            raw = architect.architect_call(_audit_messages(inputs, refusals), llm=llm)
+            raw = architect.architect_call(_audit_messages(inputs, refusals), llm=llm, note=note)
             tokens = raw.get("_tokens") if isinstance(raw.get("_tokens"), int) else None
             body = {k: v for k, v in raw.items() if k != "_tokens"}
             output = json.dumps(body, sort_keys=True, default=str)

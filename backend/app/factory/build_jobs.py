@@ -753,6 +753,32 @@ def _suggested_checks(events: Any) -> List[Dict[str, Any]]:
     return suggested_checks(events)
 
 
+def queued_for_slot(notes: Sequence[Any]) -> Optional[Dict[str, Any]]:
+    """``{position, ahead, since}`` while the latest slot_wait NOTE is open.
+
+    The typed ``slot_wait`` field decides (open until the writer holds its
+    slot); a later model-call NOTE also ends the wait. Never read from prose.
+    """
+    from app.factory.build.codewhale_worker import SLOT_WAIT_OPEN
+
+    for note in reversed(list(notes or ())):
+        payload = getattr(note, "payload", None) or {}
+        if payload.get("model_call"):
+            return None
+        if "slot_wait" not in payload:
+            continue
+        if payload.get("slot_wait") != SLOT_WAIT_OPEN:
+            return None
+        queue = payload.get("slot_queue") or {}
+        return {
+            "position": queue.get("position"),
+            "ahead": queue.get("ahead"),
+            "since": getattr(note, "ts", None),
+            "waited_s": queue.get("since_s"),
+        }
+    return None
+
+
 def build_status(
     output_dir: Path | str,
     *,
@@ -878,6 +904,9 @@ def build_status(
     idle_s = max(_event_age_s(last_any.ts if last_any else "", file_idle_s), file_idle_s)
 
     monitor: Dict[str, Any] = {
+        # A writer waiting its turn for a build slot (owner, 2026-10-06: a
+        # full slot queues, never fails). Read from the typed slot_wait NOTE.
+        "queued": queued_for_slot(activity_notes),
         "current_phase": _phase_ref(current_role) if current_role else None,
         "phase_index": phase_index,
         "phase_total": len(phases),

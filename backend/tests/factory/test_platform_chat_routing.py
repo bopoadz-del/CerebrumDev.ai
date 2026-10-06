@@ -168,15 +168,18 @@ async def test_approve_in_text_does_not_build(session, monkeypatch, llm_says_sta
         monkeypatch.setattr(platform_chat_llm, "should_orchestrate", lambda *a, **k: True)
         monkeypatch.setattr(
             platform_chat_llm,
-            "try_decide",
-            lambda *a, **k: {
-                "action": "start_coder",
-                "brief": "",
-                "message": "",
-                "refine": {"op": "", "value": ""},
-                "connectors": [],
-                "missing_connectors": [],
-            },
+            "try_decide_with_reason",
+            lambda *a, **k: (
+                {
+                    "action": "start_coder",
+                    "brief": "",
+                    "message": "",
+                    "refine": {"op": "", "value": ""},
+                    "connectors": [],
+                    "missing_connectors": [],
+                },
+                None,
+            ),
         )
     events = await _collect_events(session.session_id, "approve - please approve and build it")
     kinds = [e["event"] for e in events]

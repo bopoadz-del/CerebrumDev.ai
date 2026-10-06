@@ -257,68 +257,87 @@ def _llm_json_call(
     Architect draft uses the factory config. Neither may POST to
     ``api.cursor.com/v1/chat/completions``.
     """
+    from app.core.model_ladder import (
+        NOT_CONFIGURED,
+        PAYMENT_REFUSED,
+        ModelUnavailable,
+        classify,
+        rungs_from_config,
+        run_ladder,
+    )
+
     cfg = get_llm_config() if use_chat_config else get_factory_llm_config()
     if cfg.get("mock"):
         raise RuntimeError("LLM mock mode — no network call")
-    if cfg.get("error"):
-        raise RuntimeError(cfg["error"])
     if _is_cursor_chat_host(str(cfg.get("base_url", ""))):
         raise RuntimeError(
             "Refusing api.cursor.com/v1/chat/completions — Cursor has no "
             "public chat-completions API. Floor chat uses CEREBRUM_CHAT_LLM_*."
         )
     provider = cfg.get("provider")
-    headers = {"Content-Type": "application/json"}
-    if cfg.get("api_key"):
-        headers["Authorization"] = f"Bearer {cfg['api_key']}"
-    if _is_openrouter_base(str(cfg.get("base_url", ""))):
-        headers["HTTP-Referer"] = "https://cerebrumdev.ai"
-        headers["X-Title"] = "CerebrumDev Floor"
+    primary_ok = not cfg.get("error") and (
+        provider in ("deepseek", "moonshot", "kimi", "cursor", "openrouter")
+        or (not provider and cfg.get("api_key") and cfg.get("base_url"))
+    )
+    if cfg.get("error") and os.getenv("LLM_PROVIDER", "").strip():
+        # A provider asked for BY NAME whose credentials are missing is an
+        # error, never an invitation to substitute another vendor (the same
+        # rule the coder applies).
+        raise ModelUnavailable(NOT_CONFIGURED, str(cfg["error"]))
+    # The ladder: the configured primary, then the cross-provider fallback
+    # leg. Each rung uses its OWN base_url and key (core.model_ladder).
+    rungs = rungs_from_config(cfg if primary_ok else None)
+    if not rungs:
+        raise ModelUnavailable(
+            NOT_CONFIGURED, str(cfg.get("error") or "No LLM provider configured")
+        )
 
-    if provider in ("deepseek", "moonshot", "kimi", "cursor", "openrouter") or (
-        not provider
-        and cfg.get("api_key")
-        and cfg.get("base_url")
-        and not _is_cursor_chat_host(str(cfg.get("base_url", "")))
-    ):
-        url = f"{cfg['base_url'].rstrip('/')}/chat/completions"
+    from app.factory.llm_watchdog import call_timeout_s, post_with_deadline
 
-        def _try(m: str) -> Dict[str, Any]:
-            payload = {
-                "model": m,
-                "messages": messages,
-                # Hard ceiling on the completion. Without it a single draft
-                # can bill the model's full context window, and this call
-                # retries once against the fallback model.
-                "max_tokens": llm_max_tokens(),
-            }
-            if not _is_openrouter_base(str(cfg.get("base_url", ""))):
-                payload["response_format"] = {"type": "json_object"}
-            # Omit temperature unless explicitly configured: reasoning models
-            # (kimi-k2.x) reject any explicit temperature other than 1.
-            if cfg.get("temperature") is not None:
-                payload["temperature"] = cfg["temperature"]
-            from app.factory.llm_watchdog import call_timeout_s, post_with_deadline
+    def _post(rung: Any, m: str) -> Dict[str, Any]:
+        headers = {"Content-Type": "application/json"}
+        if rung.api_key:
+            headers["Authorization"] = f"Bearer {rung.api_key}"
+        if _is_openrouter_base(rung.base_url):
+            headers["HTTP-Referer"] = "https://cerebrumdev.ai"
+            headers["X-Title"] = "CerebrumDev Floor"
+        payload = {
+            "model": m,
+            "messages": messages,
+            # Hard ceiling on the completion. Without it a single draft
+            # can bill the model's full context window, and this call
+            # retries once against the fallback model.
+            "max_tokens": llm_max_tokens(),
+        }
+        if not _is_openrouter_base(rung.base_url):
+            payload["response_format"] = {"type": "json_object"}
+        # Omit temperature unless explicitly configured: reasoning models
+        # (kimi-k2.x) reject any explicit temperature other than 1.
+        if rung.temperature is not None:
+            payload["temperature"] = rung.temperature
+        resp = post_with_deadline(
+            f"{rung.base_url.rstrip('/')}/chat/completions",
+            json=payload,
+            headers=headers,
+            timeout=call_timeout_s(),
+        )
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"]
+        return _extract_json(content)
 
-            resp = post_with_deadline(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=call_timeout_s(),
-            )
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"]
-            return _extract_json(content)
-
+    def _rung(rung: Any) -> Dict[str, Any]:
         try:
-            return _try(cfg["model"])
-        except Exception:
-            fallback = cfg.get("fallback_model")
-            if not fallback or fallback == cfg["model"]:
+            return _post(rung, rung.model)
+        except Exception as exc:
+            # A payment refusal is the ACCOUNT, not the model: another model
+            # on the same endpoint would be refused the same way.
+            kind, _status = classify(exc)
+            fallback = rung.fallback_model
+            if kind == PAYMENT_REFUSED or not fallback or fallback == rung.model:
                 raise
-            return _try(fallback)
+            return _post(rung, fallback)
 
-    raise RuntimeError("No LLM provider configured")
+    return run_ladder(rungs, _rung)
 
 
 def _slug(text: str, default: str = "product") -> str:

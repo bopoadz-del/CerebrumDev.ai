@@ -1883,6 +1883,15 @@ class RoleRunner:
         flight = _cli_flight(list(self.ledger.events()), self.state)
         return bool(flight.get("cli_in_flight"))
 
+    def _slot_waiting(self) -> bool:
+        """A coding agent queued for a build slot (typed ``slot_wait`` NOTE).
+        Its wait is bounded by the phase-wall ceiling, so the phase box is
+        lifted for it exactly as for a live call."""
+        from app.factory.build.budget_inspect import _cli_flight
+
+        flight = _cli_flight(list(self.ledger.events()), self.state)
+        return bool(flight.get("slot_waiting"))
+
     def _cli_approaching_phase_wall(self) -> bool:
         phase_cap = float(self.budget.phase_wall_clock_s or 0.0)
         if phase_cap <= 0:
@@ -1910,7 +1919,7 @@ class RoleRunner:
         """
         if self._run_started is None:
             return
-        if not self._cli_in_flight():
+        if not (self._cli_in_flight() or self._slot_waiting()):
             return
         if not self._cli_approaching_phase_wall():
             return
@@ -2076,6 +2085,12 @@ class RoleRunner:
         self._run_started = started
         self._deadline = deadline
         self._deadline_box["at"] = deadline
+        # The run's phase-wall CEILING: the latest any wait in this run may
+        # last (a writer queued for a build slot waits up to here and no
+        # further -- owner, 2026-10-06: "timeout at the phase-wall ceiling
+        # only"). None when the run has no ceiling.
+        ceiling = float(self.budget.hard_ceiling_s or 0.0)
+        self._deadline_box["ceiling_at"] = (started + ceiling) if ceiling > 0 else None
         inputs_hash = self.inputs_hash
         self.state["inputs_hash"] = inputs_hash
 
@@ -2423,6 +2438,12 @@ class RoleRunner:
                             dispatch_store_gate,
                         )
 
+                        # The Factory's receipt -- what it stamped, vendored
+                        # and declared -- taken after the last restamp, so the
+                        # gate's audit findings are owned by provenance.
+                        from app.factory.build.factory_receipt import record_receipt
+
+                        record_receipt(self.workspace)
                         attached = self._branch_of_record()
                         if attached:
                             # R3: a platform's Docker gate runs on its OWN
