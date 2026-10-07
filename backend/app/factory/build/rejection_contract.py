@@ -35,3 +35,16 @@ ALLOWED_VALUES_KEY = "allowed_values"
 MISSING_REQUIRED = "missing_required"
 NOT_ALLOWED = "not_allowed"
 REASONS = (MISSING_REQUIRED, NOT_ALLOWED)
+
+
+# --- The create response a Factory-rendered capability route answers ---------
+# One definition, read by the route renderer (roles_handlers) and by every
+# Factory check that creates a record through a route and reads it back (the
+# Store gate's cross_tenant_404). A check that indexed a key the contract never
+# promised -- or took HTTP 200 as success while the body said ``ok: false`` --
+# read a refused create as "no stored id" and sent the writer to fix tenancy
+# (live 2026-10-07, 9de69276).
+OK_KEY = "ok"
+ERROR_KEY = "error"
+STORED_RECORD_KEY = "stored"
+RECORD_ID_KEY = "id"

@@ -48,10 +48,14 @@ from app.factory.build.authorship import RENDERED_MARKER_READER as _RENDERED_MAR
 from app.factory.build.acceptance_floor import check_ids as _floor_check_ids
 from app.factory.build.rejection_contract import (
     ALLOWED_VALUES_HEADER,
+    ERROR_KEY,
     MISSING_REQUIRED,
     NOT_ALLOWED,
+    OK_KEY,
+    RECORD_ID_KEY,
     REJECTED_FIELD_HEADER,
     REJECTION_REASON_HEADER,
+    STORED_RECORD_KEY,
 )
 
 ACCEPTANCE_CHECK_NAMES: tuple[str, ...] = _floor_check_ids()
@@ -975,6 +979,16 @@ def render_acceptance_script(blueprint: Any = None) -> str:
     retrieves = "retrieval" in brief_signals(blueprint)
     rag_ingest = list(RAG_INGEST_PATHS)
     rag_query = list(RAG_QUERY_PATHS)
+    # The create path the Store gate's isolation check uses: the round-trip
+    # probes' declared-entity resolver and the emitted suites' payload builder,
+    # rendered in (one source each; imported here, entity_contract imports
+    # this module).
+    from app.factory.build.entity_contract import ENTITY_RESOLVER_SRC
+    from app.factory.build.payload_helpers import render_payload_helpers
+
+    _CREATE_THROUGH_DECLARED_ENTITY = "\n".join(
+        [*render_payload_helpers(), ENTITY_RESOLVER_SRC]
+    )
     return _with_deploy_time_settings(f'''#!/usr/bin/env python3
 """Store-green acceptance — ≥12 measured checks. Presence-only is a fail.
 
@@ -2086,51 +2100,107 @@ def check_docker_health_200(http: _Http) -> Tuple[str, str]:
     return "PASS", "docker health 200"
 
 
+{_CREATE_THROUGH_DECLARED_ENTITY}
+
+class _CreateClient:
+    """The shared payload builder posts through a module-level ``client``;
+    in the harness that is the harness's own HTTP client."""
+
+    def __init__(self, http: _Http):
+        self.http = http
+
+    def post(self, path, json=None, headers=None):
+        return self.http.request("post", path, json=json, headers=headers)
+
+
+def _persisting_caps() -> List[str]:
+    """Capabilities that DECLARE a persisted entity -- read by the same
+    resolver as the round-trip probes, never assumed from the capability id --
+    minus declared placeholders, in capability order. A read-only capability
+    (declared entity None) and an undeclared one are not creatable here."""
+    try:
+        from app.placeholders import PLACEHOLDER_CONNECTORS
+    except Exception:
+        PLACEHOLDER_CONNECTORS = {{}}
+    # The resolver reads the declarations once at import; read them again
+    # now that the harness has its environment, so a route module that could
+    # not import earlier is not mistaken for "declares nothing".
+    globals()["_ROUTE_ENTITIES"] = _route_entities()
+    globals()["_JOBS_ENTITIES"] = _jobs_entities()
+    models = _models()
+    out = []
+    for cap in _cap_order():
+        if PLACEHOLDER_CONNECTORS.get(cap):
+            continue
+        entity, declared = _declared_entity(cap, models.get(cap))
+        if declared and entity:
+            out.append(cap)
+    return out
+
+
+def _created_id(resp: Any) -> Tuple[Any, str]:
+    """(record id, refusal) read by the route's create contract. HTTP 200
+    with {OK_KEY!r}: false is a refusal, never a success."""
+    try:
+        body = resp.json()
+    except Exception:
+        body = None
+    if resp.status_code not in (200, 201):
+        detail = body.get({ERROR_KEY!r}) if isinstance(body, dict) else ""
+        return None, "HTTP %s %s" % (resp.status_code, detail or "")
+    if not isinstance(body, dict):
+        return None, "answered no JSON object"
+    if body.get({OK_KEY!r}) is False:
+        return None, "refused: %s" % (body.get({ERROR_KEY!r}) or {OK_KEY!r} + ": false")
+    record = body.get({STORED_RECORD_KEY!r})
+    if not isinstance(record, dict) or record.get({RECORD_ID_KEY!r}) in (None, ""):
+        return None, "accepted but answered no %s.%s" % ({STORED_RECORD_KEY!r}, {RECORD_ID_KEY!r})
+    return record.get({RECORD_ID_KEY!r}), ""
+
+
 def check_cross_tenant_404(http: _Http) -> Tuple[str, str]:
     """Write as tenant A, read as tenant B: the read must be 404.
 
-    404-not-403 is the platform's stated doctrine — cross-tenant access
+    404-not-403 is the platform's stated doctrine -- cross-tenant access
     never leaks existence. A 200/403 here means the product is
     single-tenant by construction (the Phase-2 0.2 defect).
+
+    The record is created through a capability that DECLARES a persisted
+    entity, with the shared payload builder every emitted suite uses (the
+    product's own model fills required fields; a rejection stated as data is
+    corrected once). A refused create is reported with the product's own
+    refusal as evidence -- never as "no stored id".
     """
     previous = os.environ.get("TENANT_TOKENS")
     os.environ["TENANT_TOKENS"] = "token-a:tenant-a,token-b:tenant-b"
     try:
-        cap = _first_cap()
-        if not cap:
-            return "FAIL", "no first capability to POST"
-        payload: Dict[str, Any] = {{}}
-        models = _models()
-        cls = models.get(cap)
-        if cls is not None:
-            constraints = getattr(cls, "CONSTRAINTS", {{}}) or {{}}
-            for field in getattr(cls, "FIELDS", []) or []:
-                rules = constraints.get(field) or {{}}
-                if rules.get("allowed_values"):
-                    payload[field] = rules["allowed_values"][0]
-                elif rules.get("required"):
-                    payload[field] = "sample"
-        created = http.request(
-            "post", "/v1/" + cap, json=payload,
-            headers={{"Authorization": "Bearer token-a"}},
-        )
-        if created.status_code not in (200, 201):
-            return "FAIL", "tenant A create: HTTP %s" % created.status_code
-        body = {{}}
-        try:
-            body = created.json()
-        except Exception:
-            pass
-        record = body.get("stored") or {{}}
-        if not isinstance(record, dict) or not record.get("id"):
-            return "FAIL", "tenant A create returned no stored id"
-        read = http.request(
-            "get", "/v1/%s/%s" % (cap, record["id"]),
-            headers={{"Authorization": "Bearer token-b"}},
-        )
-        if read.status_code == 404:
-            return "PASS", "tenant B read of tenant A record: HTTP 404"
-        return "FAIL", "tenant B read returned HTTP %s (want 404)" % read.status_code
+        caps = _persisting_caps()
+        if not caps:
+            return "SKIP", (
+                "no capability declares a persisted entity -- isolation needs a "
+                "stored record, so it is not judgeable on this product"
+            )
+        globals()["client"] = _CreateClient(http)
+        refusals = []
+        for cap in caps:
+            resp, _corrections = _post_accepting(
+                "/v1/" + cap, {{}}, {{"Authorization": "Bearer token-a"}}, cap,
+            )
+            record_id, refusal = _created_id(resp)
+            if record_id is None:
+                refusals.append("%s: %s" % (cap, refusal))
+                continue
+            read = http.request(
+                "get", "/v1/%s/%s" % (cap, record_id),
+                headers={{"Authorization": "Bearer token-b"}},
+            )
+            if read.status_code == 404:
+                return "PASS", "tenant B read of tenant A %s record: HTTP 404" % cap
+            return "FAIL", "tenant B read of tenant A %s record returned HTTP %s (want 404)" % (cap, read.status_code)
+        return "FAIL", (
+            "tenant A could not store a record through any capability that "
+            "declares a persisted entity -- " + "; ".join(refusals)
+        )[:700]
     finally:
         if previous is None:
             os.environ.pop("TENANT_TOKENS", None)
