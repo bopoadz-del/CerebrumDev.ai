@@ -100,7 +100,12 @@ from app.factory.build.payload_helpers import render_payload_helpers
 from app.factory.build.findings import render_capability_recorder
 from app.factory.build.findings import rework_targets as _rework_targets
 from app.factory.build.rejection_contract import (
+    ACCEPT_STATUSES,
+    CROSS_TENANT_READ_STATUS,
+    ERROR_KEY,
+    LISTED_RECORDS_SRC,
     OK_KEY,
+    RECORD_ID_KEY,
     STORED_RECORD_KEY,
     ALLOWED_VALUES_KEY,
     MISSING_REQUIRED,
@@ -2251,14 +2256,14 @@ def _declared_refusal_lines(
         "    except Exception:",
         "        body = None",
         f"    if not (resp.status_code == {UNAVAILABLE_STATUS}",
-        "            and isinstance(body, dict) and body.get('ok') is False",
+        f"            and isinstance(body, dict) and body.get({OK_KEY!r}) is False",
         f"            and body.get('error_kind') == {UNAVAILABLE_KIND!r}",
         f"            and list(body.get('settings') or []) == {settings!r}):",
         f"        failures.append('{name}: declares placeholder connector(s); want HTTP"
         f" {UNAVAILABLE_STATUS} error_kind {UNAVAILABLE_KIND} naming {', '.join(settings)},"
         " got HTTP ' + str(resp.status_code) + ': ' + resp.text[:200])",
         f'    listed = client.get("/v1/{name}", headers=AUTH)',
-        "    if listed.status_code != 200:",
+        f"    if listed.status_code not in {tuple(ACCEPT_STATUSES)!r}:",
         f"        failures.append('{name} list: HTTP ' + str(listed.status_code))",
         "",
     ]
@@ -5871,10 +5876,15 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             "    if not isinstance(out, dict):",
             f"        failures.append('{name} returned a non-dict: ' + repr(out)[:120])",
             f"        _record_capability_failure({cap.capability_id!r})",
-            '    elif out.get("ok") is False:',
+            f"    elif out.get({OK_KEY!r}) is False:",
             f"        failures.append('{name} rejected a payload built from its own "
-            "schema: ' + str(out.get('error')))",
+            "schema: ' + str(out.get(" + repr(ERROR_KEY) + ")))",
             f"        _record_capability_failure({cap.capability_id!r})",
+            # A failed block call nested in an ok answer. The statuses are the
+            # DECLARED block-result contract: the Factory's own error envelope
+            # (roles_constants._error_envelope, "status": "error") and the
+            # workflow step results ("failed"). default=str keeps a handler
+            # that returns bytes (a rendered document) serialisable.
             "    elif '\\\"status\\\": \\\"error\\\"' in "
             "_json.dumps(out, default=str) or "
             "'\\\"status\\\": \\\"failed\\\"' in _json.dumps(out, default=str):",
@@ -5919,12 +5929,12 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             model_lines += [
                 f"    record = {payload}",
                 f"    saved = store.save('{entity}', record, tenant_id=TENANT)",
-                f"    assert saved['id'] is not None, 'no id assigned for {entity}'",
-                f"    fetched = store.get('{entity}', saved['id'], tenant_id=TENANT)",
+                f"    assert saved[{RECORD_ID_KEY!r}] is not None, 'no id assigned for {entity}'",
+                f"    fetched = store.get('{entity}', saved[{RECORD_ID_KEY!r}], tenant_id=TENANT)",
                 f"    assert fetched is not None, '{entity} did not persist'",
                 "    for key, value in record.items():",
                 "        assert fetched[key] == value, (key, fetched[key], value)",
-                f"    assert any(r['id'] == saved['id'] for r in store.list_all('{entity}', tenant_id=TENANT))",
+                f"    assert any(r[{RECORD_ID_KEY!r}] == saved[{RECORD_ID_KEY!r}] for r in store.list_all('{entity}', tenant_id=TENANT))",
             ]
         model_lines += [
             "",
@@ -5933,7 +5943,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             "    assert MODELS, 'no models were generated'",
             "    for cap_id, cls in MODELS.items():",
             "        instance = cls.from_dict({})",
-            "        assert instance.to_dict()['id'] is None",
+            f"        assert instance.to_dict()[{RECORD_ID_KEY!r}] is None",
             "        assert cls.FIELDS, cap_id",
         ]
     else:
@@ -6024,24 +6034,9 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         "AUTH = {'Authorization': 'Bearer ' + __import__('os').environ.get('PLATFORM_TOKEN', 'dev-local-token')}",
         "",
         "",
-        "def _listed(payload):",
-        '    """Same list shapes as PRODUCT round-trip (_listed / _listed_records).',
-        "",
-        "    Hard-coding listed.json()['items'] KeyError'd when GET answered",
-        "    {ok: False} or {records: [...]} — pytest then reported only",
-        "    'suite is red' with no capability id.",
-        '    """',
-        "    if isinstance(payload, list):",
-        "        return payload",
-        "    if not isinstance(payload, dict):",
-        "        return []",
-        '    if payload.get("ok") is False:',
-        "        return []",
-        '    for key in ("items", "records", "results", "data", "rows"):',
-        "        value = payload.get(key)",
-        "        if isinstance(value, list):",
-        "            return value",
-        "    return []",
+        # The list reader every Factory check shares (rejection_contract): by
+        # shape, never a guessed key -- the brief declares no list key.
+        *LISTED_RECORDS_SRC.strip("\n").splitlines(),
         "",
         "",
         *render_payload_helpers(),
@@ -6074,7 +6069,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             route_lines += [
                 f"    payload = {sample!r}",
                 f'    resp, _corr = _post_accepting("/v1/{name}", payload, AUTH, {cap.capability_id!r})',
-                "    if resp.status_code != 200:",
+                f"    if resp.status_code not in {tuple(ACCEPT_STATUSES)!r}:",
                 f"        failures.append('{name}: HTTP ' + str(resp.status_code)"
                 " + ': ' + resp.text[:200] + (' [tester already tried the values the"
                 " route named: ' + '; '.join(_corr) + ']' if _corr else ''))",
@@ -6094,11 +6089,11 @@ def run_tester(ctx: RoleContext) -> RoleResult:
                 "            # is that capability's business, and ok:false stays allowed.",
                 "            elif 'blocks_unavailable' in body:",
                 "                unavailable = body.get('blocks_unavailable')",
-                "                if body.get('ok') is not True or not unavailable:",
+                f"                if body.get({OK_KEY!r}) is not True or not unavailable:",
                 f"                    failures.append('{name}: declared stub must be ok:true'"
                 " + ' and name blocks_unavailable')",
                 f'            listed = client.get("/v1/{name}", headers=AUTH)',
-                "            if listed.status_code != 200:",
+                f"            if listed.status_code not in {tuple(ACCEPT_STATUSES)!r}:",
                 f"                failures.append('{name} list: HTTP '"
                 " + str(listed.status_code))",
                 "",
@@ -6128,40 +6123,40 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             route_lines += [
                 f"    payload = {sample!r}",
                 f'    resp, _corr = _post_accepting("/v1/{name}", payload, AUTH, {cap.capability_id!r})',
-                "    if resp.status_code != 200:",
+                f"    if resp.status_code not in {tuple(ACCEPT_STATUSES)!r}:",
                 f"        failures.append('{name}: HTTP ' + str(resp.status_code)"
                 " + ': ' + resp.text[:200] + (' [tester already tried the values the"
                 " route named: ' + '; '.join(_corr) + ']' if _corr else ''))",
-                '    elif resp.json().get("ok") is False:',
+                f'    elif resp.json().get({OK_KEY!r}) is False:',
                 f"        failures.append('{name} rejected a payload built from its "
-                "own schema: ' + str(resp.json().get('error')) + (' [tester already"
+                "own schema: ' + str(resp.json().get(" + repr(ERROR_KEY) + ")) + (' [tester already"
                 " tried the values the route named: ' + '; '.join(_corr) + ']' if _corr"
                 " else ''))",
                 "    else:",
                 f'        listed = client.get("/v1/{name}", headers=AUTH)',
                 "        listed_body = listed.json() if listed.content else {}",
-                "        if listed.status_code != 200:",
+                f"        if listed.status_code not in {tuple(ACCEPT_STATUSES)!r}:",
                 f"            failures.append('{name} list: HTTP '"
                 " + str(listed.status_code))",
                 '        elif isinstance(listed_body, dict) and '
-                'listed_body.get("ok") is False:',
+                f'listed_body.get({OK_KEY!r}) is False:',
                 f"            failures.append('{name} list refused: '"
-                " + str(listed_body.get('error') or listed_body)[:200])",
+                " + str(listed_body.get(" + repr(ERROR_KEY) + ") or listed_body)[:200])",
                 "        else:",
                 "            rows = _listed(listed_body)",
                 "            if not rows:",
                 f"                failures.append('{name} accepted a record but "
                 "persisted nothing')",
                 "            else:",
-                '                item_id = rows[0].get("id")',
+                f'                item_id = rows[0].get({RECORD_ID_KEY!r})',
                 f'                got = client.get(f"/v1/{name}/{{item_id}}", headers=AUTH)',
-                "                if got.status_code != 200:",
+                f"                if got.status_code not in {tuple(ACCEPT_STATUSES)!r}:",
                 f"                    failures.append('{name} get: HTTP '"
                 " + str(got.status_code))",
                 f'                missing = client.get("/v1/{name}/999999", headers=AUTH)',
-                "                if missing.status_code != 404:",
+                f"                if missing.status_code != {CROSS_TENANT_READ_STATUS}:",
                 f"                    failures.append('{name} missing id: HTTP '"
-                " + str(missing.status_code) + ' (expected 404)')",
+                f" + str(missing.status_code) + ' (expected {CROSS_TENANT_READ_STATUS})')",
                 "",
             ]
         route_lines.append('    assert not failures, "; ".join(failures)')
@@ -6334,12 +6329,12 @@ def _render_agent_domain_tests(cases: List[Dict[str, Any]]) -> str:
         ]
         if expect == "reject":
             lines += [
-                f"    if resp_{i}.status_code == 200 and resp_{i}.json().get('ok') is not False:",
+                f"    if resp_{i}.status_code in {tuple(ACCEPT_STATUSES)!r} and resp_{i}.json().get({OK_KEY!r}) is not False:",
                 f"        failures.append({reason!r} or 'case {i} should have been rejected')",
             ]
         else:
             lines += [
-                f"    if resp_{i}.status_code != 200 or resp_{i}.json().get('ok') is False:",
+                f"    if resp_{i}.status_code not in {tuple(ACCEPT_STATUSES)!r} or resp_{i}.json().get({OK_KEY!r}) is False:",
                 f"        failures.append({reason!r} or 'case {i} should have been accepted')",
             ]
     lines += [
