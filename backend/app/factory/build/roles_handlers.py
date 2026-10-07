@@ -5876,14 +5876,20 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             "    if not isinstance(out, dict):",
             f"        failures.append('{name} returned a non-dict: ' + repr(out)[:120])",
             f"        _record_capability_failure({cap.capability_id!r})",
-            # A failed block call is answered ok:false by the Factory-stamped
-            # fail-closed wrapper, so this branch is what catches it; the
-            # writer gate's F1 probe measures the same property by injecting
-            # block failures. (A text search of the answer for a status word
-            # asserted a vocabulary no contract declares -- removed.)
             f"    elif out.get({OK_KEY!r}) is False:",
             f"        failures.append('{name} rejected a payload built from its own "
             "schema: ' + str(out.get(" + repr(ERROR_KEY) + ")))",
+            f"        _record_capability_failure({cap.capability_id!r})",
+            # A failed block call nested in an ok answer. The statuses are the
+            # DECLARED block-result contract: the Factory's own error envelope
+            # (roles_constants._error_envelope, "status": "error") and the
+            # workflow step results ("failed"). default=str keeps a handler
+            # that returns bytes (a rendered document) serialisable.
+            "    elif '\\\"status\\\": \\\"error\\\"' in "
+            "_json.dumps(out, default=str) or "
+            "'\\\"status\\\": \\\"failed\\\"' in _json.dumps(out, default=str):",
+            f"        failures.append('{name} reported ok around a failed block "
+            "call: ' + _json.dumps(out, default=str)[:300])",
             f"        _record_capability_failure({cap.capability_id!r})",
         ]
     if caps:

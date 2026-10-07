@@ -359,7 +359,10 @@ def test_the_platform_suite_exercises_the_surface_it_does_not_just_import(
     assert "def test_every_capability_route_answers():" in routes_test
     assert "@pytest.mark.pilot" in routes_test
     assert "def test_every_capability_route_accepts_payload():" in routes_test
-    assert '.get("ok") is False' in routes_test
+    # The refusal is read by the declared create contract's ok key.
+    from app.factory.build.rejection_contract import OK_KEY
+
+    assert ".get(%r) is False" % (OK_KEY,) in routes_test
     assert "rejected a payload built from its own schema" in routes_test
     marker_at = routes_test.index("@pytest.mark.pilot")
     reject_at = routes_test.index("rejected a payload built from its own schema")
