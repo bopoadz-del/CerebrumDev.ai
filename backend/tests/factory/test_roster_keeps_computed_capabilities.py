@@ -15,10 +15,9 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+from app.factory.build.factory_block import begin_line, outside
 from app.factory.build.kernel_publish import (
     JOBS_REL,
-    ROSTER_MARK,
-    merge_roster,
     render_roster,
     roster_titles,
     stamp_roster,
@@ -119,8 +118,8 @@ def test_stamp_keeps_a_computed_manifest_and_makes_the_roster_the_factorys(tmp_p
     assert ns["CATALOG"]["kernel"] and ns["GATES"]["kernel"]
     assert callable(ns["inventory"])
     text = (root / JOBS_REL).read_text(encoding="utf-8")
-    assert "from tankapp.models import MODELS" in text
-    assert text.count(ROSTER_MARK) == 1
+    assert outside(text) == COMPUTED_JOBS  # every product byte, unchanged
+    assert text.count(begin_line()) == 1
 
 
 def test_stamp_is_idempotent(tmp_path):
@@ -144,18 +143,21 @@ def test_a_literal_manifest_is_kept_too(tmp_path):
     assert {j["kernel"] for j in ns["JOBS"]} == set(roster_titles())
 
 
-def test_no_manifest_declared_gets_the_full_rendering(tmp_path):
+def test_no_file_gets_the_roster_and_an_empty_manifest_in_the_block(tmp_path):
     root = tmp_path
     stamp_roster(_ctx(root))
     ns = _load(root)
     assert ns["CAPABILITIES"] == []
-    assert ROSTER_MARK not in (root / JOBS_REL).read_text(encoding="utf-8")
+    text = (root / JOBS_REL).read_text(encoding="utf-8")
+    assert outside(text) == ""  # the whole file is the Factory's block
 
 
-def test_merge_drops_only_the_roster_names(tmp_path):
+def test_product_code_around_the_block_is_byte_identical(tmp_path):
+    root = _product(tmp_path)
     existing = COMPUTED_JOBS + "\n\ndef helper():\n    return 7\n"
-    rendered = render_roster({}, _ctx(tmp_path).plan, [])
-    merged = merge_roster(existing, rendered)
-    assert "def helper():" in merged
-    assert merged.count("\nJOBS = ") == 1 and merged.count("\nGATES = ") == 1
-    assert merged.count("CAPABILITIES = [") == 1  # the product's, unduplicated
+    (root / JOBS_REL).write_text(existing, encoding="utf-8")
+    stamp_roster(_ctx(root))
+    text = (root / JOBS_REL).read_text(encoding="utf-8")
+    assert outside(text) == existing
+    # The block carries no manifest of its own: the product declared one.
+    assert text.count("CAPABILITIES = ") == 1

@@ -106,16 +106,17 @@ def base_requirement_dists(root: Path) -> FrozenSet[str]:
 def factory_stamped_paths() -> Tuple[str, ...]:
     """Every file the Factory writes into a build and the writer may not own.
 
-    The harness files (factory_rendered_paths) AND the deploy modules the
-    Factory stamps outright on every writer path (deploy.FACTORY_OWNED_DEPLOY_
-    MODULES): a crash inside the Factory's own app/observe.py is the
-    Factory's, and a receipt that left it off called it the writer's.
+    The harness files (factory_rendered_paths) AND every path a Factory stamp
+    owns outright -- read from the ONE stamp registry (stamp_registry): the
+    deploy modules (a crash inside the Factory's own app/observe.py is the
+    Factory's), the self-check, TESTER's suites. A shared file's product
+    bytes are never claimed here: only its Factory block is the Factory's.
     """
-    from app.factory.build.deploy import FACTORY_OWNED_DEPLOY_MODULES
+    from app.factory.build.stamp_registry import owned_paths
     from app.factory.build.store_acceptance import factory_rendered_paths
 
     seen: Dict[str, None] = {}
-    for rel in (*factory_rendered_paths(), *FACTORY_OWNED_DEPLOY_MODULES):
+    for rel in (*factory_rendered_paths(), *owned_paths()):
         rel = _norm_rel(rel)
         if rel:
             seen.setdefault(rel, None)

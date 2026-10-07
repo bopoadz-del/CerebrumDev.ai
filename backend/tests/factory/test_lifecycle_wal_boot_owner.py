@@ -67,7 +67,10 @@ def _run(tmp_path: Path, boot_sets_wal: bool) -> None:
             finally:
                 conn.close()
 
-    ns = {"store": store, "upgrade_head": upgrade_head, "Path": Path}
+    suite = render_product_tests(_SPECS)
+    declared = suite.split("DECLARED_JOURNAL_MODE = ", 1)[1].split("\n", 1)[0]
+    ns = {"store": store, "upgrade_head": upgrade_head, "Path": Path,
+          "DECLARED_JOURNAL_MODE": eval(declared)}  # the rendered declaration
     exec(compile(_emitted_test_source(), "emitted", "exec"), ns)
     ns[_NAME](None)
 
@@ -92,3 +95,25 @@ def test_the_writer_is_told_the_same_contract():
     src = Path(writer_prompt.__file__).read_text(encoding="utf-8")
     assert "connect() sets ``PRAGMA journal_mode=WAL``" not in src
     assert "app.migrations.upgrade_head() switches" in src
+
+
+def test_the_mode_is_one_declaration_read_by_boot_store_and_suite():
+    """The emitted suite asserts the DECLARED contract, never a literal."""
+    import ast
+
+    from app.factory.build import data_lifecycle as dl
+
+    mode = dl.SQLITE_JOURNAL_MODE
+    assert f"journal_mode={mode}" in dl.render_migrations()
+    assert f"journal_mode={mode}" in dl.render_store(_SPECS)
+    suite = render_product_tests(_SPECS)
+    assert f"DECLARED_JOURNAL_MODE = {mode.lower()!r}" in suite
+    compares = [
+        n for n in ast.walk(ast.parse(suite))
+        if isinstance(n, ast.Compare)
+        and any(
+            isinstance(c, ast.Constant) and str(c.value).lower() == mode.lower()
+            for c in n.comparators
+        )
+    ]
+    assert not compares, "an emitted assertion compares against a journal-mode literal"

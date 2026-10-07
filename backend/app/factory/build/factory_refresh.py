@@ -33,10 +33,18 @@ def _dist(line: str):
     return re.split(r"[<>=!~\[; ]", text, 1)[0].strip().lower().replace("_", "-")
 
 
-def _write_if_changed(root: Path, rel: str, text: str, changed: List[str]) -> None:
+def _write_if_changed(
+    root: Path, rel: str, text: str, changed: List[str], *, shared: bool = False
+) -> None:
+    """Write ``text`` when it differs. A Factory-owned file is normalised to
+    LF; a SHARED file (``shared=True``) is written exactly as given, so the
+    product's own bytes -- line endings included -- are never rewritten."""
     path = root / rel
-    text = text.replace("\r\n", _LF)
-    old = path.read_bytes().decode("utf-8").replace("\r\n", _LF) if path.is_file() else None
+    if not shared:
+        text = text.replace("\r\n", _LF)
+    old = path.read_bytes().decode("utf-8") if path.is_file() else None
+    if old is not None and not shared:
+        old = old.replace("\r\n", _LF)
     if old == text:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -54,27 +62,30 @@ def merged_requirements(root: Path) -> str:
     them on the resume that re-enters it.
     """
     from app.factory.build.block_obligations import dependency_obligations_on_disk
+    from app.factory.build.factory_block import apply_block, outside
     from app.factory.build.roles_handlers import _render_requirements
 
+    # requirements.txt is SHARED: the product's own lines stay byte-for-byte
+    # (factory_block); the Factory's additions live only in its marked block,
+    # recomputed from scratch each pass so the edit is idempotent.
     path = root / "requirements.txt"
-    existing = path.read_bytes().decode("utf-8").replace("\r\n", _LF) if path.is_file() else ""
-    have = {d for d in (_dist(line) for line in existing.split(_LF)) if d}
+    existing = path.read_bytes().decode("utf-8") if path.is_file() else ""
+    product = outside(existing).replace("\r\n", _LF)
+    have = {d for d in (_dist(line) for line in product.split(_LF)) if d}
     extra = []
     for line in _render_requirements(dependency_obligations_on_disk(root), root=root).split(_LF):
         dist = _dist(line)
         if dist and dist not in have:
             extra.append(line)
             have.add(dist)
-    if not extra:
+    if not extra and outside(existing) == existing:
         return existing
-    return (
-        existing.rstrip(_LF)
-        + _LF + _LF
-        + "# Packages this tree needs and did not declare: vendored block\n"
-        + "# imports, and framework features FastAPI does not declare\n"
-        + "# (refreshed by the factory)."
-        + _LF + _LF.join(extra) + _LF
+    body = (
+        "# Packages this tree needs and did not declare: vendored block\n"
+        "# imports, and framework features FastAPI does not declare.\n"
+        + _LF.join(extra) + (_LF if extra else "")
     )
+    return apply_block(existing, body)
 
 
 def refresh_factory_files(
@@ -106,5 +117,5 @@ def refresh_factory_files(
     if (root / ".github" / "workflows" / "ci.yml").is_file():
         _write_if_changed(root, ".github/workflows/ci.yml", render_github_ci(), changed)
     if (root / "requirements.txt").is_file():
-        _write_if_changed(root, "requirements.txt", merged_requirements(root), changed)
+        _write_if_changed(root, "requirements.txt", merged_requirements(root), changed, shared=True)
     return changed

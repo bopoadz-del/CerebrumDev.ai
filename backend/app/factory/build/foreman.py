@@ -215,13 +215,9 @@ def parse_instruction(raw: Any) -> Tuple[Optional[ReworkInstruction], List[str]]
 
 def protected_paths() -> FrozenSet[str]:
     """Files the Factory renders or stamps: never an instruction's target."""
-    from app.factory.build.product_suites import PRODUCT_SUITES
-    from app.factory.build.store_acceptance import factory_rendered_paths
-    from app.factory.build.writer_behaviour import SELF_CHECK_REL
+    from app.factory.build.factory_receipt import factory_stamped_paths
 
-    return frozenset(
-        str(p).replace("\\", "/") for p in (*factory_rendered_paths(), SELF_CHECK_REL, *PRODUCT_SUITES)
-    )
+    return frozenset(factory_stamped_paths())
 
 
 def _in_lanes(rel: str, lanes: Iterable[Tuple[Any, str]]) -> bool:
