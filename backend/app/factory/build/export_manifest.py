@@ -137,8 +137,9 @@ def build_manifest(
     """Assemble the versioned manifest. Validated, never a free-form dict.
 
     ``advisory_checks`` lists every gate this build moved to advisory because
-    its brief never defined it ([{check, reason, findings_count}]), so the
-    buyer sees what was not held against the product and why."""
+    its brief never defined it, or because its findings are in Factory
+    substrate ([{check, reason, findings_count, findings}]), so the buyer
+    sees what was not held against the product, why, and the evidence rows."""
     if retrieval_mode not in RETRIEVAL_MODES:
         raise ExportManifestError(
             f"{MANIFEST_MISMATCH}: retrieval_mode must be one of "
@@ -190,6 +191,7 @@ def build_manifest(
                 "check": str(row.get("check") or ""),
                 "reason": str(row.get("reason") or ""),
                 "findings_count": int(row.get("findings_count") or 0),
+                "findings": [str(f) for f in row.get("findings") or []],
             }
             for row in (advisory_checks or [])
         ],

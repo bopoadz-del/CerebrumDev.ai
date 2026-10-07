@@ -292,7 +292,8 @@ def test_an_advisory_check_ships_in_the_status_and_the_exported_package(
     )
 
     expected = [
-        {"check": INVENTED, "reason": brief_gates.REASON_NOT_DEFINED, "findings_count": 2}
+        {"check": INVENTED, "reason": brief_gates.REASON_NOT_DEFINED, "findings_count": 2,
+         "findings": ["one", "two"]}
     ]
     # The status is read off the ledger -- the same answer every reader gets.
     real_status = build_jobs.build_status
