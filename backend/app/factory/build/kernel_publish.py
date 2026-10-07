@@ -149,16 +149,90 @@ def render_roster(state: Mapping[str, Any], plan: Any, capabilities: List[Mappin
     )
 
 
+#: Marks where the Factory's roster names start in a merged ``app/jobs.py``.
+ROSTER_MARK = "# --- kernel roster: stamped by the Factory (kernel_publish), never edited ---"
+
+
+def _defined_names(node: ast.stmt) -> List[str]:
+    """The top-level names one statement binds."""
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return [node.name]
+    if isinstance(node, ast.Assign):
+        return [t.id for t in node.targets if isinstance(t, ast.Name)]
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        return [node.target.id]
+    return []
+
+
+def _declares_capabilities(tree: ast.Module) -> bool:
+    return any("CAPABILITIES" in _defined_names(n) for n in tree.body)
+
+
+def merge_roster(existing: str, rendered: str) -> str:
+    """Keep the product's own ``app/jobs.py``; make the roster names the Factory's.
+
+    ``CAPABILITIES`` is the product's manifest -- its routes may be built
+    from it, in whatever form the product declared it (a literal, or a
+    roster computed from its own models). Stamping the whole module rewrote
+    any non-literal declaration to ``CAPABILITIES = []`` and every capability
+    route disappeared (live 2026-10-07, 9de69276 vineyard repro: all eight
+    baseline POSTs answered 404, writer_behaviour STOP). So: every top-level
+    name the Factory's roster binds (JOBS, CATALOG, GATES and the live
+    readers) is dropped from the product's file and the Factory's rendering
+    of exactly those names is appended; ``CAPABILITIES`` and everything else
+    the product wrote is left as written.
+    """
+    rendered_tree = ast.parse(rendered)
+    rendered_lines = rendered.splitlines()
+    owned: set = set()
+    body: List[str] = []
+    for node in rendered_tree.body:
+        if isinstance(node, ast.Expr) and isinstance(getattr(node, "value", None), ast.Constant):
+            continue  # module docstring
+        if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+            continue
+        names = _defined_names(node)
+        if "CAPABILITIES" in names:
+            continue  # the product's manifest stays the product's
+        owned.update(names)
+        body.append("\n".join(rendered_lines[node.lineno - 1:node.end_lineno]))
+    # Everything below the mark is a previous stamp -- the Factory's, whole.
+    lines = existing.splitlines()
+    if ROSTER_MARK in lines:
+        lines = lines[: lines.index(ROSTER_MARK)]
+    existing = "\n".join(lines) + "\n"
+    tree = ast.parse(existing)
+    drop: set = set()
+    for node in tree.body:
+        if owned.intersection(_defined_names(node)):
+            drop.update(range(node.lineno - 1, node.end_lineno))
+    kept = [line for i, line in enumerate(lines) if i not in drop and line != ROSTER_MARK]
+    while kept and not kept[-1].strip():
+        kept.pop()
+    return "\n".join(kept) + "\n\n\n" + ROSTER_MARK + "\n" + "\n\n\n".join(body) + "\n"
+
+
 def stamp_roster(ctx: Any) -> bool:
     """Stamp ``app/jobs.py`` on the CodeWhale path; True when it changed.
 
-    The roster (JOBS/CATALOG/GATES) is rendered from the role contracts; the
-    capability manifest the product already declares is kept as declared.
+    The roster (JOBS/CATALOG/GATES and its readers) is rendered from the role
+    contracts. When the product already declares ``CAPABILITIES`` -- in any
+    form -- its file is merged (:func:`merge_roster`), never replaced; only a
+    file that declares no manifest (or none at all, or one that does not
+    parse) gets the full rendering.
     """
     root = Path(getattr(ctx.workspace, "workspace", ctx.workspace))
     path = root / JOBS_REL
     existing = path.read_text(encoding="utf-8") if path.is_file() else None
-    text = render_roster(ctx.state, ctx.plan, declared_capabilities(existing))
+    rendered = render_roster(ctx.state, ctx.plan, declared_capabilities(existing))
+    text = rendered
+    if existing:
+        try:
+            tree = ast.parse(existing)
+        except SyntaxError:
+            tree = None
+        if tree is not None and _declares_capabilities(tree):
+            text = merge_roster(existing, rendered)
     if existing == text:
         return False
     ctx.workspace.write_text(JOBS_REL, text)

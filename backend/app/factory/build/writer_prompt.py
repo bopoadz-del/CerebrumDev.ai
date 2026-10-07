@@ -148,8 +148,13 @@ You own the two files that carry the entity schema:
   ``SQLITE_BUSY_TIMEOUT_MS``, ``FASTAPI_SYNC_THREADPOOL``, ``db_path()``,
   ``connect()``, ``save(entity, record, tenant_id)``,
   ``get(entity, record_id, tenant_id)``, ``list_all(entity, tenant_id)``.
-  connect() sets ``PRAGMA journal_mode=WAL`` and a busy_timeout and never
-  issues CREATE TABLE -- schema belongs to alembic, not connect time.
+  connect() routes through app.db (which sets a busy_timeout) and never
+  issues CREATE TABLE -- schema belongs to alembic, not connect time. The
+  database runs in WAL: the Factory's app.migrations.upgrade_head() switches
+  the file to WAL once at boot, so connect() does NOT switch journal mode
+  per connection (that races into 'database is locked'); you may also
+  expose an ``enable_wal()`` in app/store.py. The suite asserts WAL after
+  the boot path, a busy_timeout and no table on a bare connect().
 
 An entity's name IS its capability id -- the stem of its handler module.
 The table for app/actions/<capability>.py is op.create_table("<capability>"),

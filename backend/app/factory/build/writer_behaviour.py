@@ -47,7 +47,8 @@ from app.factory.build.brief_gates import WRITER_BEHAVIOUR_CHECK
 import json
 import re
 import sys
-from typing import TYPE_CHECKING, Optional
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from app.factory.build.entity_contract import ENTITY_RESOLVER_SLOT, ENTITY_RESOLVER_SRC
 
@@ -191,52 +192,19 @@ except Exception:
 placeholder_unjudged = []
 
 
-def _ann(cls, name):
-    """Declared type for a field. PEP 563 makes annotations strings."""
-    raw = getattr(cls, "__annotations__", {}).get(name, "str")
-    return str(raw).replace("Optional[", "").replace("]", "").strip()
+#: The Factory's spec sample per capability -- the SAME base TESTER posts
+#: (roles_handlers._sample_payload over declared_specs, the product's live
+#: models). Rendered in by _render_probe; empty when the caller had no
+#: workspace, and then the shared builder completes from the model alone.
+BASE_SAMPLES = {}
+
+PAYLOAD_HELPERS = None  # rendered in by _render_probe (payload_helpers)
 
 
-def _value(cls, name):
-    """A value satisfying every constraint the field itself declares.
-
-    Mirrors the emitter's _sample_value: a type-valid but domain-invalid
-    value would be rejected by the route's own guard, and the forced-failure
-    phase would then pass without a block ever being called.
-    Appointment-shaped fields (scheduled_time, *_date, datetime annotations)
-    must not emit the word "sample" — routes and sqlite reject it.
-    """
-    con = getattr(cls, "CONSTRAINTS", {}).get(name, {})
-    allowed = con.get("allowed_values")
-    if allowed:
-        return allowed[0]
-    kind = _ann(cls, name)
-    kind_l = kind.lower().replace("datetime.", "").replace(" ", "")
-    if kind in ("int", "float") or kind_l in ("int", "float"):
-        low, high = con.get("min"), con.get("max")
-        if low is not None:
-            return low
-        if high is not None:
-            return high if high < 1 else 1
-        return 1
-    if kind == "bool" or kind_l == "bool":
-        return False
-    # Declared type / format only -- never a meaning read from the field name.
-    # A vocabulary (status, channel, ...) arrives as allowed_values above.
-    fmt = str(con.get("format") or "").lower().replace("-", "")
-    if fmt == "email":
-        return "sample@example.com"
-    if kind_l in ("datetime", "timestamp") or fmt in ("datetime", "timestamp", "iso8601"):
-        return "2026-09-03T10:00:00"
-    if kind_l == "date" or fmt == "date":
-        return "2026-09-03"
-    if kind_l == "time" or fmt == "time":
-        return "10:00:00"
-    return "sample"
-
-
-def _payload(cls):
-    return {n: _value(cls, n) for n in getattr(cls, "FIELDS", [])}
+def _payload_for(cap_id):
+    """One builder for every Factory probe and suite (payload_helpers): the
+    spec sample, completed with what the product's own model requires."""
+    return _sample_payload_for(cap_id, BASE_SAMPLES.get(cap_id) or {})
 
 
 ENTITY_RESOLVER = None  # rendered in by _render_probe (entity_contract)
@@ -545,10 +513,10 @@ def _check_round_trip(cap_id, cls, body):
 
 # -- phase 1: baseline -----------------------------------------------------
 for cap_id, cls in MODELS.items():
-    body = _payload(cls)
+    body = _payload_for(cap_id)
     _seen["cap"] = cap_id
     try:
-        resp = client.post("/v1/" + cap_id, json=body, headers=AUTH)
+        resp, _corrected = _post_accepting("/v1/" + cap_id, body, AUTH, cap_id)
     except Exception as exc:
         target = persist_misses if isinstance(exc, _db_error_types()) else schema_misses
         target.append(
@@ -572,7 +540,13 @@ for cap_id, cls in MODELS.items():
         continue
     if resp.status_code != 200:
         schema_misses.append(
-            _miss(cap_id, "%s: baseline POST returned HTTP %s" % (cap_id, resp.status_code))
+            # The product's own refusal travels with the miss: a bare status
+            # left the writer nothing to converge on (live 9de69276).
+            _miss(cap_id, "%s: baseline POST returned HTTP %s: %s%s" % (
+                cap_id, resp.status_code, (resp.text or "")[:300],
+                (" [the probe already tried the values the route named: "
+                 + "; ".join(_corrected) + "]") if _corrected else "",
+            ))
         )
         continue
     data = data if isinstance(data, dict) else {}
@@ -660,7 +634,7 @@ honest = 0
 for cap_id, cls in targets:
     entity = _entity_of(cap_id, cls)
     before = _rows(entity)
-    body = _payload(cls)
+    body = _payload_for(cap_id)
     _calls["n"] = 0
     try:
         resp = client.post("/v1/" + cap_id, json=body, headers=AUTH)
@@ -907,10 +881,58 @@ def _pass_detail(
     return "every capability fails closed when its blocks fail"
 
 
-def _render_probe() -> str:
-    """The probe with this factory's resource obligations and halt sentences
-    baked in."""
+def _run_probe_source(ctx: Any, source: str) -> Any:
+    """Run the rendered probe from a temp file OUTSIDE the workspace.
+
+    ``python -c <probe>`` put the whole source on the command line; with the
+    shared payload builder rendered in it outgrew the Windows argv limit
+    (WinError 206). The loader keeps ``''`` (the workspace, the run's cwd) on
+    sys.path exactly as ``-c`` did, so ``import app`` resolves the same way.
+    """
+    import os
+    import tempfile
+
+    fd, path = tempfile.mkstemp(prefix="writer-behaviour-probe-", suffix=".py")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(source)
+        loader = (
+            "import runpy, sys; sys.path.insert(0, ''); "
+            f"runpy.run_path({path!r}, run_name='__main__')"
+        )
+        return ctx.run([sys.executable, "-c", loader])
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+PAYLOAD_HELPERS_SLOT = "PAYLOAD_HELPERS = None  # rendered in by _render_probe (payload_helpers)"
+BASE_SAMPLES_SLOT = "BASE_SAMPLES = {}"
+
+
+def base_samples(workspace: Any) -> Dict[str, Dict[str, Any]]:
+    """The spec sample per capability -- exactly the base TESTER posts:
+    ``roles_handlers._sample_payload`` over the product's live declared
+    models (declared_specs). Empty when nothing is declared."""
+    from app.factory.build.declared_specs import specs_from_product_models
+    from app.factory.build.roles_handlers import _sample_payload
+
+    root = Path(getattr(workspace, "workspace", workspace))
+    try:
+        specs = specs_from_product_models(root)
+    except Exception:  # noqa: BLE001 -- no readable models: the builder completes from MODELS
+        return {}
+    return {str(cap): _sample_payload(spec) for cap, spec in (specs or {}).items() if isinstance(spec, dict)}
+
+
+def _render_probe(samples: Optional[Dict[str, Dict[str, Any]]] = None) -> str:
+    """The probe with this factory's resource obligations, halt sentences,
+    entity resolver and ONE payload builder (payload_helpers) baked in.
+    ``samples`` is the spec base TESTER uses (:func:`base_samples`)."""
     from app.factory.build.block_obligations import resource_obligations
+    from app.factory.build.payload_helpers import render_payload_helpers
 
     return (
         BEHAVIOUR_PROBE.replace(
@@ -919,6 +941,8 @@ def _render_probe() -> str:
             1,
         ).replace("HALTS = {}", "HALTS = " + repr(dict(HALT_SENTENCES)), 1)
         .replace(ENTITY_RESOLVER_SLOT, ENTITY_RESOLVER_SRC, 1)
+        .replace(BASE_SAMPLES_SLOT, "BASE_SAMPLES = " + repr(dict(samples or {})), 1)
+        .replace(PAYLOAD_HELPERS_SLOT, "\n".join(render_payload_helpers()), 1)
     )
 
 
@@ -987,14 +1011,28 @@ def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
     env.pop("DATABASE_URL", None)
-    proc = subprocess.run(
-        [sys.executable, "-c", PROBE],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=TIMEOUT_S,
-    )
+    # The probe runs from a temp file, as the gate runs it: on the command
+    # line it outgrows the Windows argv limit (WinError 206).
+    import tempfile
+    fd, probe_path = tempfile.mkstemp(prefix="factory-check-probe-", suffix=".py")
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(PROBE)
+    loader = ("import runpy, sys; sys.path.insert(0, ''); "
+              "runpy.run_path(" + repr(probe_path) + ", run_name='__main__')")
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", loader],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=TIMEOUT_S,
+        )
+    finally:
+        try:
+            os.unlink(probe_path)
+        except OSError:
+            pass
     records = []
     for line in ((proc.stdout or "") + "\\n" + (proc.stderr or "")).splitlines():
         try:
@@ -1026,24 +1064,28 @@ if __name__ == "__main__":
 '''
 
 
-def render_self_check() -> str:
-    """The stamped self-check: the SAME rendered probe the gate runs, then
-    the product-gate suites TESTER stamped (product_suites)."""
+def render_self_check(samples: Optional[Dict[str, Dict[str, Any]]] = None) -> str:
+    """The stamped self-check: the SAME rendered probe the gate runs -- with
+    the same base samples (:func:`base_samples`) -- then the product-gate
+    suites TESTER stamped (product_suites)."""
     from app.factory.build.product_suites import PRODUCT_SUITES
 
     return _SELF_CHECK_TEMPLATE.format(
         command=SELF_CHECK_COMMAND,
-        probe=repr(_render_probe()),
+        probe=repr(_render_probe(samples)),
         levels=repr(RECORD_LEVELS),
         suites=repr(PRODUCT_SUITES),
     )
 
 
 def emit_self_check(workspace: object) -> None:
-    """Stamp the self-check (Factory-owned) before any writer path runs."""
+    """Stamp the self-check (Factory-owned) before any writer path runs.
+
+    Stamped with the workspace's own base samples, so it posts what the gate
+    will post; re-stamped by factory_refresh before every TESTER."""
     from app.factory.build.workspace import write_workspace_text
 
-    write_workspace_text(workspace, SELF_CHECK_REL, render_self_check())
+    write_workspace_text(workspace, SELF_CHECK_REL, render_self_check(base_samples(workspace)))
 
 
 def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
@@ -1067,7 +1109,7 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
             findings=["writer produced no models"],
         )
 
-    proc = ctx.run([sys.executable, "-c", _render_probe()])
+    proc = _run_probe_source(ctx, _render_probe(base_samples(ctx.workspace)))
     if proc.returncode != 0:
         records = probe_records(proc.stderr or "")
         return GateResult(

@@ -7,7 +7,6 @@ gate that passed both would not be testing anything.
 
 from __future__ import annotations
 
-import ast
 import subprocess
 import sys
 from pathlib import Path
@@ -34,7 +33,6 @@ CONSOLE = (
     "</script></body></html>"
 )
 from app.factory.build.authority import BuildRole
-from app.factory.build import writer_behaviour as writer_behaviour_mod
 from app.factory.build.writer_behaviour import (
     BEHAVIOUR_PROBE,
     CONTRACT_HALT,
@@ -876,38 +874,64 @@ def test_a_raw_line_is_never_the_banner():
     assert banner == classify_unmarked_probe_failure(sql_lines)
 
 
-def test_probe_value_samples_appointment_fields_not_the_word_sample():
-    """Probe _value must match the emitter for time/datetime names."""
-    marker = "BEHAVIOUR_PROBE = r" + (chr(39) * 3)
-    text = Path(writer_behaviour_mod.__file__).read_text(encoding="utf-8")
-    start = text.index(marker) + len(marker)
-    src = text[start:text.index(chr(39) * 3, start)]
-    tree = ast.parse(src)
-    picked = [
-        n
-        for n in tree.body
-        if isinstance(n, ast.FunctionDef) and n.name in {"_ann", "_value", "_payload"}
-    ]
-    ns: dict = {}
-    exec(compile(ast.Module(body=picked, type_ignores=[]), "<p>", "exec"), ns)
+_SAMPLED_MODELS = '''
+from __future__ import annotations
 
-    class Appointment:
-        FIELDS = ["scheduled_time", "duration_minutes", "status", "service_type", "channel"]
-        # The channel's vocabulary is DECLARED; the sample follows it.
-        CONSTRAINTS = {
-            "status": {"allowed_values": ["booked", "completed"]},
-            "scheduled_time": {"format": "time"},
-            "channel": {"allowed_values": ["email", "sms"]},
-        }
-        __annotations__ = {
-            "scheduled_time": "str",
-            "duration_minutes": "int",
-            "status": "str",
-            "service_type": "str",
-            "channel": "str",
-        }
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Optional
 
-    payload = ns["_payload"](Appointment)
+
+@dataclass
+class Appointment:
+    scheduled_time: str = ""
+    duration_minutes: int = 1
+    status: str = "booked"
+    service_type: str = ""
+    channel: str = "email"
+    FIELDS = ["scheduled_time", "duration_minutes", "status", "service_type", "channel"]
+    # The channel's vocabulary is DECLARED; the sample follows it.
+    CONSTRAINTS = {
+        "status": {"allowed_values": ["booked", "completed"]},
+        "scheduled_time": {"format": "time"},
+        "channel": {"allowed_values": ["email", "sms"]},
+    }
+
+
+@dataclass
+class Undeclared:
+    """Same names, nothing declared: the name decides nothing."""
+    channel: str = ""
+    created_at: str = ""
+    visit_date: str = ""
+    owner_email: str = ""
+    FIELDS = ["channel", "created_at", "visit_date", "owner_email"]
+    CONSTRAINTS = {}
+
+
+@dataclass
+class DatetimeAnn:
+    visit: Optional[datetime] = None
+    FIELDS = ["visit"]
+    CONSTRAINTS = {}
+
+
+MODELS = {"appointment": Appointment, "undeclared": Undeclared, "datetime_ann": DatetimeAnn}
+'''
+
+
+def test_probe_value_samples_appointment_fields_not_the_word_sample(tmp_path):
+    """The probe has no sampler of its own: it posts TESTER's base sample
+    (base_samples -- the one builder over the product's declared models).
+    The declared-field properties the probe's sampler used to pin hold on
+    what it posts now."""
+    from app.factory.build.writer_behaviour import base_samples
+
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "models.py").write_text(_SAMPLED_MODELS, encoding="utf-8")
+    samples = base_samples(tmp_path)
+
+    payload = samples["appointment"]
     assert payload["scheduled_time"] == "10:00:00"
     assert payload["scheduled_time"] != "sample"
     assert payload["duration_minutes"] == 1
@@ -915,20 +939,9 @@ def test_probe_value_samples_appointment_fields_not_the_word_sample():
     assert payload["service_type"] == "sample"
     assert payload["channel"] == "email"  # allowed_values[0]
 
-    class Undeclared:
-        """Same names, nothing declared: the name decides nothing."""
-        FIELDS = ["channel", "created_at", "visit_date", "owner_email"]
-        CONSTRAINTS = {}
-        __annotations__ = {n: "str" for n in FIELDS}
+    assert set(samples["undeclared"].values()) == {"sample"}
 
-    assert set(ns["_payload"](Undeclared).values()) == {"sample"}
-
-    class DatetimeAnn:
-        FIELDS = ["visit"]
-        CONSTRAINTS = {}
-        __annotations__ = {"visit": "datetime"}
-
-    assert ns["_value"](DatetimeAnn, "visit") == "2026-09-03T10:00:00"
+    assert samples["datetime_ann"]["visit"] == "2026-09-03T10:00:00"
 
 
 def _appointment_spec() -> dict:

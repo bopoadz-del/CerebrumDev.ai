@@ -27,10 +27,17 @@ from typing import Any, Dict, Iterable, Optional
 #: Run inside the PRODUCT (its package is also called ``app``), so in a
 #: subprocess with cwd at the product root.
 SPECS_DUMP = """
-import json, sys, typing
+import datetime as _dt, json, sys, typing
 sys.path.insert(0, ".")
 from app.models import MODELS
-kinds = {int: "int", float: "float", bool: "bool"}
+kinds = {int: "int", float: "float", bool: "bool",
+         _dt.datetime: "datetime", _dt.date: "date", _dt.time: "time"}
+def _kind(hint):
+    # Optional[X] declares X: the sample follows the declared type.
+    args = [a for a in (getattr(hint, "__args__", None) or ()) if a is not type(None)]
+    if getattr(hint, "__origin__", None) is typing.Union and len(args) == 1:
+        hint = args[0]
+    return kinds.get(hint, "str")
 out = {}
 for cap, cls in MODELS.items():
     try:
@@ -39,7 +46,7 @@ for cap, cls in MODELS.items():
         hints = {}
     c = dict(getattr(cls, "CONSTRAINTS", {}) or {})
     out[cap] = {"entity": getattr(cls, "ENTITY", cap),
-                "fields": [{"name": n, "type": kinds.get(hints.get(n, str), "str"), **c.get(n, {})}
+                "fields": [{"name": n, "type": _kind(hints.get(n, str)), **c.get(n, {})}
                            for n in getattr(cls, "FIELDS", [])]}
 print(json.dumps(out))
 """
