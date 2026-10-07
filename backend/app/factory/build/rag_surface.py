@@ -34,7 +34,8 @@ RAG_ROUTES_REL = Path("app") / "rag_routes.py"
 RAG_WIRE_MARK = "from app.rag_routes import router as rag_router"
 
 #: Self-contained keep-path module. STORAGE_PATH JSONL + FastAPI routes.
-#: Ingest accepts the store_acceptance plant body (text/content/paragraph).
+#: Ingest takes the document text in writer_phases.RAG_INGEST_TEXT_FIELDS
+#: (the body fields the brief declares); test_declared_contract_sweep pins it.
 #: Query GET+POST returns structured hits with excerpt/score.
 _RAG_ROUTES_PY = '''"""Factory-grounded dual-RAG ingest/query (PHASE 2 keep-path).
 

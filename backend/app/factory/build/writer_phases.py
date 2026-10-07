@@ -41,6 +41,11 @@ WRITER_PHASES: Tuple[str, ...] = (
 #: The platform's RAG contract, as the brief states it.
 RAG_INGEST_PATHS = ("/v1/rag/ingest",)
 RAG_QUERY_PATHS = ("/v1/rag/query",)
+#: The ingest body fields that carry the document text. Stated to the writer
+#: in the PHASE 2 brief below, rendered into the Factory's keep-path RAG module
+#: and read by the Store gate's plant -- one declaration, so the plant never
+#: posts a body shape the brief never asked for.
+RAG_INGEST_TEXT_FIELDS = ("text", "content", "paragraph")
 
 #: What the checker accepts: the contract's shape, under any route prefix a
 #: product uses (``/v1/rag/ingest`` or ``/v1/<prefix>/rag/ingest``). The shape
@@ -148,7 +153,9 @@ def phase_do_text(phase_id: str) -> str:
             "rag_*) — otherwise do not invent a RAG surface.\n"
             "When RAG is owed, ship these HTTP routes as quoted paths in "
             "app/**/*.py (not docs/rag JSON, not phase-1 persist POST/GET): "
-            "ingest POST /v1/rag/ingest; query GET or POST /v1/rag/query "
+            "ingest POST /v1/rag/ingest, taking the document text in any of "
+            "the JSON body fields " + "/".join(RAG_INGEST_TEXT_FIELDS) + "; "
+            "query GET or POST /v1/rag/query "
             "(a route prefix before /rag/ is allowed).\n"
             "HARD WRITE app/rag_routes.py (Factory keep-path plants this "
             "file when the CLI miss-scopes work items to capability "

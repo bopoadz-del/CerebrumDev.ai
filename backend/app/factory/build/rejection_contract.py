@@ -48,3 +48,70 @@ OK_KEY = "ok"
 ERROR_KEY = "error"
 STORED_RECORD_KEY = "stored"
 RECORD_ID_KEY = "id"
+
+
+# --- The HTTP status contract every Factory check reads ----------------------
+# Each value is stated to the writer by the floor line or brief line named
+# beside it, and every check that judges a status reads it from here, so a
+# check can never demand a status the brief never declared (the class that
+# kept stopping builds: a literal written into one checker, never into the
+# brief). tests/factory/test_declared_contract_sweep.py holds the floor lines
+# and the emitted suites to these values.
+#
+# brief: "Accept means HTTP 200, not ok:false" (persist_accept, schema_accept)
+ACCEPT_STATUSES = (200,)
+# floor no_token_401
+AUTH_REFUSAL_STATUS = 401
+# floor missing_field_422 / enum_422
+VALIDATION_REFUSAL_STATUS = 422
+# floor cross_tenant_404
+CROSS_TENANT_READ_STATUS = 404
+# floor negative_floor: what "rejected" / "blocked" means on the wire. Stated
+# in that floor line by refusal_statement(), never only here.
+REFUSAL_STATUSES = (400, 403, 404, 409, 422)
+
+
+def refusal_statement() -> str:
+    """The negative_floor floor line's definition of a refusal, rendered from
+    REFUSAL_STATUSES so the brief and every check say the same thing."""
+    codes = "/".join(str(code) for code in REFUSAL_STATUSES)
+    return (
+        "A refusal is an HTTP %s answer, or HTTP %s with %r: false and %r "
+        "saying why; never a 500." % (codes, ACCEPT_STATUSES[0], OK_KEY, ERROR_KEY)
+    )
+
+
+# --- How a list route's answer is read ---------------------------------------
+# By SHAPE, never by a guessed key: a bare JSON list, or every top-level list
+# of objects the answer carries. The brief never declared a list key, so a
+# reader that tried a word list of keys asserted a shape nobody promised. One
+# source, rendered into every reader (the PRODUCT round-trip probe and the
+# emitted route suites); writer_behaviour's probe reads by the same rule.
+LISTED_RECORDS_SRC = '''
+def _listed(payload):
+    """The records a list route answered -- by shape, never a guessed key."""
+    if isinstance(payload, list):
+        return payload
+    if not isinstance(payload, dict) or payload.get(%r) is False:
+        return []
+    out = []
+    for value in payload.values():
+        if isinstance(value, list) and value and all(isinstance(v, dict) for v in value):
+            out.extend(value)
+    return out
+''' % (OK_KEY,)
+
+
+def contract_source() -> str:
+    """Module-level source a rendered probe or suite includes: the declared
+    status/key constants and the list reader, all from this one module."""
+    return "\n".join(
+        [
+            "_ACCEPT_STATUSES = %r" % (tuple(ACCEPT_STATUSES),),
+            "_OK_KEY = %r" % (OK_KEY,),
+            "_ERROR_KEY = %r" % (ERROR_KEY,),
+            "_RECORD_ID_KEY = %r" % (RECORD_ID_KEY,),
+            "_NOT_FOUND = %r" % (CROSS_TENANT_READ_STATUS,),
+            LISTED_RECORDS_SRC,
+        ]
+    )

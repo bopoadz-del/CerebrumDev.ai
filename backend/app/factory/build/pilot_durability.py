@@ -97,33 +97,30 @@ def _payload(cls):
     return {n: _value(cls, n) for n in getattr(cls, "FIELDS", [])}
 
 
-def _entities():
-    try:
-        from app.jobs import CAPABILITIES
-    except Exception:
-        return {}
-    return {
-        i["id"]: i["entity"]
-        for i in (CAPABILITIES or [])
-        if isinstance(i, dict) and i.get("id") and i.get("entity")
-    }
+# Where each capability persists is the product's DECLARATION, read by the
+# same resolver as the round-trip probes -- never assumed from the capability
+# id. A capability that declares no persisted entity has nothing to outlive
+# the process and is not written here.
+ENTITY_RESOLVER = None
 
+# __CREATE_CONTRACT__
 
-ENTITIES = _entities()
 written = {}
 
 # -- process one: write ----------------------------------------------------
 client_cm = TestClient(app)
 client = client_cm.__enter__()
 for cap_id, cls in MODELS.items():
-    entity = ENTITIES.get(cap_id, cap_id)
+    entity, declared = _declared_entity(cap_id, cls)
+    if not (declared and entity):
+        continue
     resp = client.post(
         "/v1/" + cap_id,
         json=_payload(cls),
         headers={"Authorization": "Bearer " + os.environ.get("PLATFORM_TOKEN", "dev-local-token")},
     )
     data = resp.json() if resp.content else {}
-    if resp.status_code != 200 or data.get("ok") is False:
+    if resp.status_code not in _ACCEPT_STATUSES or data.get(_OK_KEY) is False:
         # Not this gate's finding: the writer gate judges acceptance.
         continue
     written[cap_id] = entity
@@ -213,6 +210,20 @@ if findings:
 '''
 
 
+def _render_durability_probe() -> str:
+    """The probe with the declared-entity resolver and the declared
+    status/key contract rendered in (entity_contract, rejection_contract)."""
+    from app.factory.build.entity_contract import (
+        ENTITY_RESOLVER_SLOT,
+        ENTITY_RESOLVER_SRC,
+    )
+    from app.factory.build.rejection_contract import contract_source
+
+    return DURABILITY_PROBE.replace(ENTITY_RESOLVER_SLOT, ENTITY_RESOLVER_SRC, 1).replace(
+        "# __CREATE_CONTRACT__\n", contract_source() + "\n", 1
+    )
+
+
 def gate_pilot_outcome_survives_restart(ctx: "GateContext") -> "GateResult":
     """A record written by one process is readable by the next."""
     from app.factory.build.gates import GateResult
@@ -233,7 +244,7 @@ def gate_pilot_outcome_survives_restart(ctx: "GateContext") -> "GateResult":
             findings=["no models to probe"],
         )
 
-    proc = ctx.run([sys.executable, "-c", DURABILITY_PROBE])
+    proc = ctx.run([sys.executable, "-c", _render_durability_probe()])
     if proc.returncode != 0:
         raw = (proc.stderr or "").splitlines()
         # Filter to marked findings: alembic and uvicorn also log to stderr,

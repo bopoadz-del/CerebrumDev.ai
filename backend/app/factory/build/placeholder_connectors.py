@@ -32,11 +32,17 @@ from typing import Any, Dict, List
 
 from app.factory.blueprint import connector_slug
 from app.factory.build.payload_helpers import render_payload_helpers
+from app.factory.build.rejection_contract import ACCEPT_STATUSES, ERROR_KEY, OK_KEY
 
 #: The Store's typed error kind for "a dependency is not configured", and the
 #: HTTP status it maps to (Cerebrum-Blocks app/core/http_errors.py).
 UNAVAILABLE_KIND = "unavailable"
 UNAVAILABLE_STATUS = 503
+
+#: The refusal body's keys: rendered into app/placeholders.py AND read by the
+#: stamped contract test from here, so the shape is defined once.
+ERROR_KIND_KEY = "error_kind"
+SETTINGS_KEY = "settings"
 
 #: The setting a placeholder connector will read once it is built:
 #: ``<CONNECTOR>`` upper-cased plus this suffix.
@@ -169,12 +175,12 @@ def render_product_module(blueprint: Any) -> str:
         "    _record(capability_id)\n"
         "    settings = [setting_for(c) for c in connectors]\n"
         "    return {\n"
-        '        "ok": False,\n'
-        '        "error_kind": UNAVAILABLE_KIND,\n'
+        f'        {OK_KEY!r}: False,\n'
+        f'        {ERROR_KIND_KEY!r}: UNAVAILABLE_KIND,\n'
         '        "capability": capability_id,\n'
         '        "connectors": list(connectors),\n'
-        '        "settings": settings,\n'
-        '        "error": "not configured: " + ", ".join(\n'
+        f'        {SETTINGS_KEY!r}: settings,\n'
+        f'        {ERROR_KEY!r}: "not configured: " + ", ".join(\n'
         '            "%s is a placeholder connector (needs %s)" % (c, s)\n'
         "            for c, s in zip(connectors, settings)\n"
         "        ),\n"
@@ -191,9 +197,9 @@ def render_product_module(blueprint: Any) -> str:
         "        bool(connectors)\n"
         "        and status_code == UNAVAILABLE_STATUS\n"
         "        and isinstance(body, dict)\n"
-        '        and body.get("ok") is False\n'
-        '        and body.get("error_kind") == UNAVAILABLE_KIND\n'
-        '        and list(body.get("settings") or []) == [setting_for(c) for c in connectors]\n'
+        f'        and body.get({OK_KEY!r}) is False\n'
+        f'        and body.get({ERROR_KIND_KEY!r}) == UNAVAILABLE_KIND\n'
+        f'        and list(body.get({SETTINGS_KEY!r}) or []) == [setting_for(c) for c in connectors]\n'
         "    )\n"
     )
 
@@ -238,12 +244,12 @@ def render_contract_tests(blueprint: Any, samples: Dict[str, Dict[str, Any]]) ->
             f'    resp, _corr = _post_accepting("/v1/{name}", {sample!r}, AUTH, {cap_id!r})',
             f"    assert resp.status_code == {UNAVAILABLE_STATUS}, resp.text[:300]",
             "    body = resp.json()",
-            '    assert body["ok"] is False',
-            f'    assert body["error_kind"] == {UNAVAILABLE_KIND!r}',
-            f'    assert body["settings"] == {settings!r}',
+            f'    assert body[{OK_KEY!r}] is False',
+            f'    assert body[{ERROR_KIND_KEY!r}] == {UNAVAILABLE_KIND!r}',
+            f'    assert body[{SETTINGS_KEY!r}] == {settings!r}',
             "    # Refused before the handler: nothing was stored.",
             f'    after = client.get("/v1/{name}", headers=AUTH)',
-            "    assert after.status_code == 200",
+            f"    assert after.status_code in {tuple(ACCEPT_STATUSES)!r}",
             "    assert after.json() == before.json()",
         ]
     return "\n".join(lines) + "\n"
