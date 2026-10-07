@@ -4,8 +4,10 @@ Drop-in workflow for the **private `cerebrum-builds` store** once that repo exis
 (owner click — this PR does not create it). Copy **both** files into the
 workspace before the seed push:
 
-- [`cerebrum-builds-store-gate.yml`](cerebrum-builds-store-gate.yml) →
-  `.github/workflows/store-gate.yml`
+- The Store gate workflow is not copied from here: its one source is
+  `bopoadz-del/cerebrum-builds` main's `.github/workflows/store-gate.yml`,
+  which every build branch inherits (the stale copy that lived here was
+  deleted 2026-10-07).
 - [`ci.yml`](ci.yml) → `.github/workflows/ci.yml`
 
 The store acceptance floor includes `ci_present_and_full_suite`, which
