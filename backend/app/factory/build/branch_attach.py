@@ -301,7 +301,12 @@ def checkpoint(workspace: Path, branch: str, message: str, env: Mapping[str, str
     """
     import tempfile
 
-    from app.factory.build.builds_push import GIT_EMAIL, GIT_NAME, _sync_workspace_onto_tree
+    from app.factory.build.builds_push import (
+        GIT_EMAIL,
+        GIT_NAME,
+        _sync_workspace_onto_tree,
+        push_with_retry,
+    )
 
     env = env if env is not None else os.environ
     if not builds_token(env):
@@ -326,9 +331,13 @@ def checkpoint(workspace: Path, branch: str, message: str, env: Mapping[str, str
         _git(["add", "-A"], tmp)
         _git(["-c", f"user.email={GIT_EMAIL}", "-c", f"user.name={GIT_NAME}",
               "commit", "--allow-empty", "-q", "-m", message], tmp)
-        pushed = _git(["push", "-q", "origin", f"HEAD:{branch}"], tmp)
-        if pushed.returncode != 0:
-            raise BuildsPushError(f"checkpoint push failed: {(pushed.stderr or '')[-300:]}")
+        push_with_retry(
+            lambda args, cwd: _git(args, cwd),
+            ["push", "origin", f"HEAD:{branch}"],
+            cwd=tmp,
+            token=builds_token(env),
+            label="checkpoint push failed",
+        )
         return (_git(["rev-parse", "HEAD"], tmp).stdout or "").strip()
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

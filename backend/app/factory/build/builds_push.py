@@ -272,6 +272,71 @@ def _scrub(text: Optional[str], token: str = "") -> str:
     return blob
 
 
+#: GitHub refuses any single file above this size (its hard per-file limit).
+GITHUB_MAX_FILE_BYTES = 100 * 1024 * 1024
+#: A push GitHub rejects is retried this many times in all before the build
+#: fails. A rejection can be transient (GitHub answers a bare "(failed)"); a
+#: deterministic one fails identically each attempt and is then reported with
+#: git's full output, never classified from its words.
+PUSH_ATTEMPTS = 3
+PUSH_BACKOFF_S = 5.0
+
+
+def oversized_files(tree: Path, limit: int = GITHUB_MAX_FILE_BYTES) -> list:
+    """Tracked-candidate files in ``tree`` GitHub would refuse, largest first.
+
+    ``.git`` is skipped. Checked BEFORE a push so an oversized file fails the
+    build with its name and size instead of an opaque remote rejection.
+    """
+    found = []
+    for path in tree.rglob("*"):
+        if ".git" in path.relative_to(tree).parts or not path.is_file() or path.is_symlink():
+            continue
+        size = path.stat().st_size
+        if size > limit:
+            found.append((path.relative_to(tree).as_posix(), size))
+    return sorted(found, key=lambda item: -item[1])
+
+
+def push_with_retry(
+    git: Callable[..., subprocess.CompletedProcess],
+    args: Sequence[str],
+    *,
+    cwd: Path,
+    token: str,
+    label: str,
+    attempts: Optional[int] = None,
+    backoff_s: Optional[float] = None,
+    sleep: Optional[Callable[[float], None]] = None,
+) -> subprocess.CompletedProcess:
+    """Push ``cwd`` to the build repo; retry, then fail with git's FULL output.
+
+    The whole stderr (every ``remote:`` line GitHub sent) is kept, scrubbed of
+    the token: a tail cut at 300 characters once dropped the line that named
+    the rejection (live 2026-10-07, ``(failed)`` with no reason).
+    """
+    attempts = PUSH_ATTEMPTS if attempts is None else attempts
+    backoff_s = PUSH_BACKOFF_S if backoff_s is None else backoff_s
+    sleep = time.sleep if sleep is None else sleep
+    big = oversized_files(Path(cwd), GITHUB_MAX_FILE_BYTES)
+    if big:
+        listed = ", ".join(f"{name} ({size} bytes)" for name, size in big)
+        raise BuildsPushError(
+            f"{label}: file(s) above GitHub's {GITHUB_MAX_FILE_BYTES}-byte limit: {listed}"
+        )
+    outputs = []
+    for attempt in range(1, max(1, attempts) + 1):
+        result = git(list(args), cwd=cwd)
+        if result.returncode == 0:
+            return result
+        outputs.append(
+            f"attempt {attempt}: " + _scrub((result.stderr or "") + (result.stdout or ""), token).strip()
+        )
+        if attempt < attempts:
+            sleep(backoff_s * attempt)
+    raise BuildsPushError(f"{label} after {len(outputs)} attempt(s): " + " | ".join(outputs))
+
+
 def _default_run_git(args: Sequence[str], *, cwd: Path) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"
@@ -427,12 +492,13 @@ def push_workspace(
         seed_sha = (sha_proc.stdout or "").strip()
         if not seed_sha:
             raise BuildsPushError("push failed: empty seed sha")
-        pushed = git(["push", "-u", "origin", f"HEAD:{branch}"], cwd=tmp)
-        if pushed.returncode != 0:
-            raise BuildsPushError(
-                "push failed before agent start: "
-                + _scrub(pushed.stderr or pushed.stdout, token)
-            )
+        push_with_retry(
+            git,
+            ["push", "-u", "origin", f"HEAD:{branch}"],
+            cwd=tmp,
+            token=token,
+            label="push failed before agent start",
+        )
         return BuildsRef(
             owner=owner,
             repo=name,
