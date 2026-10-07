@@ -64,7 +64,7 @@ def _from_blueprint(doc: Any) -> Iterator[str]:
     if not isinstance(doc, dict):
         return
     body = doc.get("product") if isinstance(doc.get("product"), dict) else doc
-    for key in ("product_id", "product_name", "name", "vertical", "id"):
+    for key in ("product_id", "platform_id", "product_name", "name", "vertical", "id"):
         value = body.get(key) if isinstance(body, dict) else None
         if isinstance(value, str):
             yield value
@@ -110,8 +110,10 @@ def from_store(store_root: Optional[Path]) -> Iterator[str]:
 def from_build_dir(build: Path) -> Iterator[str]:
     """One build workspace: its manifest and its product-dna blueprint."""
     manifest = _read_json(build / "MANIFEST.json")
-    if isinstance(manifest, dict) and isinstance(manifest.get("product_id"), str):
-        yield manifest["product_id"]
+    if isinstance(manifest, dict):
+        for key in ("product_id", "platform_id"):
+            if isinstance(manifest.get(key), str):
+                yield manifest[key]
     dna = build / "product-dna"
     yield from _from_blueprint(_read_yaml(dna / "product_blueprint.yaml"))
     resolution = _read_json(dna / "capability_resolution.json")
@@ -179,6 +181,43 @@ def default_roots() -> Dict[str, Optional[Path]]:
         sessions = None
     blueprints = Path(__file__).resolve().parents[4] / "blueprints"
     return {"store_root": store, "sessions_root": sessions, "blueprints_root": blueprints}
+
+
+#: A machine identity: one token (no spaces) joined by underscores -- how the
+#: Factory writes capability ids, product ids and platform ids
+#: (``plt_<hex>``). A display name ("Vineyard Management Platform") has
+#: spaces and is not an identity: two platforms may share one legitimately.
+def is_identity_token(literal: str) -> bool:
+    """True when ``literal`` is a machine identity, not a display name."""
+    token = str(literal or "").strip()
+    if not token or not token[0].isalpha():
+        return False
+    parts = token.split("_")
+    return len(parts) >= 2 and all(p and p.isascii() and p.isalnum() for p in parts)
+
+
+def foreign_identities_in(text: str, known: Iterable[str], own: Iterable[str]) -> List[str]:
+    """Another platform's machine identities present in ``text``.
+
+    The leakage evidence a BRIEF may be judged on. A brief is composed from
+    this build's own blueprint, so an identity another platform declared --
+    its capability id, product id or platform id -- and this blueprint did
+    not, can only have come from another workspace. Display names are never
+    evidence: they collide between platforms legitimately and appear in the
+    user's own words. ``own`` is this build's declared identity (its product
+    id, platform id, capability ids, block ids, vertical).
+    """
+    mine = {str(o).strip() for o in own if str(o).strip()}
+    hits: List[str] = []
+    blob = text or ""
+    for literal in sorted(set(known)):
+        token = str(literal).strip()
+        if not is_identity_token(token) or token in mine:
+            continue
+        pattern = r"(?<![A-Za-z0-9_])" + re.escape(token) + r"(?![A-Za-z0-9_])"
+        if re.search(pattern, blob):
+            hits.append(token)
+    return hits
 
 
 def foreign_literals_in(text: str, known: Iterable[str], own: Iterable[str]) -> List[str]:

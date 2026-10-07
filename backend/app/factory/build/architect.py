@@ -20,8 +20,10 @@ wrong (the brief lint's own rules, never a phrase list):
   resolve, or any Store block id in its text that this build did not resolve;
 * a capability it declares describing (its ``capabilities`` list) that is not
   in the blueprint;
-* a build session id, or another product's capability / product / vertical
-  (the brief lint's data-loaded literal set);
+* a build session id, or another platform's machine identity -- a
+  capability / product / platform id another platform declared and this
+  build did not (the brief lint's data-loaded set; display names are never
+  evidence);
 * a template slot or a ``[check:...]`` tag -- acceptance is code's;
 * more than the length cap.
 
@@ -202,12 +204,12 @@ def lint_architect_text(
     outside = sorted({str(c) for c in declared_capabilities} - capabilities)
     if outside:
         errors.append("capability outside the blueprint: " + ", ".join(outside[:8]))
-    from app.factory.build.product_literals import foreign_literals_in
+    from app.factory.build.product_literals import foreign_identities_in
 
     known = known_literals if known_literals is not None else _known_literals()
-    foreign = foreign_literals_in(body, known, own_names | resolved_blocks | capabilities)
+    foreign = foreign_identities_in(body, known, own_names | resolved_blocks | capabilities)
     if foreign:
-        errors.append("names another product's capability / product / vertical: " + ", ".join(foreign[:6]))
+        errors.append("carries another product's identity (capability / product / platform id): " + ", ".join(foreign[:6]))
     return ArchitectLint(ok=not errors, errors=errors)
 
 
