@@ -203,6 +203,22 @@ _PATH_IN_DETAIL = __import__("re").compile(
 )
 
 
+def repository_check_ids() -> Tuple[str, ...]:
+    """The checks that judge the REPOSITORY, not the running image: a declared
+    subject of ``tree:<path>`` (a file in the checkout) or ``factory_record``
+    (the Factory's bookkeeping in the checkout). The Store gate runs the
+    harness inside the product's image, which carries only what the product's
+    .dockerignore lets in; these checks read the checkout instead. Derived from
+    each check's declared subject -- no check id is listed."""
+    out = []
+    for c in checks():
+        subject = str(c.get("subject") or "")
+        kind, _, target = subject.partition(":")
+        if subject == SUBJECT_FACTORY_RECORD or (kind == "tree" and target):
+            out.append(str(c["id"]))
+    return tuple(out)
+
+
 def subject_of(check_id: str) -> str:
     for c in checks():
         if str(c["id"]) == check_id:

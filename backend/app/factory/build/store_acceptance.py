@@ -93,7 +93,11 @@ assert ACCEPTANCE_CHECK_NAMES[-1] == "authorship_floor"
 #: Factory reads only the records (never the human text).
 ACCEPTANCE_RECORD_KEY = "acceptance_record"
 ACCEPTANCE_TOTAL_KEY = "acceptance_total"
-_STATUSES = ("PASS", "FAIL", "SKIP")
+#: The env variable the Store gate sets to where it mounts the product's
+#: checkout inside the image. Rendered into the harness as REPO_ROOT_ENV; the
+#: gate reads the name from there, so the two sides hold one name.
+ACCEPTANCE_REPO_ROOT_ENV = "ACCEPTANCE_REPO_ROOT"
+_STATUSES =("PASS", "FAIL", "SKIP")
 
 
 def harness_record(name: str, status: str, detail: str = "") -> str:
@@ -970,10 +974,12 @@ def render_acceptance_script(blueprint: Any = None) -> str:
         audit_check_ids,
         brief_signals,
         image_check_ids,
+        repository_check_ids,
     )
 
     image_checks = ", ".join(repr(n) for n in image_check_ids())
     audit_checks = ", ".join(repr(n) for n in audit_check_ids())
+    repo_checks = ", ".join(repr(n) for n in repository_check_ids())
     from app.factory.build.writer_phases import (
         RAG_INGEST_PATHS,
         RAG_INGEST_TEXT_FIELDS,
@@ -1018,6 +1024,19 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
+
+#: Where the Store gate mounts the product's CHECKOUT inside the image, named
+#: by this env variable (the gate reads the name from this constant). A check
+#: whose declared subject is the repository (REPO_CHECKS: ``tree:`` and
+#: ``factory_record``) reads its files there, because the image is not the
+#: repository: a .dockerignore may leave CI wiring, docs or tests out of the
+#: image, and that is the product's call. Unset (the writer's own run, a local
+#: run) the checkout IS the directory this harness sits in.
+REPO_ROOT_ENV = {ACCEPTANCE_REPO_ROOT_ENV!r}
+REPO = Path(os.environ.get(REPO_ROOT_ENV) or ROOT).resolve()
+#: The tree the running check reads files from: REPO for a repository-subject
+#: check, the image (ROOT) for a runtime one. Set per check by main().
+SRC = ROOT
 
 #: ``python scripts/acceptance.py --self-check`` is the WRITER's run of this
 #: same harness on its own box. Three inputs exist only where the Store gate
@@ -1138,7 +1157,11 @@ IMAGE_CHECKS = [{image_checks}]
 # audit``). The gate attaches the scan's findings to THESE lines as evidence,
 # reading this constant -- it names no check itself.
 AUDIT_CHECKS = [{audit_checks}]
-REQUIRED = {ACCEPTANCE_REQUIRED}
+# Checks whose declared subject is the repository, not the running image (the
+# floor's ``subject: tree:<path>`` and ``factory_record``): their files are read
+# from REPO. Same source as CHECKS; no check is named here.
+REPO_CHECKS = [{repo_checks}]
+REQUIRED ={ACCEPTANCE_REQUIRED}
 # Keys of the typed records the Factory reads from this harness's stdout --
 # the same constants the Factory's parser uses (store_acceptance.py).
 RECORD_KEY = {ACCEPTANCE_RECORD_KEY!r}
@@ -1318,7 +1341,7 @@ def _client() -> Tuple[_Http, Any]:
 
 
 def _cap_order() -> List[str]:
-    receipt = ROOT / "docs" / "coder_receipt.json"
+    receipt = SRC / "docs" / "coder_receipt.json"
     if receipt.is_file():
         try:
             data = json.loads(receipt.read_text(encoding="utf-8"))
@@ -1494,7 +1517,7 @@ def _contract_routes(contract: List[str]) -> List[str]:
     out = list(contract)
     tails = [[s for s in str(p).split("/") if s][1:] for p in contract]
     try:
-        doc = json.loads((ROOT / "docs" / "openapi.json").read_text(encoding="utf-8"))
+        doc = json.loads((SRC / "docs" / "openapi.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return out
     for path, ops in (doc.get("paths") or {{}}).items():
@@ -1578,7 +1601,7 @@ def check_rag_roundtrip_hit(http: _Http) -> Tuple[str, str]:
 
 
 def check_single_persistence_root() -> Tuple[str, str]:
-    store = ROOT / "app" / "store.py"
+    store = SRC / "app" / "store.py"
     if not store.is_file():
         return "FAIL", "app/store.py missing"
     tree = _parse(store)
@@ -1608,7 +1631,7 @@ def check_single_persistence_root() -> Tuple[str, str]:
 
 
 def check_ci_present_and_full_suite() -> Tuple[str, str]:
-    ci = ROOT / ".github" / "workflows" / "ci.yml"
+    ci = SRC / ".github" / "workflows" / "ci.yml"
     if not ci.is_file():
         return "FAIL", ".github/workflows/ci.yml missing"
     # ci.yml is a Factory-owned file, re-stamped from the Factory's full-suite
@@ -1621,7 +1644,7 @@ def check_ci_present_and_full_suite() -> Tuple[str, str]:
 
 
 def check_handler_bodies_distinct() -> Tuple[str, str]:
-    actions = ROOT / "app" / "actions"
+    actions = SRC / "app" / "actions"
     if not actions.is_dir():
         return "FAIL", "app/actions missing"
     bodies: Dict[str, List[str]] = {{}}
@@ -1709,7 +1732,7 @@ def _dynamic_sql_sites() -> List[str]:
     its first argument. Core statements, compiled statements and constant
     literals with bound parameters pass."""
     sites = []
-    app_dir = ROOT / "app"
+    app_dir = SRC / "app"
     if not app_dir.is_dir():
         return sites
     for path in sorted(app_dir.rglob("*.py")):
@@ -1759,14 +1782,14 @@ def _dynamic_sql_sites() -> List[str]:
                 if position is None or len(n.args) <= position:
                     continue
                 if _is_dynamic_string(n.args[position], built):
-                    sites.append("%s:%s" % (path.relative_to(ROOT).as_posix(), n.lineno))
+                    sites.append("%s:%s" % (path.relative_to(SRC).as_posix(), n.lineno))
     return sorted(set(sites))
 
 
 def _health_probes_app_db() -> Tuple[bool, str]:
     """app/health.py asks app.db for the live database and runs a probe on
     it -- read from the syntax tree (imports, calls), never from its text."""
-    path = ROOT / "app" / "health.py"
+    path = SRC / "app" / "health.py"
     if not path.is_file():
         return False, "app/health.py missing"
     try:
@@ -1845,10 +1868,10 @@ def check_migration_no_create_all() -> Tuple[str, str]:
 
     offenders = []
     for rel in ("app/store.py", "app/main.py", "app/db.py", "app/models.py"):
-        tree = _parse(ROOT / rel)
+        tree = _parse(SRC / rel)
         if tree is not None and _calls(tree, "create_all"):
             offenders.append(rel)
-    versions = ROOT / "alembic" / "versions"
+    versions = SRC / "alembic" / "versions"
     if not versions.is_dir():
         return "FAIL", "alembic/versions missing: the schema is not migrated"
     revisions = sorted(versions.glob("*.py"))
@@ -1873,7 +1896,7 @@ def check_migration_no_create_all() -> Tuple[str, str]:
 
 
 def _capability_stems() -> List[str]:
-    actions = ROOT / "app" / "actions"
+    actions = SRC / "app" / "actions"
     if not actions.is_dir():
         return []
     return sorted(
@@ -1948,7 +1971,7 @@ def check_negative_floor() -> Tuple[str, str]:
     stems = _capability_stems()
     if not stems:
         return "FAIL", "no app/actions/: nothing to count against"
-    tests = ROOT / "tests"
+    tests = SRC / "tests"
     if not tests.is_dir():
         return "FAIL", "no tests/"
     per = dict((stem, 0) for stem in stems)
@@ -1985,8 +2008,8 @@ def check_postgres_boot_200(http: _Http) -> Tuple[str, str]:
     SQLite file onto the container disk. Reading the variable somewhere is
     not the bar; the store taking its connection from one place is.
     """
-    db = ROOT / "app" / "db.py"
-    store = ROOT / "app" / "store.py"
+    db = SRC / "app" / "db.py"
+    store = SRC / "app" / "store.py"
     if not db.is_file():
         return "FAIL", "app/db.py missing: nothing decides the backend"
     db_tree = _parse(db)
@@ -2042,8 +2065,8 @@ def check_metrics_served(http: _Http) -> Tuple[str, str]:
     resp = http.request("get", "/metrics")
     if resp.status_code != 200:
         mounted = "mount_observability" in (
-            (ROOT / "app" / "main.py").read_text(encoding="utf-8", errors="ignore")
-            if (ROOT / "app" / "main.py").is_file()
+            (SRC / "app" / "main.py").read_text(encoding="utf-8", errors="ignore")
+            if (SRC / "app" / "main.py").is_file()
             else ""
         )
         hint = (
@@ -2068,7 +2091,7 @@ def check_backup_restore_roundtrip() -> Tuple[str, str]:
     measured = (os.environ.get("STORE_BACKUP_RESTORE") or "").strip().lower()
     if measured in ("ok", "pass", "1", "true"):
         return "PASS", "backup restored with rows intact"
-    if not (ROOT / "app" / "backup.py").is_file():
+    if not (SRC / "app" / "backup.py").is_file():
         return "FAIL", "no app/backup.py"
     return "FAIL", "STORE_BACKUP_RESTORE=%r: a backup nobody restored is a file" % measured
 
@@ -2087,7 +2110,7 @@ def check_bench_p95() -> Tuple[str, str]:
 
 
 def check_audit_clean() -> Tuple[str, str]:
-    ci = ROOT / ".github" / "workflows" / "ci.yml"
+    ci = SRC / ".github" / "workflows" / "ci.yml"
     if not ci.is_file():
         return "FAIL", ".github/workflows/ci.yml missing"
     text = ci.read_text(encoding="utf-8", errors="ignore").lower()
@@ -2123,7 +2146,7 @@ def check_no_token_literal() -> Tuple[str, str]:
     An EMPTY default (or two quotes with nothing between) is the fail-closed
     pattern and is allowed.
     """
-    app_dir = ROOT / "app"
+    app_dir = SRC / "app"
     if not app_dir.is_dir():
         return "FAIL", "app/ missing"
     # The world-known development token values (the test bootstrap's), as
@@ -2143,7 +2166,7 @@ def check_no_token_literal() -> Tuple[str, str]:
         tree = _parse(path)
         if tree is None:
             continue
-        rel = path.relative_to(ROOT)
+        rel = path.relative_to(SRC)
         calls = {{id(call): name for name, call in _callees(tree)}}
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and node.value in literals:
@@ -2158,7 +2181,7 @@ def check_no_token_literal() -> Tuple[str, str]:
 
 
 def check_openapi_committed() -> Tuple[str, str]:
-    path = ROOT / "docs" / "openapi.json"
+    path = SRC / "docs" / "openapi.json"
     if not path.is_file():
         return "FAIL", "docs/openapi.json missing"
     try:
@@ -2321,13 +2344,13 @@ def check_authorship_floor() -> Tuple[str, str]:
     floor_min = {_FULL_PILOT_MIN_AUTHORED}
     receipt = {{}}
     for rel in ("docs/coder_receipt.json", "docs/build_provenance.json"):
-        path = ROOT / rel
+        path = SRC / rel
         if path.is_file():
             try:
                 receipt.update(json.loads(path.read_text(encoding="utf-8")))
             except (OSError, ValueError):
                 pass
-    actions = ROOT / "app" / "actions"
+    actions = SRC / "app" / "actions"
     authored = 0
     for path in (sorted(actions.glob("*.py")) if actions.is_dir() else []):
         try:
@@ -2378,7 +2401,9 @@ def main() -> int:
                 runners.append((_name, (lambda f=_fn: f(http))))
             else:
                 runners.append((_name, _fn))
+        global SRC
         for name, fn in runners:
+            SRC = REPO if name in REPO_CHECKS else ROOT
             try:
                 status, detail = fn()
             except Exception as exc:
