@@ -353,8 +353,16 @@ def inspect_decision(
     stage: str,
     state: Optional[Mapping[str, Any]] = None,
     workspace: Any = None,
+    lead_s: float = 0.0,
 ) -> Dict[str, Any]:
-    """Attach a continue/stop decision to an inspect snapshot."""
+    """Attach a continue/stop decision to an inspect snapshot.
+
+    ``lead_s``: how far ahead of a stage mark the runner inspected because a
+    coding-agent call is live (runner._maybe_stage_inspect). The in-flight
+    bump treats the mark as reached within that lead -- an inspect run one
+    heartbeat early to beat the writer's wall must still lift it, not decide
+    await_cli and spend the stage's one inspect.
+    """
     new_wall = next_stage_wall(elapsed_s, current_wall_s, snapshot)
     if snapshot.get("pilot_ready"):
         # Store-green close outranks leftover-wall observe. A 7230s C-BRIEF
@@ -384,7 +392,8 @@ def inspect_decision(
         watchdog_bit = (
             f"{watchdog:g}s watchdog" if watchdog else "watchdog still open"
         )
-        if elapsed_s + 1 >= STAGE_1_S and current_wall_s <= STAGE_1_S + 1:
+        reached = float(elapsed_s) + float(lead_s) + 1
+        if reached >= STAGE_1_S and current_wall_s <= STAGE_1_S + 1:
             new_wall = STAGE_2_S
             decision = "continue_stage_2"
             reason = (
@@ -395,7 +404,7 @@ def inspect_decision(
                 "FACTORY_CODE_CLI_UNUSED"
             )
         elif (
-            elapsed_s + 1 >= STAGE_2_S
+            reached >= STAGE_2_S
             and current_wall_s <= STAGE_2_S + 1
             and _cli_progressing_for_ceiling_bump(snapshot)
         ):

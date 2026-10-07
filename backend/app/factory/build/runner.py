@@ -1797,7 +1797,9 @@ class RoleRunner:
         self.ledger.append(EventKind.NOTE, detail=detail, payload=payload)
         logger.info("factory budget inspect (%s): %s", reason, detail)
 
-    def _stage_inspect(self, *, reason: str, stage: str) -> Dict[str, Any]:
+    def _stage_inspect(
+        self, *, reason: str, stage: str, lead_s: float = 0.0
+    ) -> Dict[str, Any]:
         from app.factory.build.budget_inspect import inspect_build, inspect_decision
 
         elapsed = 0.0
@@ -1811,6 +1813,7 @@ class RoleRunner:
             stage=stage,
             state=self.state,
             workspace=self.workspace,
+            lead_s=lead_s,
         )
         self._emit_inspect(decided, reason=reason)
         return decided
@@ -2001,16 +2004,32 @@ class RoleRunner:
             return None
         self._maybe_cli_phase_ramp()
         elapsed = self.clock() - self._run_started
+        # While a coding-agent call (or a slot wait) is live, inspect a
+        # headroom BEFORE the mark. On a staged run the box ends AT the mark
+        # and the phase ramp cannot lift it (it extends to the staged wall it
+        # already has), so an inspect that waits for the mark races the
+        # writer's own wall -- dispatch + 1800, only the COLLECTOR/CLONER
+        # seconds later -- with pulses a heartbeat apart (live 2026-10-07:
+        # the 1800 -> 2700 lift landed the same second the worker was
+        # killed). Pulses arrive every heartbeat < headroom, so one lands in
+        # the window. With nothing live the inspect keeps its mark.
+        lead = (
+            CLI_PHASE_RAMP_HEADROOM_S
+            if (self._cli_in_flight() or self._slot_waiting())
+            else 0.0
+        )
         stage = None
         mark = None
-        if elapsed + 0.01 >= STAGE_1_S and "stage_1" not in self._inspects_done:
+        if elapsed + lead + 0.01 >= STAGE_1_S and "stage_1" not in self._inspects_done:
             stage, mark = "stage_1", STAGE_1_S
-        elif elapsed + 0.01 >= STAGE_2_S and "stage_2" not in self._inspects_done:
+        elif elapsed + lead + 0.01 >= STAGE_2_S and "stage_2" not in self._inspects_done:
             stage, mark = "stage_2", STAGE_2_S
         if stage is None:
             return None
         self._inspects_done.add(stage)
-        decided = self._stage_inspect(reason=f"{stage}_{int(mark)}s", stage=stage)
+        decided = self._stage_inspect(
+            reason=f"{stage}_{int(mark)}s", stage=stage, lead_s=lead
+        )
         new_wall = decided.get("next_wall_s")
         if new_wall:
             self._extend_wall(float(new_wall))
