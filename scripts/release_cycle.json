@@ -1,0 +1,15 @@
+{
+  "_doc": "The release cycle's repro builds. Data, not code: each entry is one brief a customer could type, built on its own verified account BESIDE smoke A. Add, remove or reword briefs here; scripts/release_cycle.py knows none of them.",
+  "build_level": "production",
+  "cycle_target_s": 4500,
+  "repros": [
+    {
+      "name": "coop",
+      "brief": "Build me a platform for a community bicycle repair co-op: log repair tickets with the bike and the fault, keep a parts inventory with reorder levels, schedule volunteer mechanic shifts, and track member dues."
+    },
+    {
+      "name": "vineyard",
+      "brief": "Build me a vineyard management platform for a family winery: track fermentation tanks, barrel inventory across two cellars, harvest scheduling by sugar readings, and club member shipments."
+    }
+  ]
+}
