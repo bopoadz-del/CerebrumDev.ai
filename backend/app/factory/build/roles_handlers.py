@@ -100,6 +100,8 @@ from app.factory.build.payload_helpers import render_payload_helpers
 from app.factory.build.findings import render_capability_recorder
 from app.factory.build.findings import rework_targets as _rework_targets
 from app.factory.build.rejection_contract import (
+    OK_KEY,
+    STORED_RECORD_KEY,
     ALLOWED_VALUES_KEY,
     MISSING_REQUIRED,
     NOT_ALLOWED,
@@ -2282,8 +2284,8 @@ def _templated_route_body(spec: Dict[str, Any]) -> str:
         "        return {'ok': False,",
         "                'error': f'{type(exc).__name__}: {exc}',",
         "                'capability': CAPABILITY_ID}",
-        '    return {"ok": True, "capability": CAPABILITY_ID, "result": result,',
-        '            "stored": stored}',
+        f'    return {{{OK_KEY!r}: True, "capability": CAPABILITY_ID, "result": result,',
+        f'            {STORED_RECORD_KEY!r}: stored}}',
     ]
     return "\n".join(lines)
 
