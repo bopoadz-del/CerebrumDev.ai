@@ -22,7 +22,11 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from app.factory.build import probe_set
-from app.factory.build.data_lifecycle import DISK_SIZE_GB, first_entity_sample
+from app.factory.build.data_lifecycle import (
+    DISK_SIZE_GB,
+    check_sample_fits_declared_types,
+    first_entity_sample,
+)
 from app.factory.build.lotdesk_gate import inspect_path, resolve_lotdesk_fixture
 
 REVISION_N = "rev-n"
@@ -609,6 +613,9 @@ def render_deploy_doc() -> str:
 
 def render_product_tests(specs: Dict[str, Dict[str, Any]]) -> str:
     entity, sample = first_entity_sample(specs)
+    if entity:
+        entity_spec = next((s for s in specs.values() if s.get("entity") == entity), None)
+        check_sample_fits_declared_types(entity, sample, entity_spec)
     return f'''"""S11 deploy / observe — fail-closed health and performed rollback."""
 
 from __future__ import annotations

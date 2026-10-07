@@ -52,27 +52,27 @@ _SA_TYPES = {
     "bool": "sa.Integer()",
 }
 
-_SA_TYPE_ALIASES = {
-    "str": "str",
-    "text": "str",
-    "string": "str",
-    "int": "int",
-    "integer": "int",
-    "float": "float",
-    "bool": "bool",
-    "boolean": "bool",
-    "datetime": "str",
-    "timestamp": "str",
-    "date": "str",
-    "time": "str",
-}
+def _declared_kind(field: Dict[str, Any]) -> str | None:
+    """The field's canonical type, from the ONE resolver TESTER samples with.
+
+    A second, narrower alias table lived here and knew only int/float/bool:
+    a declared ``money`` (stored as float) fell through to TEXT and to the
+    text marker, and the emitted lifecycle suite wrote ``'s10-row'`` into a
+    numeric column (live 9d382ae7, co-op). None means an undeclared spelling.
+    """
+    from app.factory.build.roles_handlers import _resolve_known_field_type
+
+    return _resolve_known_field_type(field.get("type") or "str")
 
 
 def _field_sa_type(field: Dict[str, Any]) -> str:
-    """SQLAlchemy column type. Appointment datetime/date/time persist as TEXT."""
-    raw = str(field.get("type") or "str").strip().lower().replace("datetime.", "")
-    key = _SA_TYPE_ALIASES.get(raw, "str")
-    return _SA_TYPES.get(key, "sa.Text()")
+    """SQLAlchemy column type for the declared type.
+
+    Numbers and booleans get their storage type; everything else -- text,
+    email, uuid, and datetime/date/time (persisted as ISO strings) -- is TEXT.
+    """
+    kind = _declared_kind(field)
+    return _SA_TYPES.get(kind if kind in _SA_TYPES else "str", "sa.Text()")
 
 
 #: Columns the STORE owns on every table: the row id it assigns and the
@@ -123,21 +123,58 @@ def sample_for_spec(
     the same order (live sess_5dfb4a3: ``client_pet_records`` / pet_record
     vs alphabetically-first entity ``availability``).
     """
+    from app.factory.build.roles_handlers import _looks_like_email_field, _sample_value
+
     sample: Dict[str, Any] = {}
     for field in declared_fields(spec):
         name = field["name"]
-        ftype = field.get("type") or "str"
         if field.get("allowed_values"):
             sample[name] = field["allowed_values"][0]
-        elif ftype == "int":
-            sample[name] = int(field["min"]) if field.get("min") is not None else 1
-        elif ftype == "float":
-            sample[name] = float(field["min"]) if field.get("min") is not None else 1.5
-        elif ftype == "bool":
-            sample[name] = True
-        else:
+        elif _declared_kind(field) in (None, "str") and not _looks_like_email_field(field):
+            # Plain text (or a spelling nobody declared): the lifecycle marker.
             sample[name] = placeholder
+        else:
+            # Every typed field -- number, money, bool, email, uuid, temporal --
+            # takes the value TESTER's one sampler gives its declaration.
+            sample[name] = _sample_value(field)
     return sample
+
+
+#: Python value types a declared canonical kind accepts on write and returns on
+#: read. Temporal and identity kinds persist as ISO / string text.
+_KIND_VALUE_TYPES = {
+    "int": (int,),
+    "float": (int, float),
+    "bool": (bool,),
+}
+
+
+def check_sample_fits_declared_types(
+    entity: str, sample: Dict[str, Any], spec: Dict[str, Any] | None
+) -> None:
+    """Every value the suite inserts fits its column's DECLARED type.
+
+    The emitted suite is Factory-authored: a value its own declaration forbids
+    (text into a number, a number into a bool) is the Factory's defect. Raised
+    at render time so it ends the run as a Factory fault -- it never reaches
+    the writer as a rework it may not fix (the test file is Factory-owned).
+    """
+    by_name = {f["name"]: f for f in declared_fields(spec)}
+    wrong: List[str] = []
+    for key, value in sample.items():
+        field = by_name.get(key)
+        if field is None or field.get("allowed_values"):
+            continue
+        kind = _declared_kind(field)
+        accepted = _KIND_VALUE_TYPES.get(kind or "", (str,))
+        is_bool = isinstance(value, bool)
+        fits = isinstance(value, accepted) and (kind == "bool" or not is_bool)
+        if not fits:
+            wrong.append(f"{key}={value!r} (declared {field.get('type')!r})")
+    if wrong:
+        raise EmittedSuiteContractError(
+            f"lifecycle sample for {entity!r} does not fit its declared types: {wrong}"
+        )
 
 
 def first_entity_sample(specs: Dict[str, Dict[str, Any]]) -> Tuple[str, Dict[str, Any]]:
@@ -895,6 +932,8 @@ def render_product_tests(specs: Dict[str, Dict[str, Any]]) -> str:
     entity, sample = first_entity_sample(specs)
     if entity:
         check_sample_is_declared(entity, sample, columns_map(specs).get(entity, []))
+        entity_spec = next((s for s in specs.values() if s.get("entity") == entity), None)
+        check_sample_fits_declared_types(entity, sample, entity_spec)
     entities = [spec["entity"] for spec in table_specs(specs)]
     return f'''"""S10 data lifecycle — performed, not configured.
 

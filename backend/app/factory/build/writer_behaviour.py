@@ -806,7 +806,13 @@ def findings_from_probe_stderr(stderr: str) -> list:
     -- never raw lines."""
     recs = [r for r in probe_records(stderr) if r["gate_record"] in ("halt", "finding")]
     if recs:
-        return [record_finding(r) for r in recs][-20:]
+        # The probe writes its halt banner before the per-capability records;
+        # the first finding is what the ledger decision and the Floor show, so
+        # the records that carry each capability's own refusal go first and the
+        # banner last (live 9d382ae7: the decision read only "no capability
+        # accepted its own schema" while the refusal texts sat behind it).
+        ordered = sorted(recs, key=lambda r: r["gate_record"] == "halt")
+        return [record_finding(r) for r in ordered][-20:]
     return [classify_unmarked_probe_failure((stderr or "").splitlines())]
 
 
