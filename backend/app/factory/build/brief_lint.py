@@ -9,9 +9,12 @@ wording:
 * a budget is stated;
 * every line is one the compiler itself wrote (its recorded provenance) --
   a line planted after compiling is refused;
-* the brief cites no build session, and names no capability, product or
-  vertical other than this build's own (the set of known names is loaded from
-  the Store and from prior builds, never listed here).
+* the brief cites no build session, and carries no other platform's machine
+  identity -- a capability id, product id or platform id another platform
+  declared and this blueprint did not (the known identities are loaded from
+  the Store and from prior builds, never listed here). Display names are
+  never evidence: two platforms may share a name, and the user's own words
+  may say it.
 
 There is no list of phrases a brief must contain. What the contracts say is
 the compiler's job and its tests'; the lint only refuses a brief whose shape
@@ -123,7 +126,7 @@ def _known_literals() -> FrozenSet[str]:
 
 def _own_names(compiled: Any) -> Set[str]:
     own: Set[str] = set()
-    for attr in ("product_id", "product_name", "vertical"):
+    for attr in ("product_id", "platform_id", "product_name", "vertical"):
         value = getattr(compiled, attr, None)
         if value:
             own.add(str(value))
@@ -231,13 +234,13 @@ def lint_brief(
     if sessions:
         errors.append("brief cites a build session: " + ", ".join(sessions[:4]))
 
-    from app.factory.build.product_literals import foreign_literals_in
+    from app.factory.build.product_literals import foreign_identities_in
 
     known = known_literals if known_literals is not None else _known_literals()
-    foreign = foreign_literals_in(text, known, _own_names(compiled))
+    foreign = foreign_identities_in(text, known, _own_names(compiled))
     if foreign:
         errors.append(
-            "brief names another product's capability / product / vertical: "
+            "brief carries another product's identity (capability / product / platform id): "
             + ", ".join(foreign[:6])
         )
 
