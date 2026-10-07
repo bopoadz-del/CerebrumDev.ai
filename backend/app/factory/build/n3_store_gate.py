@@ -632,8 +632,28 @@ def fetch_store_gate_status(
             owner=target.owner,
             repo=target.repo,
         )
-    state = str(match.get("state") or "").strip().lower()
-    description = str(match.get("description") or "")
+    return snapshot_from_status(
+        target,
+        str(match.get("state") or ""),
+        str(match.get("description") or ""),
+        lambda: _artifact_lines(target, token, opener),
+    )
+
+
+def snapshot_from_status(
+    target: BuildsTarget,
+    state: str,
+    description: str,
+    artifact_lines: Callable[[], List[AcceptanceLine]],
+) -> StoreGateSnapshot:
+    """One ``store-gate`` status (state + description) as a snapshot.
+
+    ``artifact_lines`` is asked only for a red, scored run -- the gate's typed
+    ``store_gate.json``. The live read and the pre-merge gate replay
+    (gate_replay.py) map a gate result through THIS rule, so a replay judges a
+    result exactly as a live build would."""
+    state = str(state or "").strip().lower()
+    description = str(description or "")
     passed, total = _parse_score(description)
     # A red status with no score at all: the workflow failed before the
     # harness scored anything (live round 9: the gate's own YAML broke
@@ -643,7 +663,7 @@ def fetch_store_gate_status(
     if passed is not None and passed == total:
         lines = _itemised_lines([])
     elif passed is not None and state in {"failure", "error"}:
-        lines = _artifact_lines(target, token, opener)
+        lines = artifact_lines()
     ok = (
         state == "success"
         and passed == ACCEPTANCE_REQUIRED
@@ -1315,7 +1335,15 @@ def ingest_n3_store_gate(
         )
     else:
         snap = fetch_store_gate_status(target, env=blob, opener=opener)
+    return judge_snapshot(root, snap, wait=wait)
 
+
+def judge_snapshot(root: Path | str, snap: StoreGateSnapshot, *, wait: bool = True) -> IngestResult:
+    """The verdict on one read of the gate, applied to ``root``'s ledger.
+
+    The live ingest and the pre-merge gate replay (gate_replay.py) both judge
+    a gate result here, so a replay can never pass what a build would fail."""
+    root = Path(root)
     if snap.is_12_of_12:
         apply_store_gate_success(root, snap)
         return IngestResult(

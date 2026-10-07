@@ -1,0 +1,9 @@
+# What the gate replay (app/factory/build/gate_replay.py) imports: rendering
+# the Factory's files onto a build tree and routing a gate result. Versions
+# follow requirements.txt; the replay never needs the serving stack.
+-c requirements.txt
+pydantic
+httpx
+rich
+click
+pyyaml

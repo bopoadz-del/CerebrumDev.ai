@@ -798,13 +798,9 @@ class RoleRunner:
         )
 
     def _refresh_factory_files(self) -> None:
-        from app.factory.build.factory_refresh import refresh_factory_files
+        from app.factory.build.factory_refresh import product_display_name, refresh_factory_files
 
-        name = str(
-            getattr(self.blueprint, "product_name", "")
-            or getattr(self.blueprint, "product_id", "")
-            or "Platform"
-        )
+        name = product_display_name(self.blueprint)
         try:
             changed = refresh_factory_files(
                 self.workspace, name, self.blueprint
