@@ -47,7 +47,9 @@ from app.factory.build.authorship import FULL_PILOT_MIN_AUTHORED_ACTIONS as _FUL
 from app.factory.build.authorship import RENDERED_MARKER_READER as _RENDERED_MARKER_READER
 from app.factory.build.acceptance_floor import check_ids as _floor_check_ids
 from app.factory.build.rejection_contract import (
+    ACCEPT_STATUSES,
     ALLOWED_VALUES_HEADER,
+    AUTH_REFUSAL_STATUS,
     ERROR_KEY,
     MISSING_REQUIRED,
     NOT_ALLOWED,
@@ -56,6 +58,7 @@ from app.factory.build.rejection_contract import (
     REJECTED_FIELD_HEADER,
     REJECTION_REASON_HEADER,
     STORED_RECORD_KEY,
+    VALIDATION_REFUSAL_STATUS,
 )
 
 ACCEPTANCE_CHECK_NAMES: tuple[str, ...] = _floor_check_ids()
@@ -971,7 +974,11 @@ def render_acceptance_script(blueprint: Any = None) -> str:
 
     image_checks = ", ".join(repr(n) for n in image_check_ids())
     audit_checks = ", ".join(repr(n) for n in audit_check_ids())
-    from app.factory.build.writer_phases import RAG_INGEST_PATHS, RAG_QUERY_PATHS
+    from app.factory.build.writer_phases import (
+        RAG_INGEST_PATHS,
+        RAG_INGEST_TEXT_FIELDS,
+        RAG_QUERY_PATHS,
+    )
 
     # Decided here, from the build's declared contract: does a capability bind
     # a block whose signed manifest declares the retrieval read, and which
@@ -1142,6 +1149,8 @@ TOTAL_KEY = {ACCEPTANCE_TOTAL_KEY!r}
 RETRIEVES = {retrieves!r}
 RAG_INGEST_PATHS = {rag_ingest!r}
 RAG_QUERY_PATHS = {rag_query!r}
+# The ingest body fields the brief declares for the document text.
+RAG_INGEST_TEXT_FIELDS = {tuple(RAG_INGEST_TEXT_FIELDS)!r}
 
 
 def _token() -> str:
@@ -1283,6 +1292,9 @@ def _models():
 
 
 def _required_and_enum(cap_id: str) -> Tuple[Optional[str], Optional[Tuple[str, List[Any]]]]:
+    """The required field and the vocabulary field THIS capability's own model
+    declares. Never another model's field: posting capability X a field only
+    model Y declares measures nothing X promised (the route may ignore it)."""
     models = _models()
     cls = models.get(cap_id) if cap_id else None
     required = None
@@ -1297,20 +1309,26 @@ def _required_and_enum(cap_id: str) -> Tuple[Optional[str], Optional[Tuple[str, 
             allowed = rules.get("allowed_values") or []
             if allowed and enum is None:
                 enum = (name, list(allowed))
-    if required is None or enum is None:
-        for other_id, other in models.items():
-            fields = list(getattr(other, "FIELDS", []) or [])
-            constraints = getattr(other, "CONSTRAINTS", {{}}) or {{}}
-            for name in fields:
-                rules = constraints.get(name) or {{}}
-                if required is None and rules.get("required"):
-                    required = name
-                    cap_id = other_id
-                if enum is None:
-                    allowed = rules.get("allowed_values") or []
-                    if allowed:
-                        enum = (name, list(allowed))
     return required, enum
+
+
+def _cap_declaring(want: str) -> Tuple[str, Any]:
+    """(capability, declaration) for the first working capability whose own
+    model declares ``want`` -- "required" or "enum". Declared placeholders
+    answer their typed refusal before validation, so they cannot be measured
+    here. ("", None) when no capability declares it."""
+    try:
+        from app.placeholders import PLACEHOLDER_CONNECTORS
+    except Exception:
+        PLACEHOLDER_CONNECTORS = {{}}
+    for cap in _cap_order():
+        if PLACEHOLDER_CONNECTORS.get(cap):
+            continue
+        required, enum = _required_and_enum(cap)
+        found = required if want == "required" else enum
+        if found:
+            return cap, found
+    return "", None
 
 
 def check_no_token_401(http: _Http) -> Tuple[str, str]:
@@ -1318,53 +1336,43 @@ def check_no_token_401(http: _Http) -> Tuple[str, str]:
     if not cap:
         return "FAIL", "no first capability to POST"
     resp = http.request("post", "/v1/" + cap, json={{}})
-    if resp.status_code == 401:
-        return "PASS", "HTTP 401"
-    if resp.status_code == 200:
+    if resp.status_code == {AUTH_REFUSAL_STATUS}:
+        return "PASS", "HTTP {AUTH_REFUSAL_STATUS}"
+    if resp.status_code in {tuple(ACCEPT_STATUSES)!r}:
         body = {{}}
         try:
             body = resp.json()
         except Exception:
             pass
-        return "FAIL", "HTTP 200 ok:%s (must be 401, not ok:false)" % body.get("ok")
-    return "FAIL", "HTTP %s (want 401)" % resp.status_code
+        return "FAIL", "HTTP %s ok:%s (must be {AUTH_REFUSAL_STATUS}, not ok:false)" % (resp.status_code, body.get({OK_KEY!r}))
+    return "FAIL", "HTTP %s (want {AUTH_REFUSAL_STATUS})" % resp.status_code
 
 
 def check_missing_field_422(http: _Http) -> Tuple[str, str]:
-    cap = _first_cap()
-    required, _enum = _required_and_enum(cap)
+    # Measured on a capability whose OWN model declares a required field.
+    cap, required = _cap_declaring("required")
     if not cap:
-        return "FAIL", "no capability"
-    if not required:
-        return "FAIL", "no required field to measure (not a presence skip)"
+        return "FAIL", "no capability declares a required field to measure (not a presence skip)"
     resp = http.request("post", "/v1/" + cap, json={{}}, headers=_auth())
-    if resp.status_code == 422:
-        return "PASS", "HTTP 422 missing %s" % required
-    return "FAIL", "HTTP %s (want 422 for missing %s)" % (resp.status_code, required)
+    if resp.status_code == {VALIDATION_REFUSAL_STATUS}:
+        return "PASS", "HTTP {VALIDATION_REFUSAL_STATUS} missing %s" % required
+    return "FAIL", "HTTP %s (want {VALIDATION_REFUSAL_STATUS} for missing %s on %s)" % (resp.status_code, required, cap)
 
 
 def check_enum_422(http: _Http) -> Tuple[str, str]:
-    cap = _first_cap()
-    required, enum = _required_and_enum(cap)
-    if not enum:
-        return "FAIL", "no enum field to measure (not a presence skip)"
-    name, allowed = enum
-    payload: Dict[str, Any] = {{}}
-    models = _models()
-    cls = models.get(cap)
-    if cls is not None:
-        constraints = getattr(cls, "CONSTRAINTS", {{}}) or {{}}
-        for field in getattr(cls, "FIELDS", []) or []:
-            rules = constraints.get(field) or {{}}
-            if rules.get("allowed_values"):
-                payload[field] = rules["allowed_values"][0]
-            elif rules.get("required"):
-                payload[field] = "sample"
+    # Measured on a capability whose OWN model declares the vocabulary, with
+    # the shared payload builder filling every other required field from that
+    # model -- so the only thing wrong with the payload is the measured value.
+    cap, enum = _cap_declaring("enum")
+    if not cap:
+        return "FAIL", "no capability declares an enum field to measure (not a presence skip)"
+    name, _allowed = enum
+    payload = dict(_sample_payload_for(cap, {{}}))
     payload[name] = "__not_in_contract__"
     resp = http.request("post", "/v1/" + cap, json=payload, headers=_auth())
-    if resp.status_code == 422:
-        return "PASS", "HTTP 422 invalid %s" % name
-    return "FAIL", "HTTP %s (want 422 for invalid enum %s)" % (resp.status_code, name)
+    if resp.status_code == {VALIDATION_REFUSAL_STATUS}:
+        return "PASS", "HTTP {VALIDATION_REFUSAL_STATUS} invalid %s" % name
+    return "FAIL", "HTTP %s (want {VALIDATION_REFUSAL_STATUS} for invalid enum %s on %s)" % (resp.status_code, name, cap)
 
 
 def check_ui_served_200(http: _Http) -> Tuple[str, str]:
@@ -1426,10 +1434,10 @@ def check_rag_roundtrip_hit(http: _Http) -> Tuple[str, str]:
         resp = http.request(
             "post",
             path,
-            json={{"text": marker, "content": marker, "paragraph": marker}},
+            json={{field: marker for field in RAG_INGEST_TEXT_FIELDS}},
             headers=_auth(),
         )
-        if resp.status_code in (200, 201, 202):
+        if resp.status_code in {tuple(ACCEPT_STATUSES)!r}:
             planted = True
             break
     if not planted:
@@ -2145,7 +2153,7 @@ def _created_id(resp: Any) -> Tuple[Any, str]:
         body = resp.json()
     except Exception:
         body = None
-    if resp.status_code not in (200, 201):
+    if resp.status_code not in {tuple(ACCEPT_STATUSES)!r}:
         detail = body.get({ERROR_KEY!r}) if isinstance(body, dict) else ""
         return None, "HTTP %s %s" % (resp.status_code, detail or "")
     if not isinstance(body, dict):

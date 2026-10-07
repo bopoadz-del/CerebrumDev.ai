@@ -25,6 +25,15 @@ from __future__ import annotations
 
 from typing import Any, List, Mapping, Optional
 
+from app.factory.build.rejection_contract import (
+    ACCEPT_STATUSES,
+    CROSS_TENANT_READ_STATUS,
+    OK_KEY,
+    RECORD_ID_KEY,
+    REFUSAL_STATUSES,
+    STORED_RECORD_KEY,
+)
+
 HEADER = '''"""Counter-cases: what each capability REFUSES.
 
 Written by the factory TESTER role. The floor (negative_floor) requires four
@@ -50,7 +59,9 @@ client = TestClient(app)
 AUTH = {"Authorization": "Bearer " + os.environ["PLATFORM_TOKEN"]}
 OTHER_TENANT = {"Authorization": "Bearer " + os.environ["PLATFORM_TOKEN_B"]}
 
-REFUSED = (400, 403, 404, 409, 422)
+REFUSED = __REFUSAL_STATUSES__
+ACCEPTED = __ACCEPT_STATUSES__
+CROSS_TENANT_READ = __CROSS_TENANT_READ_STATUS__
 # The typed unavailable refusal of a declared placeholder connector
 # (app.factory.build.placeholder_connectors).
 UNAVAILABLE_STATUS = __UNAVAILABLE_STATUS__
@@ -65,15 +76,15 @@ def _refused(response):
     the counter-case still holds, whatever kind of refusal answered it."""
     if response.status_code in REFUSED:
         return True
-    if response.status_code not in (200, UNAVAILABLE_STATUS):
+    if response.status_code not in ACCEPTED + (UNAVAILABLE_STATUS,):
         return False
     try:
         body = response.json()
     except Exception:
         return False
-    if not isinstance(body, dict) or body.get("ok") is not False:
+    if not isinstance(body, dict) or body.get(__OK_KEY__) is not False:
         return False
-    return response.status_code == 200 or body.get("error_kind") == UNAVAILABLE_KIND
+    return response.status_code in ACCEPTED or body.get("error_kind") == UNAVAILABLE_KIND
 '''
 
 
@@ -138,11 +149,21 @@ def render_negative_tests(
         UNAVAILABLE_STATUS,
     )
 
-    lines: List[str] = [
-        HEADER.replace("__UNAVAILABLE_STATUS__", repr(UNAVAILABLE_STATUS)).replace(
-            "__UNAVAILABLE_KIND__", repr(UNAVAILABLE_KIND)
-        )
-    ]
+    # Every status this suite judges is the one the brief declares (the
+    # negative_floor / cross_tenant_404 floor lines, the accept line) -- read
+    # from the one contract, never a literal written only into the test.
+    header = HEADER
+    for token, value in (
+        ("__UNAVAILABLE_STATUS__", UNAVAILABLE_STATUS),
+        ("__UNAVAILABLE_KIND__", UNAVAILABLE_KIND),
+        ("__REFUSAL_STATUSES__", tuple(REFUSAL_STATUSES)),
+        ("__ACCEPT_STATUSES__", tuple(ACCEPT_STATUSES)),
+        ("__CROSS_TENANT_READ_STATUS__", CROSS_TENANT_READ_STATUS),
+        ("__OK_KEY__", OK_KEY),
+        ("__RECORD_ID_KEY__", RECORD_ID_KEY),
+    ):
+        header = header.replace(token, repr(value))
+    lines: List[str] = [header]
     caps = sorted(specs)
     if not caps:
         lines.append("\n\ndef test_no_capabilities():\n    pass\n")
@@ -171,7 +192,7 @@ def render_negative_tests(
                 "def test_%s_refuses_an_empty_payload():" % name,
                 "    # Nothing at all is not a record.",
                 '    resp = client.post("%s", json={}, headers=AUTH)' % route,
-                "    assert resp.status_code in (400, 403, 404, 409, 422) or _refused(resp), (",
+                "    assert resp.status_code in REFUSED or _refused(resp), (",
                 '        "%s accepted an empty payload: " + resp.text[:200]' % name,
                 "    )",
             ]
@@ -185,7 +206,7 @@ def render_negative_tests(
                 '    """A partial record is refused, never completed by the handler."""',
                 "    body = %r" % (short,),
                 '    resp = client.post("%s", json=body, headers=AUTH)' % route,
-                "    assert resp.status_code in (400, 403, 404, 409, 422) or _refused(resp), (",
+                "    assert resp.status_code in REFUSED or _refused(resp), (",
                 '        "%s accepted a payload with no %s: " + resp.text[:200]' % (name, required),
                 "    )",
             ]
@@ -200,7 +221,7 @@ def render_negative_tests(
                 '    """A column that accepts any string is not that column."""',
                 "    body = %r" % (bad,),
                 '    resp = client.post("%s", json=body, headers=AUTH)' % route,
-                "    assert resp.status_code in (400, 403, 404, 409, 422) or _refused(resp), (",
+                "    assert resp.status_code in REFUSED or _refused(resp), (",
                 '        "%s accepted an undeclared %s: " + resp.text[:200]' % (name, vocab),
                 "    )",
             ]
@@ -214,7 +235,7 @@ def render_negative_tests(
                 '    """The brief declares no vocabulary here; the type is still a contract."""',
                 "    body = %r" % (bad,),
                 '    resp = client.post("%s", json=body, headers=AUTH)' % route,
-                "    assert resp.status_code in (400, 403, 404, 409, 422) or _refused(resp), (",
+                "    assert resp.status_code in REFUSED or _refused(resp), (",
                 '        "%s accepted a wrongly typed %s: " + resp.text[:200]' % (name, typed),
                 "    )",
             ]
@@ -228,7 +249,7 @@ def render_negative_tests(
                 "    body = dict(%r)" % (sample,),
                 '    body["not_a_declared_column"] = "x"',
                 '    resp = client.post("%s", json=body, headers=AUTH)' % route,
-                "    created = resp.status_code == 200",
+                "    created = resp.status_code in ACCEPTED",
                 "    if created:",
                 "        try:",
                 "            echoed = resp.json()",
@@ -252,7 +273,7 @@ def render_negative_tests(
                 '    -- it passed a P1 safety escalation on a live pilot."""',
                 "    body = %r" % (forged,),
                 '    resp = client.post("%s", json=body, headers=AUTH)' % route,
-                "    assert resp.status_code in (400, 403, 404, 409, 422) or _refused(resp), (",
+                "    assert resp.status_code in REFUSED or _refused(resp), (",
                 '        "%s accepted a free-text %s: " + resp.text[:200]' % (name, approval),
                 "    )",
             ]
@@ -264,19 +285,21 @@ def render_negative_tests(
             '    """404, never 403 and never the row: existence itself is private."""',
             "    body = %r" % (sample,),
             '    made = client.post("%s", json=body, headers=AUTH)' % route,
-            "    if made.status_code != 200:",
+            "    if made.status_code not in ACCEPTED:",
             '        pytest.skip("capability did not accept the sample record")',
             "    try:",
             "        record = made.json()",
             "    except Exception:",
             '        pytest.skip("capability did not answer JSON")',
-            '    rid = (record.get("id") or (record.get("result") or {}).get("id")',
+            # The declared create contract (rejection_contract): the stored
+            # record under STORED_RECORD_KEY carries RECORD_ID_KEY.
+            "    rid = ((record.get(%r) or {}).get(%r)" % (STORED_RECORD_KEY, RECORD_ID_KEY),
             '           if isinstance(record, dict) else None)',
             "    if not rid:",
             '        pytest.skip("capability returned no record id to read back")',
             '    other = client.get("%s/" + str(rid), headers=OTHER_TENANT)' % route,
-            "    assert other.status_code == 404, (",
-            '        "%s answered %%s to another tenant, not 404" %% other.status_code' % name,
+            "    assert other.status_code == CROSS_TENANT_READ, (",
+            '        "%s answered %%s to another tenant, not %%s" %% (other.status_code, CROSS_TENANT_READ)' % name,
             "    )",
             "",
             "",
@@ -287,7 +310,7 @@ def render_negative_tests(
             "        assert resp.status_code != 500, (",
             '            "%s raised on malformed input: " + resp.text[:200]' % name,
             "        )",
-            "        assert resp.status_code in (400, 403, 404, 409, 422) or _refused(resp), (",
+            "        assert resp.status_code in REFUSED or _refused(resp), (",
             '            "%s accepted malformed input %%r" %% (junk,)' % name,
             "        )",
         ]

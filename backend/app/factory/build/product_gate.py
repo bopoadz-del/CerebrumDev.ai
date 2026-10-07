@@ -61,6 +61,8 @@ GATE_SCOPES = {
 }
 
 
+from app.factory.build.rejection_contract import contract_source  # noqa: E402
+
 #: Boots the product and asks every capability to remember one record.
 #:
 #: Runs inside the GENERATED workspace, which carries no factory code, so it
@@ -168,16 +170,7 @@ def _record_matches(record, body):
     return False
 
 
-def _listed(payload):
-    if isinstance(payload, list):
-        return payload
-    if not isinstance(payload, dict):
-        return []
-    for key in ("items", "records", "results", "data", "rows"):
-        value = payload.get(key)
-        if isinstance(value, list):
-            return value
-    return []
+# __CREATE_CONTRACT__
 
 
 # The lifespan is the point: it runs the migrations and, since R1c, the
@@ -211,14 +204,14 @@ for cap_id, cls in MODELS.items():
             % (cap_id, ", ".join(data.get("settings") or []))
         )
         continue
-    if resp.status_code != 200:
+    if resp.status_code not in _ACCEPT_STATUSES:
         misses.append("%s: POST answered HTTP %s" % (cap_id, resp.status_code))
         continue
     data = data if isinstance(data, dict) else {}
-    if isinstance(data, dict) and data.get("ok") is False:
+    if isinstance(data, dict) and data.get(_OK_KEY) is False:
         misses.append(
             "%s: POST refused its own sample payload: %s"
-            % (cap_id, str(data.get("error") or data)[:120])
+            % (cap_id, str(data.get(_ERROR_KEY) or data)[:120])
         )
         continue
 
@@ -271,7 +264,7 @@ for cap_id, cls in MODELS.items():
         # No list route. The store half stands and is reported as such.
         passed.append("%s (stored; no list route to read it back)" % cap_id)
         continue
-    if got.status_code != 200:
+    if got.status_code not in _ACCEPT_STATUSES:
         misses.append(
             "%s: stored the record, then GET answered HTTP %s"
             % (cap_id, got.status_code)
@@ -303,6 +296,11 @@ sys.stdout.write(
 raise SystemExit(1 if misses else 0)
 '''
 ROUND_TRIP_PROBE = ROUND_TRIP_PROBE.replace(ENTITY_RESOLVER_SLOT, ENTITY_RESOLVER_SRC, 1)
+# The declared status/key contract and the shape-based list reader, from the
+# one module every Factory check reads (rejection_contract).
+ROUND_TRIP_PROBE = ROUND_TRIP_PROBE.replace(
+    "# __CREATE_CONTRACT__\n", contract_source() + "\n", 1
+)
 
 
 def _marked(lines: List[str], prefix: str) -> List[str]:
