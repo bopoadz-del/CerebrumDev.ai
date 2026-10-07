@@ -591,6 +591,9 @@ DISTRIBUTIONS: Dict[str, str] = {
     "psycopg2": "psycopg2-binary",
     "pydantic": "pydantic",
     "pypdf": "pypdf",
+    # The marker block reads the PDF text layer with pypdfium2 since
+    # Cerebrum-Blocks #144 (marker-pdf pinned pillow<11).
+    "pypdfium2": "pypdfium2",
     # Legacy import name still used by Store document_engine (Cerebrum-Blocks
     # #105). Live sess_d1cb9d51c5354bea / CEREBRUMDEV-BACKEND-A crashed CLONER
     # because only the modern ``pypdf`` key was recorded.

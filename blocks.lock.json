@@ -234,12 +234,6 @@
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
-    "chat": {
-      "content_hash": "sha256:b5717bc7bb6ca94e8720a24e67dae8c2702f7f67162029092e4c9f26972bda1f",
-      "id": "chat",
-      "source": "cerebrum-blocks",
-      "version": "3.0.0"
-    },
     "clash_resolver": {
       "content_hash": "sha256:6156a04e33d6cab8605f9ed3bf859b5536ce3873674adba184660d9f2e59553d",
       "id": "clash_resolver",
@@ -546,12 +540,6 @@
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
-    "formula_executor_v2": {
-      "content_hash": "sha256:c106df15ebac068f0d37170eb07f38b35c9d0649e381e3a77ec126fdfd9c35c8",
-      "id": "formula_executor_v2",
-      "source": "cerebrum-blocks",
-      "version": "2.0.0"
-    },
     "geolocation_tracking": {
       "content_hash": "sha256:34945b9aa2376365387fd3cf1e547bb21fb4b49071d2020e767caee94b07a5ef",
       "id": "geolocation_tracking",
@@ -751,7 +739,7 @@
       "version": "1.0.0"
     },
     "marker": {
-      "content_hash": "sha256:94ba5d368f79e5be916c2ea4b2a29cae53509bf131fd6b23c7c197b474f70455",
+      "content_hash": "sha256:c511c667d9afede91e47d3160a27294993a3a6be9f52b3dcd9988ada2d7ecb2d",
       "id": "marker",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
@@ -1396,6 +1384,6 @@
   "schema": "factory.blocks.lock.v1",
   "store": {
     "repo": "https://github.com/bopoadz-del/Cerebrum-Blocks",
-    "sha": "bd193e0b6b7724952fad04247f11624f7b0bae0e"
+    "sha": "691fb177bd8022c281c49c02f3c3097518308c9d"
   }
 }
