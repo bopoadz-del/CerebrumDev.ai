@@ -212,19 +212,22 @@ def test_the_report_carries_every_run_and_the_cycle_time(cycle):
         smoke_b={"status": "pass", "wall_s": 12.0},
         started_at=1000.0,
         finished_at=1000.0 + 3600.0,
-        target_s=4500,
         commit="abc123",
+        live_sha="abc123",
     )
     assert report["verdict"] == "pass"
     assert report["commit"] == "abc123"
+    assert report["live_sha"] == "abc123"
     assert report["cycle_s"] == 3600.0
-    assert report["within_target"] is True
+    # The report records cycle time only -- no target, no pass/miss on time.
+    assert "target_s" not in report and "within_target" not in report
+    assert "target" not in cycle.render_markdown(report).lower()
     assert set(report["runs"]) == {"smoke_a", "one", "two", "smoke_b"}
     assert report["runs"]["one"]["export"]["manifest"]["certified"] is True
 
 
 def test_an_uncertified_export_or_a_red_smoke_fails_the_cycle(cycle):
-    common = dict(started_at=0.0, finished_at=100.0, target_s=4500, commit="c")
+    common = dict(started_at=0.0, finished_at=100.0, commit="c", live_sha="c")
     assert cycle.build_report(
         smoke_a={"status": "pass"}, smoke_b={"status": "pass"},
         repros={"one": _repro(certified=False)}, **common,
@@ -237,13 +240,61 @@ def test_an_uncertified_export_or_a_red_smoke_fails_the_cycle(cycle):
         smoke_a={"status": "pass"}, smoke_b={"status": "pass"},
         repros={"one": _repro(status="failed")}, **common,
     )["verdict"] == "fail"
-    late = cycle.build_report(
+
+
+def test_a_cycle_whose_live_commit_moved_or_is_unknown_fails_closed(cycle):
+    """The report names ONE commit. If live /version is not that commit when
+    the report is written (a redeploy mid-cycle, a dead backend), the runs
+    were not all on it, so the cycle cannot pass."""
+    good = dict(
         smoke_a={"status": "pass"}, smoke_b={"status": "pass"},
-        repros={"one": _repro()}, started_at=0.0, finished_at=5000.0,
-        target_s=4500, commit="c",
+        repros={"one": _repro()}, started_at=0.0, finished_at=1.0, commit="abc",
     )
-    # Over target is reported, not hidden -- and not a product failure.
-    assert late["verdict"] == "pass" and late["within_target"] is False
+    moved = cycle.build_report(live_sha="def", **good)
+    assert moved["verdict"] == "fail" and "def" in moved["reason"]
+    unknown = cycle.build_report(live_sha=None, **good)
+    assert unknown["verdict"] == "fail"
+    assert cycle.build_report(live_sha="abc", **good)["verdict"] == "pass"
+
+
+# -- the live commit ---------------------------------------------------------
+
+
+class _VersionSmoke:
+    TRANSIENT = {502, 503, 504}
+
+    def __init__(self, answers):
+        self.answers = list(answers)
+
+    def req(self, method, path, *a, **k):
+        assert (method, path) == ("GET", "/version")
+        return self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+
+
+def test_the_live_sha_is_read_off_version(cycle):
+    smoke = _VersionSmoke([(200, {"git_sha": "abc123"})])
+    assert cycle.read_live_sha(smoke) == "abc123"
+    assert cycle.read_live_sha(_VersionSmoke([(502, b"gw")])) is None
+
+
+def test_waiting_for_the_expected_sha_rides_out_a_restart(cycle):
+    smoke = _VersionSmoke(
+        [(502, b"gw"), (200, {"git_sha": "old"}), (200, {"git_sha": "abc123"})]
+    )
+    assert cycle.wait_for_live_sha(smoke, "abc123", wait_s=5, poll_s=0) == "abc123"
+
+
+def test_waiting_for_the_expected_sha_fails_closed(cycle):
+    smoke = _VersionSmoke([(200, {"git_sha": "old"})])
+    with pytest.raises(cycle.CycleError) as exc:
+        cycle.wait_for_live_sha(smoke, "abc123", wait_s=0, poll_s=0)
+    assert "old" in str(exc.value) and "abc123" in str(exc.value)
+
+
+def test_a_prefix_of_the_live_sha_is_never_accepted_as_it(cycle):
+    smoke = _VersionSmoke([(200, {"git_sha": "abc123ff"})])
+    with pytest.raises(cycle.CycleError):
+        cycle.wait_for_live_sha(smoke, "abc123", wait_s=0, poll_s=0)
 
 
 # -- the briefs are data -----------------------------------------------------
@@ -296,15 +347,117 @@ def _workflow():
     return yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
 
 
-def test_the_repros_start_beside_smoke_a_and_smoke_b_waits_for_both():
+def _needs(job):
+    needs = job.get("needs") or []
+    return {needs} if isinstance(needs, str) else set(needs)
+
+
+def _on(wf):
+    # YAML 1.1 reads a bare `on:` key as boolean True.
+    return wf.get("on", wf.get(True))
+
+
+#: The phase-wall ceiling a build may take (post_deploy_smoke.BUILD_WAIT_S
+#: default) plus the wait for the deployed commit to serve (SMOKE_READY_WAIT_S
+#: in the workflow), in minutes. A job that runs a build must outlast both.
+BUILD_CEILING_MIN = (5400 + 1200) // 60
+
+CYCLE_JOBS = ("resolve", "live-smoke", "release-repros", "smoke-b")
+
+
+def test_the_cycle_is_one_github_workflow_with_the_right_order():
+    """The whole cycle -- resolve the live commit, smoke A beside the repros,
+    smoke B after both, the report -- is jobs on GitHub Actions. Nothing waits
+    on a laptop process."""
     jobs = _workflow()["jobs"]
-    assert "live-smoke" in jobs and "release-repros" in jobs and "smoke-b" in jobs
-    # No `needs`: the repro job starts on the same deploy event as smoke A.
-    assert not jobs["release-repros"].get("needs")
-    assert not jobs["live-smoke"].get("needs")
-    needs = jobs["smoke-b"]["needs"]
-    needs = [needs] if isinstance(needs, str) else needs
-    assert set(needs) == {"live-smoke", "release-repros"}
+    for name in CYCLE_JOBS:
+        assert name in jobs, name
+    # Smoke A and the repros both wait ONLY for the resolved commit, so they
+    # start together; neither waits for the other.
+    assert _needs(jobs["live-smoke"]) == {"resolve"}
+    assert _needs(jobs["release-repros"]) == {"resolve"}
+    # Smoke B (and the report) after smoke A AND every repro.
+    assert _needs(jobs["smoke-b"]) == {"resolve", "live-smoke", "release-repros"}
+
+
+def test_a_cycle_can_be_started_on_demand_against_the_live_commit():
+    on = _on(_workflow())
+    assert "workflow_run" in on, "a deploy still starts a cycle"
+    dispatch = on["workflow_dispatch"]
+    inputs = (dispatch or {}).get("inputs") or {}
+    assert "sha" in inputs
+    assert inputs["sha"].get("required") is False, "empty = whatever is live now"
+
+
+def test_every_job_runs_the_commit_the_resolve_job_verified_live():
+    wf = _workflow()
+    jobs = wf["jobs"]
+    resolve = jobs["resolve"]
+    assert "sha" in (resolve.get("outputs") or {})
+    text = yaml.safe_dump(resolve)
+    assert "scripts/release_cycle.py live-sha" in text
+    for name in ("live-smoke", "release-repros", "smoke-b"):
+        body = yaml.safe_dump(jobs[name])
+        assert "needs.resolve.outputs.sha" in body, name
+        for step in jobs[name]["steps"]:
+            if step.get("uses", "").startswith("actions/checkout"):
+                assert step["with"]["ref"] == "${{ needs.resolve.outputs.sha }}", name
+    # The report re-reads live /version and records it beside the commit.
+    report = [s for s in jobs["smoke-b"]["steps"] if "release_cycle.py report" in (s.get("run") or "")]
+    assert report and "--base" in report[0]["run"]
+
+
+def test_build_jobs_outlast_the_phase_wall_ceiling():
+    jobs = _workflow()["jobs"]
+    for name in ("live-smoke", "release-repros", "smoke-b"):
+        assert int(jobs[name]["timeout-minutes"]) >= BUILD_CEILING_MIN, name
+    assert int(jobs["resolve"]["timeout-minutes"]) >= 1200 // 60
+
+
+def test_two_cycles_never_overlap_and_a_running_one_is_never_cancelled():
+    concurrency = _workflow()["concurrency"]
+    assert concurrency["group"]
+    assert concurrency.get("cancel-in-progress") is False
+
+
+def test_exports_manifests_and_the_report_upload_even_when_a_run_fails():
+    jobs = _workflow()["jobs"]
+    uploads = {
+        name: [
+            s for s in jobs[name]["steps"]
+            if s.get("uses", "").startswith("actions/upload-artifact")
+        ]
+        for name in ("release-repros", "smoke-b")
+    }
+    for name, steps in uploads.items():
+        assert steps, name
+        for step in steps:
+            assert step.get("if") == "always()", (name, step)
+    repro_paths = uploads["release-repros"][0]["with"]["path"]
+    assert "cycle" in repro_paths  # zips + MANIFEST_*.json + repros.json
+    report_paths = uploads["smoke-b"][0]["with"]["path"]
+    assert "cycle_report.json" in report_paths
+    # The report job runs even when a run failed, so a red cycle still
+    # writes its report -- only an unresolved commit stops it.
+    assert "always()" in jobs["smoke-b"]["if"]
+    assert "needs.resolve.result == 'success'" in jobs["smoke-b"]["if"]
+
+
+def test_the_cycle_path_touches_no_local_only_state():
+    """Every run step calls a script in this repository against a URL; no
+    path, host or helper that exists only on one machine."""
+    text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    for local in ("C:\\", "C:/", "AppData", "scratchpad", "localhost", "127.0.0.1", "~/", "/Users/", "/home/"):
+        assert local not in text, local
+    jobs = _workflow()["jobs"]
+    for name in CYCLE_JOBS:
+        job = jobs[name]
+        assert job["runs-on"] == "ubuntu-latest", name
+        for step in job["steps"]:
+            run = step.get("run") or ""
+            for line in run.splitlines():
+                if "python3 " in line:
+                    assert "python3 scripts/" in line, (name, line)
 
 
 def test_the_cycle_reads_only_secrets_that_already_exist():

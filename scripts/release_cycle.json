@@ -1,7 +1,6 @@
 {
   "_doc": "The release cycle's repro builds. Data, not code: each entry is one brief a customer could type, built on its own verified account BESIDE smoke A. Add, remove or reword briefs here; scripts/release_cycle.py knows none of them.",
   "build_level": "production",
-  "cycle_target_s": 4500,
   "repros": [
     {
       "name": "coop",

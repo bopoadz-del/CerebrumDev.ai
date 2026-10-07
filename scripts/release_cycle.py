@@ -3,10 +3,17 @@
 SAME TIME, each on its own verified account; smoke B runs once all of them are
 done; one report says what shipped.
 
-Owner's standing rule (2026-10-08): repro builds run in parallel with smoke A
+Owner's standing rules (2026-10-08): repro builds run in parallel with smoke A
 on separate accounts; the smoke keeps its reserved build slot; slots queue,
-never fail; cycle target <= 1.25 h. On 2026-10-07 every cycle ran the second
-repro AFTER smoke A, by hand, and each cycle cost an extra hour for it.
+never fail. The whole cycle runs on GitHub Actions (post-deploy-smoke.yml),
+never as a local background process -- a laptop's memory must never decide
+whether a cycle finishes. On 2026-10-07 every cycle ran the second repro AFTER
+smoke A, by hand, from a local watcher that kept expiring.
+
+One commit per cycle. ``live-sha`` resolves the commit the cycle is about
+(the deployed sha, or whatever /version serves now) and fails closed unless
+live /version IS that commit; the report re-reads /version and fails the cycle
+if it moved.
 
 Accounts. The smoke gate issues a roster of verified principals
 (``/v1/auth/smoke-login`` with ``principals``). Index 0 is the smoke's own --
@@ -17,11 +24,13 @@ the report claimed a parallel cycle.
 
 Briefs are data (``scripts/release_cycle.json``); this file knows none of them.
 
-    # in CI (post-deploy-smoke.yml): the repros, beside the live-smoke job
+    # the commit this cycle is about (prints sha=...; exit 1 unless it is live)
+    python scripts/release_cycle.py live-sha [--expect <sha>]
+    # the repros, beside the live-smoke job
     python scripts/release_cycle.py repros --out cycle/
-    # in CI, after smoke A and the repros: smoke B ran; merge one report
+    # after smoke A and the repros: smoke B ran; merge one report
     python scripts/release_cycle.py report --out cycle/ --smoke-a pass --smoke-b pass
-    # locally, everything in one process (smoke A || repros, then smoke B)
+    # everything in one process, for a developer reproducing CI
     python scripts/release_cycle.py full --out cycle/
 """
 
@@ -81,8 +90,39 @@ def load_config(path: Path | str = DEFAULT_CONFIG) -> Dict[str, Any]:
     if len(names) != len(set(names)):
         raise CycleError(f"{path}: repro names must be distinct: {names}")
     data.setdefault("build_level", "production")
-    data.setdefault("cycle_target_s", 4500)
     return data
+
+
+# -- the live commit ---------------------------------------------------------
+
+
+def read_live_sha(smoke: Any) -> Optional[str]:
+    """The full git sha live ``/version`` serves, or None when it answers
+    nothing usable (down, restarting, no sha)."""
+    status, body = smoke.req("GET", "/version")
+    if status != 200 or not isinstance(body, dict):
+        return None
+    sha = str(body.get("git_sha") or "").strip()
+    return sha or None
+
+
+def wait_for_live_sha(smoke: Any, expect: str, *, wait_s: float, poll_s: float = 15) -> str:
+    """Wait until live /version serves exactly ``expect``; fail closed if it
+    never does. Rides out a restart (no answer) and a rollout still serving
+    the previous commit. Exact match only: a cycle reports ONE commit."""
+    expect = str(expect).strip()
+    deadline = time.monotonic() + max(0.0, float(wait_s))
+    seen: Optional[str] = None
+    while True:
+        seen = read_live_sha(smoke)
+        if seen == expect:
+            return seen
+        if time.monotonic() >= deadline:
+            raise CycleError(
+                f"live /version serves {seen or 'nothing'}, not {expect}; "
+                "refusing to run a cycle that would report a commit it did not run on"
+            )
+        time.sleep(poll_s)
 
 
 # -- accounts ----------------------------------------------------------------
@@ -253,28 +293,33 @@ def build_report(
     smoke_b: Mapping[str, Any],
     started_at: float,
     finished_at: float,
-    target_s: float,
     commit: str,
+    live_sha: Optional[str],
 ) -> Dict[str, Any]:
-    """One record of the cycle. Passes only when both smokes pass and every
-    repro exported a CERTIFIED zip. Over the time target is reported, not
-    hidden, and is not a product failure."""
+    """One record of the cycle. Passes only when both smokes pass, every
+    repro exported a CERTIFIED zip, and live /version still serves the commit
+    the report names (``live_sha``, read when the report is written). The
+    cycle's wall time is recorded, never judged."""
     cycle_s = round(float(finished_at) - float(started_at), 1)
-    passed = (
-        smoke_a.get("status") == "pass"
-        and smoke_b.get("status") == "pass"
-        and bool(repros)
-        and all(_repro_passed(r) for r in repros.values())
-    )
+    reasons = []
+    if smoke_a.get("status") != "pass":
+        reasons.append("smoke A failed")
+    if smoke_b.get("status") != "pass":
+        reasons.append("smoke B failed")
+    if not repros:
+        reasons.append("no repro ran")
+    reasons += [f"{name} did not export certified" for name, r in repros.items() if not _repro_passed(r)]
+    if not commit or live_sha != commit:
+        reasons.append(f"live /version serves {live_sha or 'nothing'}, not the cycle's commit {commit or '?'}")
     runs: Dict[str, Any] = {"smoke_a": dict(smoke_a)}
     runs.update({name: dict(r) for name, r in repros.items()})
     runs["smoke_b"] = dict(smoke_b)
     return {
         "commit": commit,
-        "verdict": "pass" if passed else "fail",
+        "live_sha": live_sha,
+        "verdict": "fail" if reasons else "pass",
+        "reason": "; ".join(reasons),
         "cycle_s": cycle_s,
-        "target_s": target_s,
-        "within_target": cycle_s <= float(target_s),
         "runs": runs,
     }
 
@@ -283,9 +328,12 @@ def render_markdown(report: Mapping[str, Any]) -> str:
     lines = [
         f"## Release cycle on `{str(report.get('commit'))[:8]}`: {report['verdict'].upper()}",
         "",
-        f"Cycle time {report['cycle_s'] / 60:.0f} min (target {float(report['target_s']) / 60:.0f} min, "
-        f"{'met' if report['within_target'] else 'MISSED'}).",
+        f"Cycle time {report['cycle_s'] / 60:.0f} min.",
         "",
+    ]
+    if report.get("reason"):
+        lines += [f"Why: {report['reason']}", ""]
+    lines += [
         "| Run | Account | Result | Export | Certified | Wall |",
         "|---|---|---|---|---|---|",
     ]
@@ -366,17 +414,38 @@ def _finish(out: Path, report: Dict[str, Any]) -> int:
 
 def main(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("mode", choices=("repros", "report", "full"))
+    parser.add_argument("mode", choices=("live-sha", "repros", "report", "full"))
     parser.add_argument("--base", default=os.environ.get("FACTORY_BASE_URL") or "https://api.cerebrum-dev.com")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     parser.add_argument("--out", default="cycle")
     parser.add_argument("--smoke-a", choices=("pass", "fail"))
     parser.add_argument("--smoke-b", choices=("pass", "fail"))
     parser.add_argument("--started-at", type=float, help="epoch seconds the deploy went live")
+    parser.add_argument("--expect", default="", help="live-sha: the commit that must be live")
     args = parser.parse_args(argv)
     out = Path(args.out)
-    config = load_config(args.config)
     commit = os.environ.get("SMOKE_EXPECTED_SHA") or os.environ.get("GITHUB_SHA") or ""
+
+    if args.mode == "live-sha":
+        # The cycle's commit: the one asked for (a deploy's sha, a dispatch
+        # input) once live serves it, or else whatever live serves now.
+        # Prints ``sha=<full sha>`` for $GITHUB_OUTPUT; exit 1 otherwise.
+        smoke = _load_smoke(args.base)
+        wait_s = float(os.environ.get("SMOKE_READY_WAIT_S") or 1200)
+        try:
+            if args.expect.strip():
+                sha = wait_for_live_sha(smoke, args.expect, wait_s=wait_s)
+            else:
+                sha = read_live_sha(smoke) or ""
+                if not sha:
+                    sha = wait_for_live_sha(smoke, "", wait_s=0)
+        except CycleError as exc:
+            print(f"::error::{exc}", file=sys.stderr)
+            return 1
+        print(f"sha={sha}")
+        return 0
+
+    config = load_config(args.config)
 
     if args.mode == "repros":
         smoke = _load_smoke(args.base)
@@ -396,8 +465,8 @@ def main(argv: Optional[list] = None) -> int:
             smoke_b={"status": args.smoke_b or "fail", "account_index": SMOKE_ACCOUNT_INDEX},
             started_at=args.started_at or recorded.get("started_at") or time.time(),
             finished_at=time.time(),
-            target_s=config["cycle_target_s"],
             commit=commit,
+            live_sha=read_live_sha(_load_smoke(args.base)),
         )
         return _finish(out, report)
 
@@ -412,7 +481,7 @@ def main(argv: Optional[list] = None) -> int:
     report = build_report(
         smoke_a=smoke_a, repros=results, smoke_b=smoke_b,
         started_at=started, finished_at=time.time(),
-        target_s=config["cycle_target_s"], commit=commit,
+        commit=commit, live_sha=read_live_sha(smoke),
     )
     return _finish(out, report)
 
