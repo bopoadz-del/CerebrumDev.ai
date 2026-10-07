@@ -12,9 +12,13 @@ so ownership is read from provenance, never guessed from a filename:
   Factory's; a Factory file whose bytes changed is of unknown origin (the
   writer may not edit those lanes), so it is the Factory's too -- fail-safe.
 * ``vendored``: the paths CLONER vendored from the Store (blocks.lock.json).
-* ``base_requirements``: the distributions the Factory's own requirements
-  rendering declares for this tree. A dependency outside it that the build's
-  requirements.txt declares is one the writer added.
+* ``base_requirements``: every distribution the Factory declared for this
+  tree -- its requirements rendering (base lines, vendored-block imports,
+  framework extras) plus every line in requirements.txt's Factory block as
+  the stamp left it. A dependency outside it that the build's
+  requirements.txt declares is one the writer added; one the file does not
+  declare (a transitive pin, e.g. of a Factory-declared block dependency) is
+  never the writer's.
 
 Everything in the workspace that is not on the receipt was written by the
 writer. A build with no receipt (built before this existed) cannot be
@@ -45,7 +49,7 @@ REASON_FACTORY_FILE_CHANGED = (
 )
 REASON_VENDORED = "in Store code the Factory vendored"
 REASON_NOT_IN_TREE = "names a file that is not in the build: origin unknown, a Factory fault"
-REASON_FACTORY_DEPENDENCY = "a dependency the Factory's base requirements declare"
+REASON_FACTORY_DEPENDENCY = "a dependency the Factory declared in requirements.txt"
 REASON_UNDECLARED_DEPENDENCY = (
     "a dependency the build's requirements.txt does not declare (transitive or "
     "unknown): origin unknown, a Factory fault"
@@ -103,6 +107,18 @@ def base_requirement_dists(root: Path) -> FrozenSet[str]:
     )
 
 
+def factory_block_dists(root: Path) -> FrozenSet[str]:
+    """The distributions in requirements.txt's Factory block: what the stamp
+    wrote there, whether or not today's render would still list them."""
+    from app.factory.build.factory_block import split_block
+
+    req = root / "requirements.txt"
+    if not req.is_file():
+        return frozenset()
+    _before, body, _after = split_block(req.read_bytes().decode("utf-8"))
+    return _requirement_dists(body or "")
+
+
 def factory_stamped_paths() -> Tuple[str, ...]:
     """Every file the Factory writes into a build and the writer may not own.
 
@@ -136,7 +152,7 @@ def record_receipt(root: Path | str) -> Dict[str, Any]:
         "schema": SCHEMA,
         "files": dict(sorted(files.items())),
         "vendored": list(_vendored_paths(root)),
-        "base_requirements": sorted(base_requirement_dists(root)),
+        "base_requirements": sorted(base_requirement_dists(root) | factory_block_dists(root)),
     }
     out = root / RECEIPT_REL
     out.parent.mkdir(parents=True, exist_ok=True)
