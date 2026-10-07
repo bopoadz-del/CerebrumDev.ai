@@ -162,4 +162,10 @@ def refresh_factory_files(
         _write_if_changed(root, ".github/workflows/ci.yml", render_github_ci(), changed)
     if (root / "requirements.txt").is_file():
         _write_if_changed(root, "requirements.txt", merged_requirements(root), changed, shared=True)
+        from app.factory.build.dependency_pins import CONSTRAINTS_REL, constraints_for_tree
+
+        # requirements.txt's companion, Factory-owned outright and read against
+        # the lines just merged: a build first made before the pins existed
+        # gets them on re-entry; a tree with no requirements gets nothing.
+        _write_if_changed(root, CONSTRAINTS_REL, constraints_for_tree(root), changed)
     return changed

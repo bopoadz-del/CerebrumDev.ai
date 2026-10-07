@@ -125,6 +125,7 @@ def _deploy_gap(root: Path) -> Any:
 def stamps() -> Tuple[Stamp, ...]:
     """The table, built from each stamp's own path constants."""
     from app.factory.build.data_lifecycle import platform_substrate
+    from app.factory.build.dependency_pins import CONSTRAINTS_REL
     from app.factory.build.deploy import FACTORY_OWNED_DEPLOY_MODULES, deploy_substrate
     from app.factory.build.kernel_publish import JOBS_REL
     from app.factory.build.placeholder_connectors import CONTRACT_TEST
@@ -144,7 +145,8 @@ def stamps() -> Tuple[Stamp, ...]:
         Stamp(
             "re-entry refresh (Factory files)",
             OWNED,
-            ("scripts/release_gate.py", rel(ACCEPTANCE_SCRIPT_REL), rel(SELF_CHECK_REL), rel(GITHUB_CI_REL)),
+            ("scripts/release_gate.py", rel(ACCEPTANCE_SCRIPT_REL), rel(SELF_CHECK_REL), rel(GITHUB_CI_REL),
+             CONSTRAINTS_REL),
             _refresh,
         ),
         Stamp("re-entry refresh (requirements)", SHARED, ("requirements.txt",), _refresh),
