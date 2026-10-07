@@ -712,7 +712,7 @@ def render_github_ci() -> str:
         "      - uses: actions/setup-python@v5\n"
         "        with:\n"
         '          python-version: "3.12"\n'
-        "      - run: pip install -r requirements.txt -r requirements-dev.txt\n"
+        "      - run: pip install -c constraints.txt -r requirements.txt -r requirements-dev.txt\n"
         "      # Boot-clean: the platform imports with NO environment set. A\n"
         "      # credential the operator supplies at deploy is never read at import.\n"
         "      - name: import app.main with an empty environment\n"
@@ -725,7 +725,7 @@ def render_github_ci() -> str:
         "      - uses: actions/setup-python@v5\n"
         "        with:\n"
         '          python-version: "3.12"\n'
-        "      - run: pip install -r requirements.txt pip-audit bandit\n"
+        "      - run: pip install -c constraints.txt -r requirements.txt pip-audit bandit\n"
         "      - run: pip-audit\n"
         "      - run: bandit -ll -r app\n"
         "  bench:\n"
@@ -735,7 +735,7 @@ def render_github_ci() -> str:
         "      - uses: actions/setup-python@v5\n"
         "        with:\n"
         '          python-version: "3.12"\n'
-        "      - run: pip install -r requirements.txt\n"
+        "      - run: pip install -c constraints.txt -r requirements.txt\n"
         "      - run: python scripts/bench.py\n"
     )
 
@@ -1151,6 +1151,11 @@ RAG_INGEST_PATHS = {rag_ingest!r}
 RAG_QUERY_PATHS = {rag_query!r}
 # The ingest body fields the brief declares for the document text.
 RAG_INGEST_TEXT_FIELDS = {tuple(RAG_INGEST_TEXT_FIELDS)!r}
+# How long the harness waits for the service it starts to answer.
+SERVE_TIMEOUT_S = 60
+# The extra tenants the isolation check reads and writes as. The service the
+# harness starts is a separate process, so it is started with them bound.
+CHECK_TENANT_TOKENS = "token-a:tenant-a,token-b:tenant-b"
 
 
 def _token() -> str:
@@ -1170,60 +1175,146 @@ class _Http:
         return fn(path, **kw)
 
 
-def _client() -> Tuple[_Http, Any]:
-    base = (os.environ.get("ACCEPTANCE_BASE_URL") or "").rstrip("/")
-    if base:
+class _Resp:
+    def __init__(self, status, body, headers):
+        self.status_code = int(status)
+        self._body = body or b""
+        self.headers = headers or {{}}
+        self.content = self._body
+
+    def json(self):
+        return json.loads(self._body.decode("utf-8") or "{{}}")
+
+    @property
+    def text(self) -> str:
+        return self._body.decode("utf-8", errors="replace")
+
+
+class _Url:
+    """Standard-library HTTP against a running service.
+
+    This harness runs INSIDE the image, where only the runtime requirements
+    are installed. An in-process test client is a test-only library (it needs
+    an HTTP client package the image never declares): live, an upstream
+    release moved that dependency and every in-image run crashed before its
+    first check. urllib is always there."""
+
+    def __init__(self, base: str):
+        self.base = base
+
+    def request(self, method: str, path: str, json=None, headers=None, **_kw):
+        import json as _json
         import urllib.error
         import urllib.request
 
-        class _Url:
-            def request(self, method: str, path: str, json=None, headers=None, **_kw):
-                data = None
-                hdrs = dict(headers or {{}})
-                if json is not None:
-                    data = json_mod.dumps(json).encode("utf-8")
-                    hdrs.setdefault("Content-Type", "application/json")
-                req = urllib.request.Request(base + path, data=data, headers=hdrs, method=method.upper())
-                try:
-                    with urllib.request.urlopen(req, timeout=8) as resp:
-                        body = resp.read()
-                        return _Resp(resp.status, body, resp.headers)
-                except urllib.error.HTTPError as exc:
-                    return _Resp(exc.code, exc.read(), exc.headers)
+        data = None
+        hdrs = dict(headers or {{}})
+        if json is not None:
+            data = _json.dumps(json).encode("utf-8")
+            hdrs.setdefault("Content-Type", "application/json")
+        req = urllib.request.Request(self.base + path, data=data, headers=hdrs, method=method.upper())
+        try:
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                return _Resp(resp.status, resp.read(), resp.headers)
+        except urllib.error.HTTPError as exc:
+            return _Resp(exc.code, exc.read(), exc.headers)
 
-        import json as json_mod
+    def get(self, path, **kw):
+        return self.request("GET", path, **kw)
 
-        class _Resp:
-            def __init__(self, status, body, headers):
-                self.status_code = int(status)
-                self._body = body or b""
-                self.headers = headers or {{}}
-                self.content = self._body
+    def post(self, path, **kw):
+        return self.request("POST", path, **kw)
 
-            def json(self):
-                return json.loads(self._body.decode("utf-8") or "{{}}")
 
-            @property
-            def text(self) -> str:
-                return self._body.decode("utf-8", errors="replace")
+class _Down:
+    """The service never answered: every HTTP check fails with the reason;
+    checks that read the tree still run."""
 
-        url = _Url()
+    def __init__(self, reason: str):
+        self.reason = reason
 
-        class _Wrap:
-            def get(self, path, **kw):
-                return url.request("GET", path, **kw)
+    def get(self, path, **_kw):
+        raise RuntimeError(self.reason)
 
-            def post(self, path, **kw):
-                return url.request("POST", path, **kw)
+    post = get
 
-        return _Http(_Wrap()), None
 
-    from fastapi.testclient import TestClient
-    from app.main import app
+class _Served:
+    """The service this harness started for itself; stopped on exit."""
 
-    cm = TestClient(app)
-    client = cm.__enter__()
-    return _Http(client), cm
+    def __init__(self, proc: Any):
+        self.proc = proc
+
+    def __exit__(self, *_exc: Any) -> None:
+        self.proc.terminate()
+        try:
+            self.proc.wait(timeout=10)
+        except Exception:
+            self.proc.kill()
+
+
+def _free_port() -> int:
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _serve_env() -> Dict[str, str]:
+    env = dict(os.environ)
+    bound = (env.get("TENANT_TOKENS") or "").strip()
+    env["TENANT_TOKENS"] = (bound + "," if bound else "") + CHECK_TENANT_TOKENS
+    return env
+
+
+def _serve() -> Tuple[str, _Served]:
+    """Start the product's own app under its declared server (uvicorn, a
+    runtime requirement) on a free local port, and wait until it answers.
+
+    Any HTTP answer -- even an error status -- means it is serving; what that
+    answer says is a check's verdict, not the harness's."""
+    import subprocess
+    import tempfile
+    import time
+    import urllib.error
+    import urllib.request
+
+    port = _free_port()
+    base = "http://127.0.0.1:%d" % port
+    log = tempfile.TemporaryFile()
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1",
+         "--port", str(port), "--log-level", "warning", "--no-access-log"],
+        cwd=str(ROOT), env=_serve_env(), stdout=log, stderr=subprocess.STDOUT,
+    )
+    served = _Served(proc)
+    deadline = time.monotonic() + SERVE_TIMEOUT_S
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            log.seek(0)
+            tail = log.read().decode("utf-8", errors="replace")[-1500:]
+            raise RuntimeError("the service exited %s before answering: %s" % (proc.returncode, tail))
+        try:
+            with urllib.request.urlopen(base + "/health", timeout=2):
+                return base, served
+        except urllib.error.HTTPError:
+            return base, served
+        except Exception:
+            time.sleep(0.2)
+    served.__exit__(None, None, None)
+    raise RuntimeError("the service did not answer within %ss" % SERVE_TIMEOUT_S)
+
+
+def _client() -> Tuple[_Http, Any]:
+    base = (os.environ.get("ACCEPTANCE_BASE_URL") or "").rstrip("/")
+    if base:
+        return _Http(_Url(base)), None
+    try:
+        base, served = _serve()
+    except Exception as exc:
+        return _Http(_Down("%s: %s" % (type(exc).__name__, exc))), None
+    return _Http(_Url(base)), served
 
 
 def _cap_order() -> List[str]:
@@ -2180,7 +2271,7 @@ def check_cross_tenant_404(http: _Http) -> Tuple[str, str]:
     refusal as evidence -- never as "no stored id".
     """
     previous = os.environ.get("TENANT_TOKENS")
-    os.environ["TENANT_TOKENS"] = "token-a:tenant-a,token-b:tenant-b"
+    os.environ["TENANT_TOKENS"] = CHECK_TENANT_TOKENS
     try:
         caps = _persisting_caps()
         if not caps:
@@ -2353,7 +2444,7 @@ def factory_renders(
 #: Factory files not stamped here but still the Factory's: the re-entry
 #: refresh re-renders these from templates (factory_refresh), and the Store
 #: gate's own workflow is pushed by the Factory (branch_attach).
-_OTHER_FACTORY_RELS = ("scripts/release_gate.py", "requirements.txt")
+_OTHER_FACTORY_RELS = ("scripts/release_gate.py", "requirements.txt", "constraints.txt")
 
 
 def factory_rendered_paths() -> Tuple[str, ...]:
@@ -2408,6 +2499,12 @@ def stamp_acceptance_into_path(
         path = dest / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
+    # The rendered CI installs with ``-c constraints.txt``; a tree stamped
+    # without the scaffold (an attach, a fixture) gets the pins too.
+    from app.factory.build.dependency_pins import CONSTRAINTS_REL, constraints_for_tree
+
+    if not (dest / CONSTRAINTS_REL).is_file():
+        (dest / CONSTRAINTS_REL).write_text(constraints_for_tree(dest), encoding="utf-8")
 
 
 def evaluate_acceptance(

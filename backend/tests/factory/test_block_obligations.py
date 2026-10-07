@@ -426,9 +426,11 @@ def test_render_requirements_declares_what_the_cloner_vendored():
     }
     text = _render_requirements(dependency_obligations(shipped))
 
-    # The runtime lane is untouched, floors and all.
-    assert "fastapi>=0.110" in text
-    assert "pydantic>=2.0" in text
+    # The runtime lane is untouched, pins and all (dependency_pins).
+    from app.factory.build.dependency_pins import pin
+
+    assert pin("fastapi") + "\n" in text
+    assert pin("pydantic") + "\n" in text
 
     # And the vendored lane is now declared, under its PyPI name.
     assert "aiofiles" in text
@@ -456,13 +458,15 @@ def test_render_requirements_is_unchanged_when_nothing_was_vendored():
 
 def test_the_runtime_lane_is_never_double_declared():
     """A vendored block importing pydantic must not emit a second,
-    unversioned pydantic line that shadows the >=2.0 floor."""
+    unversioned pydantic line that shadows the Factory's pin."""
     text = _render_requirements(
         dependency_obligations({"vendor/x.py": "import pydantic\nimport fastapi\n"})
     )
     assert len([l for l in text.splitlines() if l.startswith("pydantic")]) == 1
     assert len([l for l in text.splitlines() if l.startswith("fastapi")]) == 1
-    assert "pydantic>=2.0" in text
+    from app.factory.build.dependency_pins import pin
+
+    assert pin("pydantic") + "\n" in text
 
 
 def test_the_declared_set_parses_as_requirements():
@@ -481,7 +485,9 @@ def test_the_declared_set_parses_as_requirements():
     # An unversioned line is recorded as unspecified, not dropped.
     rows = {r["name"]: r["version"] for r in parse_requirement_lines(text)}
     assert rows["PyYAML"] == "unspecified"
-    assert rows["fastapi"] == ">=0.110"
+    from app.factory.build.dependency_pins import FACTORY_PINS
+
+    assert rows["fastapi"] == "==" + FACTORY_PINS["fastapi"]
 
 
 # -- the wiring, driven through the real CLONER ---------------------------
@@ -654,6 +660,8 @@ def test_the_writer_declares_what_the_cloner_recorded(tmp_path, monkeypatch, stu
     assert "aiofiles" in text
     assert "PyYAML" in text
     assert "pandas" in text
-    # The runtime lane still ships with its floors.
-    assert "fastapi>=0.110" in text
-    assert "pydantic>=2.0" in text
+    # The runtime lane still ships with its pins.
+    from app.factory.build.dependency_pins import pin
+
+    assert pin("fastapi") + "\n" in text
+    assert pin("pydantic") + "\n" in text

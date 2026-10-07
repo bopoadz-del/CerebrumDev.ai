@@ -178,6 +178,7 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             (LaneRoot.WORKSPACE, "README.md"),
             (LaneRoot.WORKSPACE, "requirements.txt"),
             (LaneRoot.WORKSPACE, "requirements-dev.txt"),
+            (LaneRoot.WORKSPACE, "constraints.txt"),
             (LaneRoot.WORKSPACE, "pyproject.toml"),
             (LaneRoot.WORKSPACE, "Dockerfile"),
             (LaneRoot.WORKSPACE, "Procfile"),

@@ -2660,6 +2660,7 @@ def _render_requirements(
     name, so without this scan they are absent in the image and the feature
     fails at the first request rather than at install.
     """
+    from app.factory.build.dependency_pins import CONSTRAINTS_REL, pin
     from app.factory.build.framework_extras import framework_lines
     from app.factory.build.network_posture import POSTURE_ID
 
@@ -2678,16 +2679,19 @@ def _render_requirements(
         "# it: relying on someone else's dependency graph breaks the moment that\n"
         "# graph changes, and F10 is exactly the class of defect where an import\n"
         "# is satisfied by accident rather than by declaration.\n"
-        "fastapi>=0.110\n"
-        "uvicorn>=0.29\n"
-        "pydantic>=2.0\n"
-        "alembic>=1.13\n"
-        "sqlalchemy>=2.0\n"
-        "starlette>=0.37\n"
+        "# Exact versions from the Factory's one pin table (dependency_pins):\n"
+        "# an open range resolves to whatever was released that day, and the\n"
+        f"# same build stops reproducing. {CONSTRAINTS_REL} bounds the rest.\n"
+        f"{pin('fastapi')}\n"
+        f"{pin('uvicorn')}\n"
+        f"{pin('pydantic')}\n"
+        f"{pin('alembic')}\n"
+        f"{pin('sqlalchemy')}\n"
+        f"{pin('starlette')}\n"
         "# The Postgres driver app/db.py uses when the operator sets DATABASE_URL.\n"
         "# Without it the variable is accepted and then cannot be dialled --\n"
         "# postgres_boot_200 on the acceptance floor measures exactly that.\n"
-        "psycopg[binary]>=3.1\n"
+        f"{pin('psycopg', extras='binary')}\n"
         + extra_block
     ) + render_dependency_lines(
         vendored_deps or {}, already=already
@@ -2704,6 +2708,7 @@ def _render_requirements(
 
 
 def _render_dockerfile() -> str:
+    from app.factory.build.dependency_pins import CONSTRAINTS_REL
     from app.factory.build.network_posture import NETWORK_POSTURE
 
     text = (
@@ -2714,10 +2719,12 @@ def _render_dockerfile() -> str:
         "WORKDIR /app\n"
         "ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1\n"
         "\n"
-        "COPY requirements.txt .\n"
-        "RUN pip install --no-cache-dir -r requirements.txt\n"
+        f"# Installs against the Factory's pinned {CONSTRAINTS_REL} (one source:\n"
+        "# dependency_pins), so every build resolves the same framework.\n"
+        f"COPY requirements.txt {CONSTRAINTS_REL} ./\n"
+        f"RUN pip install --no-cache-dir -c {CONSTRAINTS_REL} -r requirements.txt\n"
         "COPY requirements-dev.txt .\n"
-        "RUN pip install --no-cache-dir -r requirements-dev.txt\n"
+        f"RUN pip install --no-cache-dir -c {CONSTRAINTS_REL} -r requirements-dev.txt\n"
         "\n"
         "COPY . .\n"
         "ENV PYTHONPATH=/app\n"
@@ -2761,11 +2768,13 @@ def _render_dev_requirements() -> str:
     factory's own production image made every live build fail its TESTER
     gate with "suite is red" and zero findings.
     """
+    from app.factory.build.dependency_pins import CONSTRAINTS_REL, TEST_ONLY, pin
+
     return (
-        "# Needed by scripts/release_gate.py and tests/.\n"
-        "#   pip install -r requirements-dev.txt\n"
-        "pytest>=8\n"
-        "httpx>=0.27\n"
+        "# Needed by scripts/release_gate.py and tests/. Pinned from the\n"
+        "# Factory's one table (dependency_pins), like the runtime lines.\n"
+        f"#   pip install -c {CONSTRAINTS_REL} -r requirements-dev.txt\n"
+        + "".join(pin(dist) + "\n" for dist in TEST_ONLY)
     )
 
 
@@ -3102,7 +3111,7 @@ platform runs with the factory switched off (`{NETWORK_POSTURE}`).
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+.venv/bin/pip install -c constraints.txt -r requirements.txt -r requirements-dev.txt
 .venv/bin/uvicorn app.main:app --reload      # GET /health -> 200; GET /v1/jobs -> kernel JDs
 .venv/bin/python -m pytest tests -m "not pilot"   # factory code-phase gate
 .venv/bin/python -m pytest tests                   # includes Store-backed @pytest.mark.pilot
@@ -3439,7 +3448,7 @@ def _coder_readme(
                         "Markdown only, no code fences around the whole document. "
                         "Cover: what it does, its capabilities, how to run it "
                         "(python3 -m venv .venv; "
-                        ".venv/bin/pip install -r requirements.txt -r requirements-dev.txt; "
+                        ".venv/bin/pip install -c constraints.txt -r requirements.txt -r requirements-dev.txt; "
                         ".venv/bin/uvicorn app.main:app; GET /health and GET /v1/jobs; "
                         ".venv/bin/python -m pytest tests -m \"not pilot\"), "
                         "and that it runs fully offline with blocks vendored into "
@@ -5122,6 +5131,12 @@ def run_writer(
     )
     ctx.workspace.write_text(
         "requirements-dev.txt", _render_dev_requirements()
+    )
+    from app.factory.build.dependency_pins import CONSTRAINTS_REL, constraints_for_tree
+
+    ctx.workspace.write_text(
+        CONSTRAINTS_REL,
+        constraints_for_tree(ctx.workspace.workspace),
     )
     if ctx.work_list and ctx.workspace.exists("README.md"):
         # The README does not fail tests; regenerating it on rework spends
