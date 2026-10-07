@@ -233,6 +233,107 @@ def test_vendored_store_code_is_the_factorys(tmp_path):
     assert receipt.file_origin("vendor/cerebrum/core/x.py").owner == fr.FACTORY
 
 
+def _ingest(root, rows):
+    from app.factory.build.n3_store_gate import ingest_store_gate_snapshot
+
+    report = _report(rows)
+    snap = _snap(report)
+    snap.lines = [line for line in report.lines]
+    return ingest_store_gate_snapshot(root, snap)
+
+
+def test_a_store_verdict_red_only_on_factory_audit_rows_passes_with_the_advisory_recorded(tmp_path):
+    from app.factory.build.n3_store_gate import N3_STORE_GATE_GREEN
+
+    root = _tree(tmp_path)
+    receipt = fr.record_receipt(root)
+    rows = [_file_row(_factory_file(), 2), _dep_row(receipt["base_requirements"][0])]
+
+    result = _ingest(root, rows)
+
+    assert result.ok and result.honesty == N3_STORE_GATE_GREEN
+    ledger = BuildLedger(root / "build_ledger.jsonl")
+    assert ledger.terminal_event().kind is EventKind.RUN_SUCCEEDED
+    [row] = advisory_checks(ledger.events())
+    assert row["check"] == AUDIT and row["findings_count"] == 2
+    # the evidence rows themselves travel with the advisory, not just a count
+    assert [f for f in row["findings"] if _factory_file() in f]
+    assert [f for f in row["findings"] if "PYSEC-2099-7" in f]
+
+
+def test_a_store_verdict_with_a_writer_audit_row_is_rework_never_factory_owed(tmp_path):
+    """Live 2026-10-07 (b305c718, store-gate run 37617593610): every audit
+    row was the writer's by the receipt, the line moved to PRODUCT, and the
+    report kept its pre-split score -- "product passed 18/18 ... the Factory
+    failed audit_clean" -- so a product finding was billed to the Factory and
+    the build died with no rework."""
+    from app.factory.build.n3_store_gate import N3_STORE_GATE_FACTORY_OWED
+
+    root = _tree(tmp_path)
+    fr.record_receipt(root)
+
+    result = _ingest(root, [_file_row("app/zorblat_handler.py", 12), _dep_row("zorblat-sdk")])
+
+    assert not result.ok and result.honesty != N3_STORE_GATE_FACTORY_OWED
+    terminal = BuildLedger(root / "build_ledger.jsonl").terminal_event()
+    assert terminal.payload.get("failure_owner") == PRODUCT
+    verdict = store_gate_verdict(terminal.payload)
+    assert verdict is not None
+    assert any("app/zorblat_handler.py:12" in str(f) for f in verdict.findings)
+
+
+def test_a_mixed_audit_line_is_rework_on_the_writer_rows_with_the_factory_rows_advisory(tmp_path):
+    root = _tree(tmp_path)
+    fr.record_receipt(root)
+
+    result = _ingest(root, [_file_row("app/zorblat_handler.py", 12), _file_row(_factory_file(), 2)])
+
+    assert not result.ok
+    ledger = BuildLedger(root / "build_ledger.jsonl")
+    assert ledger.terminal_event().payload.get("failure_owner") == PRODUCT
+    assert [r["check"] for r in advisory_checks(ledger.events())] == [AUDIT]
+
+
+def test_a_factory_owned_non_audit_failure_still_routes_to_the_factory_lane(tmp_path):
+    """Scope: only audit lines are advisory. Any other Factory-owned red line
+    keeps today's verdict (N3_STORE_GATE_FACTORY_OWED, no rework)."""
+    from app.factory.build.acceptance_floor import owner_of
+    from app.factory.build.n3_store_gate import (
+        N3_STORE_GATE_FACTORY_OWED,
+        ingest_store_gate_snapshot,
+    )
+
+    owned = [c for c in ACCEPTANCE_CHECK_NAMES if c not in audit_check_ids() and owner_of(c) == FACTORY]
+    assert owned, "the floor declares a Factory-owned check"
+    lines = [
+        {"name": n, "status": "FAIL" if n == owned[0] else "PASS", "detail": "x"}
+        for n in ACCEPTANCE_CHECK_NAMES
+    ]
+    report = report_from_store_gate_payload(
+        {"lines": lines, "passed": len(lines) - 1, "total": len(lines), "ok": False}
+    )
+    root = _tree(tmp_path)
+    fr.record_receipt(root)
+
+    result = ingest_store_gate_snapshot(root, _snap(report))
+
+    assert result.honesty == N3_STORE_GATE_FACTORY_OWED and not result.ok
+
+
+def test_the_manifest_carries_the_advisory_evidence_rows():
+    from app.factory.build import export_manifest as em
+
+    manifest = em.build_manifest(
+        product_id="p", tenant_id="t", ci_run="1",
+        retrieval_mode=em.RETRIEVAL_MODES[0], tenancy_mode=em.TENANCY_MODES[0],
+        embedder="e", vector_store="v", engine_version="1", prompt_version="1",
+        layer_counts={1: 0}, engine_included=False,
+        advisory_checks=[{"check": AUDIT, "reason": "r", "findings_count": 1,
+                          "findings": ["PYSEC-2099-7 zorblat==1.0"]}],
+    )
+    assert manifest["advisory_checks"][0]["findings"] == ["PYSEC-2099-7 zorblat==1.0"]
+
+
 def test_the_receipt_is_written_at_the_store_gate_handoff():
     """The runner records the receipt before it pushes the workspace for the
     gate -- after the last restamp -- and the receipt never ships."""

@@ -136,9 +136,10 @@ def narrowed(verdict: Any, split: FailureSplit) -> Any:
 
 def advisory_checks(events: Iterable[Any]) -> List[dict]:
     """Every check this build moved to advisory, read back from its ledger:
-    ``[{check, reason, findings_count}]``, one row per check, findings summed
-    across rounds. The build status and the export manifest both carry this,
-    so nothing is silenced out of sight."""
+    ``[{check, reason, findings_count, findings}]``, one row per check,
+    findings summed across rounds and the distinct evidence rows themselves
+    listed. The build status and the export manifest both carry this, so
+    nothing is silenced out of sight."""
     rows: dict = {}
     for event in events:
         for entry in (getattr(event, "payload", None) or {}).get("gate_advisory") or []:
@@ -146,10 +147,12 @@ def advisory_checks(events: Iterable[Any]) -> List[dict]:
             if not check:
                 continue
             row = rows.setdefault(
-                check, {"check": check, "reason": "", "findings_count": 0}
+                check, {"check": check, "reason": "", "findings_count": 0, "findings": []}
             )
             row["reason"] = str(entry.get("reason") or REASON_NOT_DEFINED)
-            row["findings_count"] += len(entry.get("findings") or [])
+            found = [str(f) for f in entry.get("findings") or []]
+            row["findings_count"] += len(found)
+            row["findings"].extend(f for f in dict.fromkeys(found) if f not in row["findings"])
     return [rows[check] for check in sorted(rows)]
 
 

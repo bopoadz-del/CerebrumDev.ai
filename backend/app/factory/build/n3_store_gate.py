@@ -790,7 +790,11 @@ def split_audit_by_origin(root: Path | str, report: AcceptanceReport) -> List[Di
       (unknown origin is never silently the writer's).
 
     Mutates and re-scores ``report``; returns the ``gate_advisory`` entries
-    ([{check, reason, findings}]).
+    ([{check, reason, findings}]). Re-scored whenever a line was split, not
+    only when something became advisory: a line moved to the writer must
+    leave ``factory_owed`` too, or a product finding is billed to the Factory
+    (live 2026-10-07: "product passed 18/18 ... the Factory failed
+    audit_clean", no rework, export dead).
     """
     from app.factory.build.acceptance_floor import FACTORY, PRODUCT, audit_check_ids
     from app.factory.build.factory_receipt import load_receipt, row_text, split_rows
@@ -798,9 +802,11 @@ def split_audit_by_origin(root: Path | str, report: AcceptanceReport) -> List[Di
     audit = set(audit_check_ids())
     receipt = load_receipt(root)
     advisory: List[Dict[str, Any]] = []
+    split = False
     for line in report.lines:
         if line.name not in audit or not line.failed:
             continue
+        split = True
         if not line.evidence_rows:
             line.owner = FACTORY
             line.status = "SKIP"
@@ -824,7 +830,7 @@ def split_audit_by_origin(root: Path | str, report: AcceptanceReport) -> List[Di
             line.owner = FACTORY
             line.status = "SKIP"
             line.detail = f"advisory: {REASON_AUDIT_FACTORY_ORIGIN}"
-    if advisory:
+    if split:
         finalize_owners(report)
         report.passed = sum(1 for line in report.lines if line.satisfied)
         report.ok = bool(report.harness_ran) and all(line.satisfied for line in report.lines)
@@ -1340,6 +1346,13 @@ def ingest_n3_store_gate(
             detail=f"store-gate not reachable, still waiting: {snap.detail}",
             snapshot=snap,
         )
+    return ingest_store_gate_snapshot(root, snap)
+
+
+def ingest_store_gate_snapshot(root: Path | str, snap: StoreGateSnapshot) -> IngestResult:
+    """The verdict for one scored (or failed-to-score) store-gate snapshot:
+    green, the Factory's (no rework), or the product's (rework)."""
+    root = Path(root)
     # Owner by construction. The product's score counts only the checks it
     # owns; a red line whose subject the Factory wrote -- or a gate that never
     # scored -- is the Factory's, routed to the factory lane, and can never
