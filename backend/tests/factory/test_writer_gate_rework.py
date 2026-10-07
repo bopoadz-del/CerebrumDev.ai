@@ -284,8 +284,6 @@ def test_the_writer_pass_ships_the_self_check(blueprint, tmp_path, stub_coder):
     assert outcome.ok, outcome.detail
     stamped = tmp_path / "build" / writer_behaviour.SELF_CHECK_REL
     assert stamped.is_file()
-    # The stamp carries the workspace's own base samples -- what the gate posts.
-    expected = writer_behaviour.render_self_check(
-        writer_behaviour.base_samples(tmp_path / "build")
-    )
-    assert stamped.read_text(encoding="utf-8") == expected
+    # The stamp is the Factory's bytes alone (its payload base is read off the
+    # live models when it runs), so a refresh never sees a product-made change.
+    assert stamped.read_text(encoding="utf-8") == writer_behaviour.render_self_check()

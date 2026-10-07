@@ -201,12 +201,13 @@ def _no_paid_calls(monkeypatch):
 
 
 def _probe_values() -> str:
-    """The round-trip probe's own value builders (``_ann`` .. ``_payload``)."""
+    """The payload source every Factory probe renders (``_payload_for``)."""
+    from app.factory.build.payload_helpers import PROBE_PAYLOAD_SLOT, render_probe_payload
     from app.factory.build.product_gate import ROUND_TRIP_PROBE
 
-    start = ROUND_TRIP_PROBE.index("def _ann(")
-    end = ROUND_TRIP_PROBE.index("AUTH = {")
-    return ROUND_TRIP_PROBE[start:end]
+    source = render_probe_payload(PROBE_PAYLOAD_SLOT)
+    assert source in ROUND_TRIP_PROBE
+    return source
 
 
 _PROBE_VALUES = _probe_values()
@@ -249,7 +250,8 @@ def test_the_runner_sends_a_test_defect_back_to_the_writer_not_to_rework(
             + _PROBE_VALUES
             + "\n\ndef test_writer_posts_the_capability():\n"
             "    with TestClient(app) as c:\n"
-            f"        r = c.post('/v1/{cap}', json=_payload(MODELS['{cap}']),\n"
+            f"        assert '{cap}' in MODELS\n"
+            f"        r = c.post('/v1/{cap}', json=_payload_for('{cap}'),\n"
             "                   headers={'Authorization': 'Bearer ' + os.environ['PLATFORM_TOKEN']})\n"
             f"    assert r.status_code == {want}\n",
             encoding="utf-8",

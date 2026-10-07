@@ -46,9 +46,7 @@ from app.factory.build.brief_gates import WRITER_BEHAVIOUR_CHECK
 
 import json
 import re
-import sys
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from app.factory.build.entity_contract import ENTITY_RESOLVER_SLOT, ENTITY_RESOLVER_SRC
 
@@ -192,19 +190,9 @@ except Exception:
 placeholder_unjudged = []
 
 
-#: The Factory's spec sample per capability -- the SAME base TESTER posts
-#: (roles_handlers._sample_payload over declared_specs, the product's live
-#: models). Rendered in by _render_probe; empty when the caller had no
-#: workspace, and then the shared builder completes from the model alone.
-BASE_SAMPLES = {}
-
-PAYLOAD_HELPERS = None  # rendered in by _render_probe (payload_helpers)
-
-
-def _payload_for(cap_id):
-    """One builder for every Factory probe and suite (payload_helpers): the
-    spec sample, completed with what the product's own model requires."""
-    return _sample_payload_for(cap_id, BASE_SAMPLES.get(cap_id) or {})
+# The payload every Factory probe posts: TESTER's base sample through the one
+# builder (payload_helpers.render_probe_payload defines _payload_for here).
+# __PROBE_PAYLOAD__ (rendered in by payload_helpers.render_probe_payload)
 
 
 ENTITY_RESOLVER = None  # rendered in by _render_probe (entity_contract)
@@ -882,67 +870,27 @@ def _pass_detail(
 
 
 def _run_probe_source(ctx: Any, source: str) -> Any:
-    """Run the rendered probe from a temp file OUTSIDE the workspace.
+    """Run a rendered probe from a temp file (payload_helpers.run_probe_source)."""
+    from app.factory.build.payload_helpers import run_probe_source
 
-    ``python -c <probe>`` put the whole source on the command line; with the
-    shared payload builder rendered in it outgrew the Windows argv limit
-    (WinError 206). The loader keeps ``''`` (the workspace, the run's cwd) on
-    sys.path exactly as ``-c`` did, so ``import app`` resolves the same way.
-    """
-    import os
-    import tempfile
-
-    fd, path = tempfile.mkstemp(prefix="writer-behaviour-probe-", suffix=".py")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(source)
-        loader = (
-            "import runpy, sys; sys.path.insert(0, ''); "
-            f"runpy.run_path({path!r}, run_name='__main__')"
-        )
-        return ctx.run([sys.executable, "-c", loader])
-    finally:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
+    return run_probe_source(ctx, source)
 
 
-PAYLOAD_HELPERS_SLOT = "PAYLOAD_HELPERS = None  # rendered in by _render_probe (payload_helpers)"
-BASE_SAMPLES_SLOT = "BASE_SAMPLES = {}"
-
-
-def base_samples(workspace: Any) -> Dict[str, Dict[str, Any]]:
-    """The spec sample per capability -- exactly the base TESTER posts:
-    ``roles_handlers._sample_payload`` over the product's live declared
-    models (declared_specs). Empty when nothing is declared."""
-    from app.factory.build.declared_specs import specs_from_product_models
-    from app.factory.build.roles_handlers import _sample_payload
-
-    root = Path(getattr(workspace, "workspace", workspace))
-    try:
-        specs = specs_from_product_models(root)
-    except Exception:  # noqa: BLE001 -- no readable models: the builder completes from MODELS
-        return {}
-    return {str(cap): _sample_payload(spec) for cap, spec in (specs or {}).items() if isinstance(spec, dict)}
-
-
-def _render_probe(samples: Optional[Dict[str, Dict[str, Any]]] = None) -> str:
+def _render_probe() -> str:
     """The probe with this factory's resource obligations, halt sentences,
-    entity resolver and ONE payload builder (payload_helpers) baked in.
-    ``samples`` is the spec base TESTER uses (:func:`base_samples`)."""
+    entity resolver and ONE payload source (payload_helpers) baked in. The
+    payload base is TESTER's sampler over the live models, computed when the
+    probe runs -- so the rendered bytes depend on the Factory alone."""
     from app.factory.build.block_obligations import resource_obligations
-    from app.factory.build.payload_helpers import render_payload_helpers
+    from app.factory.build.payload_helpers import render_probe_payload
 
-    return (
+    return render_probe_payload(
         BEHAVIOUR_PROBE.replace(
             "RESOURCE_OBLIGATIONS = {}",
             "RESOURCE_OBLIGATIONS = " + repr(dict(resource_obligations())),
             1,
         ).replace("HALTS = {}", "HALTS = " + repr(dict(HALT_SENTENCES)), 1)
         .replace(ENTITY_RESOLVER_SLOT, ENTITY_RESOLVER_SRC, 1)
-        .replace(BASE_SAMPLES_SLOT, "BASE_SAMPLES = " + repr(dict(samples or {})), 1)
-        .replace(PAYLOAD_HELPERS_SLOT, "\n".join(render_payload_helpers()), 1)
     )
 
 
@@ -1064,28 +1012,26 @@ if __name__ == "__main__":
 '''
 
 
-def render_self_check(samples: Optional[Dict[str, Dict[str, Any]]] = None) -> str:
-    """The stamped self-check: the SAME rendered probe the gate runs -- with
-    the same base samples (:func:`base_samples`) -- then the product-gate
-    suites TESTER stamped (product_suites)."""
+def render_self_check() -> str:
+    """The stamped self-check: the SAME rendered probe the gate runs (its
+    payload base read off the live models when it runs), then the
+    product-gate suites TESTER stamped (product_suites)."""
     from app.factory.build.product_suites import PRODUCT_SUITES
 
     return _SELF_CHECK_TEMPLATE.format(
         command=SELF_CHECK_COMMAND,
-        probe=repr(_render_probe(samples)),
+        probe=repr(_render_probe()),
         levels=repr(RECORD_LEVELS),
         suites=repr(PRODUCT_SUITES),
     )
 
 
 def emit_self_check(workspace: object) -> None:
-    """Stamp the self-check (Factory-owned) before any writer path runs.
-
-    Stamped with the workspace's own base samples, so it posts what the gate
-    will post; re-stamped by factory_refresh before every TESTER."""
+    """Stamp the self-check (Factory-owned) before any writer path runs;
+    re-stamped by factory_refresh before every TESTER."""
     from app.factory.build.workspace import write_workspace_text
 
-    write_workspace_text(workspace, SELF_CHECK_REL, render_self_check(base_samples(workspace)))
+    write_workspace_text(workspace, SELF_CHECK_REL, render_self_check())
 
 
 def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
@@ -1109,7 +1055,7 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
             findings=["writer produced no models"],
         )
 
-    proc = _run_probe_source(ctx, _render_probe(base_samples(ctx.workspace)))
+    proc = _run_probe_source(ctx, _render_probe())
     if proc.returncode != 0:
         records = probe_records(proc.stderr or "")
         return GateResult(

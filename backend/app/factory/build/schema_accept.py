@@ -40,7 +40,7 @@ GENERIC_STR_SAMPLE = "sample"
 DATETIME_SAMPLE = "2026-09-03T10:00:00"
 DATE_SAMPLE = "2026-09-03"
 TIME_SAMPLE = "10:00:00"
-EMAIL_SAMPLE = "sample@example.com"
+EMAIL_SAMPLE = "guest@example.com"  # the one builder's declared-email sample
 
 #: Minimum envelope every capability carries after ``ensure_record_envelope``.
 ENVELOPE_ACCEPT_SAMPLE: Dict[str, Any] = {
@@ -126,38 +126,16 @@ def probe_sample_value(
     annotation: str = "str",
     constraints: Optional[Mapping[str, Any]] = None,
 ) -> Any:
-    """A value the ``writer_behaviour`` baseline probe will send for *name*.
-
-    Mirrors ``BEHAVIOUR_PROBE._value``. Keep literals in sync with that
-    string; ``test_schema_accept_contract`` fails the suite on drift.
+    """The value every Factory probe posts for *name* -- read from the ONE
+    builder (roles_handlers._sample_value, the sampler TESTER and the probes
+    share through payload_helpers.base_samples). This module keeps no rules
+    of its own; ``test_schema_accept_contract`` pins the identity.
     """
-    con = dict(constraints or {})
-    allowed = con.get("allowed_values")
-    if allowed:
-        return allowed[0]
-    kind = str(annotation or "str").replace("Optional[", "").replace("]", "").strip()
-    kind_l = kind.lower().replace("datetime.", "").replace(" ", "")
-    if kind in ("int", "float") or kind_l in ("int", "float"):
-        low, high = con.get("min"), con.get("max")
-        if low is not None:
-            return low
-        if high is not None:
-            return high if high < 1 else 1
-        return 1
-    if kind == "bool" or kind_l == "bool":
-        return False
-    # Declared type / format only -- never a meaning read from the field name.
-    # A vocabulary (status, channel, ...) arrives as allowed_values above.
-    fmt = str(con.get("format") or "").lower().replace("-", "")
-    if fmt == "email":
-        return EMAIL_SAMPLE
-    if kind_l in ("datetime", "timestamp") or fmt in ("datetime", "timestamp", "iso8601"):
-        return DATETIME_SAMPLE
-    if kind_l == "date" or fmt == "date":
-        return DATE_SAMPLE
-    if kind_l == "time" or fmt == "time":
-        return TIME_SAMPLE
-    return GENERIC_STR_SAMPLE
+    from app.factory.build.roles_handlers import _sample_value
+
+    field: Dict[str, Any] = {"name": name, "type": str(annotation or "str")}
+    field.update({k: v for k, v in dict(constraints or {}).items() if v is not None})
+    return _sample_value(field)
 
 
 def probe_sample_payload(

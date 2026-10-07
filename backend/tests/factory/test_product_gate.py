@@ -275,74 +275,90 @@ def test_the_probe_enters_the_client_context_so_the_lifespan_runs():
     assert entered, "the probe must enter the TestClient context manager"
 
 
-def test_the_probe_payload_matches_the_writer_probe_s():
-    """Two probes, one convention. They are separate source strings because
-    each runs alone inside a generated workspace that carries no factory
-    code; this is the fence that stops them drifting.
+_ONE_CONVENTION_MODELS = '''
+from dataclasses import dataclass
 
-    Mutation killed: changing one probe's sample-value rules and leaving the
-    other, so WRITER and PRODUCT judge different payloads and disagree about
-    the same product.
+
+@dataclass
+class Zorblat:
+    name: str = ""
+    count: int = 3
+    active: bool = False
+    contact_email: str = ""
+    status: str = "draft"
+    scheduled_time: str = ""
+    duration_minutes: int = 1
+    channel: str = "email"
+    FIELDS = ["name", "count", "active", "contact_email", "status",
+              "scheduled_time", "duration_minutes", "channel"]
+    # Every non-generic sample comes from a DECLARATION (vocabulary, bound,
+    # format) -- never from the field's name.
+    CONSTRAINTS = {
+        "status": {"allowed_values": ["draft", "live"]},
+        "count": {"min": 3},
+        "scheduled_time": {"format": "time"},
+        "contact_email": {"format": "email"},
+        "channel": {"allowed_values": ["email", "sms"]},
+    }
+
+
+MODELS = {"zorblat": Zorblat}
+'''
+
+
+def test_the_probe_payload_matches_the_writer_probe_s(tmp_path):
+    """Two probes, one convention -- by construction now: the WRITER probe and
+    the PRODUCT round-trip probe both render the ONE payload source
+    (payload_helpers.render_probe_payload) over TESTER's base sample, so
+    WRITER, PRODUCT and TESTER judge the same payload for the same product.
+
+    Mutations killed: a probe carrying a sampler of its own (the defect that
+    stopped the writer gate on payloads TESTER accepted, live 9de69276); a
+    probe rendering a different sample base than TESTER's.
     """
+    import importlib.util
+
     import app.factory.build.writer_behaviour as wb
+    from app.factory.build.payload_helpers import (
+        PROBE_PAYLOAD_SLOT,
+        base_samples,
+        render_probe_payload,
+    )
+    from app.factory.build.product_gate import render_round_trip_probe
 
-    marker = "BEHAVIOUR_PROBE = r" + (chr(39) * 3)
-    text = open(wb.__file__, encoding="utf-8").read()
-    start = text.index(marker) + len(marker)
-    writer_src = text[start:text.index(chr(39) * 3, start)]
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "models.py").write_text(_ONE_CONVENTION_MODELS, encoding="utf-8")
+    tester = base_samples(tmp_path)  # TESTER's base: its sampler over the live models
 
-    def lift_payload(src):
-        tree = ast.parse(src)
-        picked = [
-            n for n in tree.body
-            if isinstance(n, ast.FunctionDef) and n.name in {"_ann", "_value", "_payload"}
-        ]
-        assert len(picked) == 3
-        ns: dict = {}
-        exec(compile(ast.Module(body=picked, type_ignores=[]), "<p>", "exec"), ns)
-        return ns["_payload"]
+    payload_src = render_probe_payload(PROBE_PAYLOAD_SLOT)
+    for probe in (wb._render_probe(), render_round_trip_probe()):
+        assert payload_src in probe
+        names = {n.name for n in ast.parse(probe).body if isinstance(n, ast.FunctionDef)}
+        assert not {"_ann", "_value", "_payload"} & names, names
+        assert "_payload_for" in names
 
-    class Model:
-        FIELDS = [
-            "name",
-            "count",
-            "active",
-            "contact_email",
-            "status",
-            "scheduled_time",
-            "duration_minutes",
-            "channel",
-        ]
-        # Every non-generic sample comes from a DECLARATION (vocabulary,
-        # bound, format) -- never from the field's name.
-        CONSTRAINTS = {
-            "status": {"allowed_values": ["draft", "live"]},
-            "count": {"min": 3},
-            "scheduled_time": {"format": "time"},
-            "contact_email": {"format": "email"},
-            "channel": {"allowed_values": ["email", "sms"]},
-        }
-        __annotations__ = {
-            "name": "str",
-            "count": "int",
-            "active": "bool",
-            "contact_email": "str",
-            "status": "str",
-            "scheduled_time": "str",
-            "duration_minutes": "int",
-            "channel": "str",
-        }
+    # What the probes compute when they RUN, over the same live models, is
+    # TESTER's base exactly.
+    ns: dict = {}
+    exec(compile(payload_src, "<probe-payload>", "exec"), ns)
+    spec = importlib.util.spec_from_file_location("zorblat_models", tmp_path / "app" / "models.py")
+    models = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(models)
+    probe_base = {
+        cap: ns["_sample_payload"](s) for cap, s in ns["_declared_specs"](models.MODELS).items()
+    }
+    assert probe_base == tester and tester
 
-    writer_payload = lift_payload(writer_src)(Model)
-    assert lift_payload(ROUND_TRIP_PROBE)(Model) == writer_payload
-    assert writer_payload["scheduled_time"] == "10:00:00"
-    assert writer_payload["scheduled_time"] != "sample"
-    assert writer_payload["duration_minutes"] == 1
-    assert writer_payload["channel"] == "email"  # allowed_values[0]
-    assert writer_payload["contact_email"] == "sample@example.com"  # format email
-    assert writer_payload["status"] == "draft"  # allowed_values[0]
+    payload = probe_base["zorblat"]
+    assert payload["scheduled_time"] == "10:00:00"
+    assert payload["scheduled_time"] != "sample"
+    assert payload["duration_minutes"] == 1
+    assert payload["count"] == 3  # declared min
+    assert payload["channel"] == "email"  # allowed_values[0]
+    assert payload["contact_email"] == "guest@example.com"  # format email
+    assert payload["status"] == "draft"  # allowed_values[0]
     # An undeclared field gets its type's neutral value, whatever it is called.
-    assert writer_payload["name"] == "sample"
+    assert payload["name"] == "sample"
 
 
 def test_a_returned_record_counts_only_when_it_carries_a_supplied_value():

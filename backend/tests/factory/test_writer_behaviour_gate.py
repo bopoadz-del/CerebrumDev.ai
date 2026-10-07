@@ -925,7 +925,7 @@ def test_probe_value_samples_appointment_fields_not_the_word_sample(tmp_path):
     (base_samples -- the one builder over the product's declared models).
     The declared-field properties the probe's sampler used to pin hold on
     what it posts now."""
-    from app.factory.build.writer_behaviour import base_samples
+    from app.factory.build.payload_helpers import base_samples
 
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "models.py").write_text(_SAMPLED_MODELS, encoding="utf-8")

@@ -24,32 +24,43 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
+#: ``_declared_specs(MODELS)``: the spec per capability, read off the live
+#: models. Runs inside the PRODUCT -- in :data:`SPECS_DUMP` here, and rendered
+#: into every Factory probe (payload_helpers.render_probe_payload), so the
+#: probes and TESTER read the declared schema with the same code.
+SPECS_FROM_MODELS = """
+def _declared_specs(models):
+    import datetime as _dt, typing
+    kinds = {int: "int", float: "float", bool: "bool",
+             _dt.datetime: "datetime", _dt.date: "date", _dt.time: "time"}
+    def _kind(hint):
+        # Optional[X] declares X: the sample follows the declared type.
+        args = [a for a in (getattr(hint, "__args__", None) or ()) if a is not type(None)]
+        if getattr(hint, "__origin__", None) is typing.Union and len(args) == 1:
+            hint = args[0]
+        return kinds.get(hint, "str")
+    out = {}
+    for cap, cls in models.items():
+        try:
+            hints = typing.get_type_hints(cls)
+        except Exception:
+            hints = {}
+        c = dict(getattr(cls, "CONSTRAINTS", {}) or {})
+        out[cap] = {"entity": getattr(cls, "ENTITY", cap),
+                    "fields": [{"name": n, "type": _kind(hints.get(n, str)), **c.get(n, {})}
+                               for n in getattr(cls, "FIELDS", [])]}
+    return out
+"""
+
 #: Run inside the PRODUCT (its package is also called ``app``), so in a
 #: subprocess with cwd at the product root.
-SPECS_DUMP = """
-import datetime as _dt, json, sys, typing
-sys.path.insert(0, ".")
-from app.models import MODELS
-kinds = {int: "int", float: "float", bool: "bool",
-         _dt.datetime: "datetime", _dt.date: "date", _dt.time: "time"}
-def _kind(hint):
-    # Optional[X] declares X: the sample follows the declared type.
-    args = [a for a in (getattr(hint, "__args__", None) or ()) if a is not type(None)]
-    if getattr(hint, "__origin__", None) is typing.Union and len(args) == 1:
-        hint = args[0]
-    return kinds.get(hint, "str")
-out = {}
-for cap, cls in MODELS.items():
-    try:
-        hints = typing.get_type_hints(cls)
-    except Exception:
-        hints = {}
-    c = dict(getattr(cls, "CONSTRAINTS", {}) or {})
-    out[cap] = {"entity": getattr(cls, "ENTITY", cap),
-                "fields": [{"name": n, "type": _kind(hints.get(n, str)), **c.get(n, {})}
-                           for n in getattr(cls, "FIELDS", [])]}
-print(json.dumps(out))
-"""
+SPECS_DUMP = (
+    "import json, sys\n"
+    'sys.path.insert(0, ".")\n'
+    "from app.models import MODELS\n"
+    + SPECS_FROM_MODELS
+    + "print(json.dumps(_declared_specs(MODELS)))\n"
+)
 
 
 def specs_from_product_models(workspace: Path) -> Dict[str, Any]:
