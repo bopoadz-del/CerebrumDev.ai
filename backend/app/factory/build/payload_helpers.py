@@ -201,3 +201,164 @@ def render_payload_helpers() -> List[str]:
         "",
         *render_capability_recorder(),
     ]
+
+
+# -- the payload every Factory PROBE posts -----------------------------------
+#
+# The WRITER gate's behaviour probe and the PRODUCT round-trip probe used to
+# carry a sampler each (``_ann``/``_value``/``_payload``), and TESTER a third
+# (roles_handlers._sample_payload) -- three verdicts on "a payload built from
+# its own schema" (live 9de69276: the writer gate stopped on "no capability
+# accepted its own schema" while TESTER's payloads were accepted). Every probe
+# now renders this ONE slot: TESTER's own sampler, rendered from its source,
+# over the declared specs read off the live models (declared_specs) -- then
+# completed and corrected by the builder above.
+#
+# The base is computed when the probe RUNS, never baked when it is stamped:
+# a stamped self-check is Factory-owned and its bytes must not depend on the
+# product's models (they do not exist when WRITER starts, and a refresh would
+# otherwise report every product as running a stale Factory file).
+
+#: The line a probe carries where its payload source is rendered in.
+PROBE_PAYLOAD_SLOT = "# __PROBE_PAYLOAD__ (rendered in by payload_helpers.render_probe_payload)"
+
+
+def _tester_sampler_parts():
+    """TESTER's sampler: its functions (call order) and the tables they read."""
+    from app.factory.build import block_inputs, roles_handlers
+
+    functions = (
+        block_inputs.sample_channel_value,
+        roles_handlers._resolve_known_field_type,
+        roles_handlers._normalize_field_type,
+        roles_handlers._looks_like_email_field,
+        roles_handlers._temporal_sample,
+        roles_handlers._sample_value,
+        roles_handlers._sample_payload,
+    )
+    tables = {
+        "STORE_NOTIFICATION_CHANNELS": block_inputs.STORE_NOTIFICATION_CHANNELS,
+        "_DOMAIN_CHANNEL_SAMPLE": block_inputs._DOMAIN_CHANNEL_SAMPLE,
+        "_TYPE_ALIASES": roles_handlers._TYPE_ALIASES,
+        "_TEMPORAL_SAMPLES": roles_handlers._TEMPORAL_SAMPLES,
+        "_SAMPLE_VALUES": roles_handlers._SAMPLE_VALUES,
+    }
+    return functions, tables
+
+
+def render_tester_sampler() -> List[str]:
+    """TESTER's ``_sample_payload`` and what it calls, rendered from their
+    own source (annotations dropped: the product needs no typing names).
+    Not a copy that can drift -- the Factory's functions, as they are."""
+    import ast
+    import inspect
+    import textwrap
+
+    class _Unannotate(ast.NodeTransformer):
+        def visit_FunctionDef(self, node):
+            self.generic_visit(node)
+            node.returns = None
+            args = node.args
+            for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg):
+                if arg is not None:
+                    arg.annotation = None
+            return node
+
+        def visit_AnnAssign(self, node):
+            if node.value is None:
+                return None
+            return ast.copy_location(ast.Assign(targets=[node.target], value=node.value), node)
+
+    functions, tables = _tester_sampler_parts()
+    lines = [f"{name} = {value!r}" for name, value in tables.items()]
+    for fn in functions:
+        tree = _Unannotate().visit(ast.parse(textwrap.dedent(inspect.getsource(fn))))
+        lines += ["", "", ast.unparse(ast.fix_missing_locations(tree))]
+    return lines
+
+
+def base_samples(workspace) -> dict:
+    """The spec sample per capability -- exactly the base TESTER posts:
+    ``roles_handlers._sample_payload`` over the product's live declared
+    models (declared_specs). Empty when nothing is declared."""
+    from pathlib import Path
+
+    from app.factory.build.declared_specs import specs_from_product_models
+    from app.factory.build.roles_handlers import _sample_payload
+
+    root = Path(getattr(workspace, "workspace", workspace))
+    try:
+        specs = specs_from_product_models(root)
+    except Exception:  # noqa: BLE001 -- no readable models: the builder completes from MODELS
+        return {}
+    return {
+        str(cap): _sample_payload(spec)
+        for cap, spec in (specs or {}).items()
+        if isinstance(spec, dict)
+    }
+
+
+def render_probe_payload(source: str) -> str:
+    """``source`` with :data:`PROBE_PAYLOAD_SLOT` replaced by the one payload
+    source: the declared-spec reader, TESTER's sampler, the builder, and
+    ``_payload_for(cap_id)``."""
+    from app.factory.build.declared_specs import SPECS_FROM_MODELS
+
+    lines = [
+        *SPECS_FROM_MODELS.strip("\n").splitlines(),
+        "",
+        "",
+        *render_tester_sampler(),
+        "",
+        "",
+        *render_payload_helpers(),
+        "",
+        "",
+        "_DECLARED_SPECS = None",
+        "",
+        "",
+        "def _payload_for(cap_id):",
+        '    """TESTER\'s base sample over the live declared models, completed',
+        "    with what the product's own model requires (payload_helpers -- one",
+        '    builder for every probe)."""',
+        "    global _DECLARED_SPECS",
+        "    if _DECLARED_SPECS is None:",
+        "        try:",
+        "            from app.models import MODELS as _LIVE_MODELS",
+        "            _DECLARED_SPECS = _declared_specs(_LIVE_MODELS)",
+        "        except Exception:",
+        "            _DECLARED_SPECS = {}",
+        "    spec = _DECLARED_SPECS.get(cap_id)",
+        "    base = _sample_payload(spec) if isinstance(spec, dict) else {}",
+        "    return _sample_payload_for(cap_id, base)",
+        "",
+    ]
+    return source.replace(PROBE_PAYLOAD_SLOT, "\n".join(lines), 1)
+
+
+def run_probe_source(ctx, source: str):
+    """Run a rendered probe from a temp file OUTSIDE the workspace.
+
+    ``python -c <probe>`` put the whole source on the command line; with the
+    builder rendered in it outgrew the Windows argv limit (WinError 206). The
+    loader keeps ``''`` (the workspace, the run's cwd) on sys.path exactly as
+    ``-c`` did, so ``import app`` resolves the same way.
+    """
+    import os
+    import sys
+    import tempfile
+
+    fd, path = tempfile.mkstemp(prefix="factory-probe-", suffix=".py")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(source)
+        loader = (
+            "import runpy, sys; sys.path.insert(0, ''); "
+            f"runpy.run_path({path!r}, run_name='__main__')"
+        )
+        return ctx.run([sys.executable, "-c", loader])
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass

@@ -31,6 +31,12 @@ from app.factory.build.workspace import write_workspace_text
 FASTAPI_SYNC_THREADPOOL = 40
 SQLITE_BUSY_TIMEOUT_MS = 30_000
 SQLITE_CONNECT_TIMEOUT_S = 30.0
+#: The DECLARED persistence contract (owner, 2026-10-07): SQLite runs in this
+#: journal mode, switched ONCE by the boot path (app.migrations.upgrade_head),
+#: never per connection. The boot path, the store's enable_wal(), the
+#: lifecycle doc and the emitted suite all render from this one constant --
+#: the suite asserts the declaration, never a literal of its own.
+SQLITE_JOURNAL_MODE = "WAL"
 BACKUP_KEEP = 14
 DISK_SIZE_GB = 1
 REVISION_0001 = "0001_baseline"
@@ -225,7 +231,7 @@ def render_store(specs: Dict[str, Dict[str, Any]]) -> str:
         "        return\n"
         "    conn = connect()\n"
         "    try:\n"
-        "        conn.execute(\"PRAGMA journal_mode=WAL\")\n"
+        f"        conn.execute(\"PRAGMA journal_mode={SQLITE_JOURNAL_MODE}\")\n"
         "    finally:\n"
         "        conn.close()\n"
         "\n"
@@ -419,7 +425,7 @@ def render_migrations() -> str:
         "        import sqlite3\n"
         "        _c = sqlite3.connect(str(sqlite_path()))\n"
         "        try:\n"
-        '            _c.execute("PRAGMA journal_mode=WAL")\n'
+        f'            _c.execute("PRAGMA journal_mode={SQLITE_JOURNAL_MODE}")\n'
         "        finally:\n"
         "            _c.close()\n"
         "    return current_revision()\n"
@@ -832,7 +838,7 @@ def lifecycle_declaration() -> Dict[str, Any]:
             "database": "platform.db",
         },
         "durability": {
-            "journal_mode": "WAL",
+            "journal_mode": SQLITE_JOURNAL_MODE,
             "synchronous": "NORMAL",
             "busy_timeout_ms": SQLITE_BUSY_TIMEOUT_MS,
             "connect_timeout_s": SQLITE_CONNECT_TIMEOUT_S,
@@ -916,6 +922,9 @@ ENTITIES = {entities!r}
 REV_V1 = {REVISION_0001!r}
 REV_V2 = {REVISION_0002!r}
 AUDIT = {AUDIT_TABLE!r}
+#: The declared persistence contract (data_lifecycle.SQLITE_JOURNAL_MODE):
+#: the journal mode the Factory's boot path sets. Asserted, never invented.
+DECLARED_JOURNAL_MODE = {SQLITE_JOURNAL_MODE.lower()!r}
 
 
 @pytest.fixture
@@ -938,8 +947,11 @@ def _tables() -> set[str]:
 
 def test_connect_is_wal_with_a_busy_timeout_and_creates_nothing(isolated_db):
     """Observed on the connection and the module's syntax tree, not searched
-    for in store.py's text. WAL is either set by connect() or a property of
-    the file switched once at boot by a declared enable_wal()."""
+    for in store.py's text. WAL is a property of the file: set by connect(),
+    by a declared enable_wal(), or -- the Factory's own design -- once at
+    boot by app.migrations.upgrade_head(), which says store.py (writer-
+    authored) need not expose a WAL helper. All three are accepted; none
+    may be missing. A connection by itself must never create a table."""
     import ast
     import inspect
 
@@ -952,14 +964,26 @@ def test_connect_is_wal_with_a_busy_timeout_and_creates_nothing(isolated_db):
         ).fetchone()[0]
     finally:
         conn.close()
+    assert int(timeout) > 0
+    assert made == 0
     src = Path(inspect.getsourcefile(store)).read_text(encoding="utf-8")
     defs = {{
         n.name for n in ast.walk(ast.parse(src))
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
     }}
-    assert str(mode).lower() == "wal" or "enable_wal" in defs
-    assert int(timeout) > 0
-    assert made == 0
+    if str(mode).lower() == DECLARED_JOURNAL_MODE or "enable_wal" in defs:
+        return
+    # The boot path owns WAL: after it runs, a fresh connection is WAL.
+    upgrade_head()
+    conn = store.connect()
+    try:
+        booted = conn.execute("PRAGMA journal_mode").fetchone()[0]
+    finally:
+        conn.close()
+    assert str(booted).lower() == DECLARED_JOURNAL_MODE, (
+        "WAL is set by none of connect(), app.store.enable_wal() or the "
+        "boot path app.migrations.upgrade_head()"
+    )
 
 
 def test_connect_does_not_create_domain_tables(isolated_db):
@@ -1058,7 +1082,7 @@ def test_wal_and_busy_timeout_after_migrate(isolated_db):
         timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
     finally:
         conn.close()
-    assert str(mode).lower() == "wal"
+    assert str(mode).lower() == DECLARED_JOURNAL_MODE
     assert int(timeout) >= store.SQLITE_BUSY_TIMEOUT_MS
 
 

@@ -35,7 +35,6 @@ whether the answers are correct -- only that the product is a product.
 
 from __future__ import annotations
 
-import sys
 from typing import TYPE_CHECKING, List
 
 from app.factory.build.entity_contract import ENTITY_RESOLVER_SLOT, ENTITY_RESOLVER_SRC
@@ -68,7 +67,7 @@ from app.factory.build.rejection_contract import contract_source  # noqa: E402
 #: Runs inside the GENERATED workspace, which carries no factory code, so it
 #: is a source string rather than an import. Findings are marked so the
 #: gate never mistakes alembic's or uvicorn's stderr for its own reason.
-ROUND_TRIP_PROBE = r'''
+_ROUND_TRIP_SOURCE = r'''
 import os, sys, tempfile
 
 # Isolate STORAGE_PATH the same way writer_behaviour does. A leftover
@@ -99,43 +98,9 @@ if not MODELS:
     raise SystemExit(1)
 
 
-def _ann(cls, name):
-    raw = getattr(cls, "__annotations__", {}).get(name, "str")
-    return str(raw).replace("Optional[", "").replace("]", "").strip()
-
-
-def _value(cls, name):
-    con = getattr(cls, "CONSTRAINTS", {}).get(name, {})
-    allowed = con.get("allowed_values")
-    if allowed:
-        return allowed[0]
-    kind = _ann(cls, name)
-    kind_l = kind.lower().replace("datetime.", "").replace(" ", "")
-    if kind in ("int", "float") or kind_l in ("int", "float"):
-        low, high = con.get("min"), con.get("max")
-        if low is not None:
-            return low
-        if high is not None:
-            return high if high < 1 else 1
-        return 1
-    if kind == "bool" or kind_l == "bool":
-        return False
-    # Declared type / format only -- never a meaning read from the field name.
-    # A vocabulary (status, channel, ...) arrives as allowed_values above.
-    fmt = str(con.get("format") or "").lower().replace("-", "")
-    if fmt == "email":
-        return "sample@example.com"
-    if kind_l in ("datetime", "timestamp") or fmt in ("datetime", "timestamp", "iso8601"):
-        return "2026-09-03T10:00:00"
-    if kind_l == "date" or fmt == "date":
-        return "2026-09-03"
-    if kind_l == "time" or fmt == "time":
-        return "10:00:00"
-    return "sample"
-
-
-def _payload(cls):
-    return {n: _value(cls, n) for n in getattr(cls, "FIELDS", [])}
+# The payload every Factory probe posts: TESTER's base sample through the one
+# builder (payload_helpers.render_probe_payload defines _payload_for here).
+# __PROBE_PAYLOAD__ (rendered in by payload_helpers.render_probe_payload)
 
 
 AUTH = {"Authorization": "Bearer " + os.environ.get("PLATFORM_TOKEN", "dev-local-token")}
@@ -185,9 +150,9 @@ passed = []
 unjudged = []
 
 for cap_id, cls in MODELS.items():
-    body = _payload(cls)
+    body = _payload_for(cap_id)
     try:
-        resp = client.post("/v1/" + cap_id, json=body, headers=AUTH)
+        resp, _corrected = _post_accepting("/v1/" + cap_id, body, AUTH, cap_id)
     except Exception as exc:
         misses.append("%s: POST raised %s: %s" % (cap_id, type(exc).__name__, exc))
         continue
@@ -295,12 +260,33 @@ sys.stdout.write(
 )
 raise SystemExit(1 if misses else 0)
 '''
-ROUND_TRIP_PROBE = ROUND_TRIP_PROBE.replace(ENTITY_RESOLVER_SLOT, ENTITY_RESOLVER_SRC, 1)
-# The declared status/key contract and the shape-based list reader, from the
-# one module every Factory check reads (rejection_contract).
-ROUND_TRIP_PROBE = ROUND_TRIP_PROBE.replace(
+#: The probe source before its payload is rendered in (render_round_trip_probe).
+ROUND_TRIP_PROBE_TEMPLATE = _ROUND_TRIP_SOURCE.replace(
+    ENTITY_RESOLVER_SLOT, ENTITY_RESOLVER_SRC, 1
+).replace(
+    # The declared status/key contract and the shape-based list reader, from
+    # the one module every Factory check reads (rejection_contract).
     "# __CREATE_CONTRACT__\n", contract_source() + "\n", 1
 )
+
+
+def render_round_trip_probe() -> str:
+    """The round-trip probe with the ONE payload source every Factory probe
+    posts (payload_helpers): TESTER's sampler over the live models, through
+    the builder."""
+    from app.factory.build.payload_helpers import render_probe_payload
+
+    return render_probe_payload(ROUND_TRIP_PROBE_TEMPLATE)
+
+
+def __getattr__(name: str):
+    # ROUND_TRIP_PROBE renders TESTER's sampler from roles_handlers, which
+    # imports this module: render on first use, not at import.
+    if name == "ROUND_TRIP_PROBE":
+        probe = render_round_trip_probe()
+        globals()["ROUND_TRIP_PROBE"] = probe
+        return probe
+    raise AttributeError(name)
 
 
 def _marked(lines: List[str], prefix: str) -> List[str]:
@@ -325,7 +311,9 @@ def gate_round_trip(ctx: "GateContext") -> "GateResult":
             findings=["no models to round-trip"],
         )
 
-    proc = ctx.run([sys.executable, "-c", ROUND_TRIP_PROBE])
+    from app.factory.build.payload_helpers import run_probe_source
+
+    proc = run_probe_source(ctx, render_round_trip_probe())
     out = ((proc.stdout or "") + "\n" + (proc.stderr or "")).splitlines()
     findings = _marked(out, "GATE-FINDING: ")
     misses = _marked(out, "GATE-MISS: ")

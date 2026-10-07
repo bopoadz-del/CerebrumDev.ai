@@ -46,8 +46,7 @@ from app.factory.build.brief_gates import WRITER_BEHAVIOUR_CHECK
 
 import json
 import re
-import sys
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from app.factory.build.entity_contract import ENTITY_RESOLVER_SLOT, ENTITY_RESOLVER_SRC
 
@@ -191,52 +190,9 @@ except Exception:
 placeholder_unjudged = []
 
 
-def _ann(cls, name):
-    """Declared type for a field. PEP 563 makes annotations strings."""
-    raw = getattr(cls, "__annotations__", {}).get(name, "str")
-    return str(raw).replace("Optional[", "").replace("]", "").strip()
-
-
-def _value(cls, name):
-    """A value satisfying every constraint the field itself declares.
-
-    Mirrors the emitter's _sample_value: a type-valid but domain-invalid
-    value would be rejected by the route's own guard, and the forced-failure
-    phase would then pass without a block ever being called.
-    Appointment-shaped fields (scheduled_time, *_date, datetime annotations)
-    must not emit the word "sample" — routes and sqlite reject it.
-    """
-    con = getattr(cls, "CONSTRAINTS", {}).get(name, {})
-    allowed = con.get("allowed_values")
-    if allowed:
-        return allowed[0]
-    kind = _ann(cls, name)
-    kind_l = kind.lower().replace("datetime.", "").replace(" ", "")
-    if kind in ("int", "float") or kind_l in ("int", "float"):
-        low, high = con.get("min"), con.get("max")
-        if low is not None:
-            return low
-        if high is not None:
-            return high if high < 1 else 1
-        return 1
-    if kind == "bool" or kind_l == "bool":
-        return False
-    # Declared type / format only -- never a meaning read from the field name.
-    # A vocabulary (status, channel, ...) arrives as allowed_values above.
-    fmt = str(con.get("format") or "").lower().replace("-", "")
-    if fmt == "email":
-        return "sample@example.com"
-    if kind_l in ("datetime", "timestamp") or fmt in ("datetime", "timestamp", "iso8601"):
-        return "2026-09-03T10:00:00"
-    if kind_l == "date" or fmt == "date":
-        return "2026-09-03"
-    if kind_l == "time" or fmt == "time":
-        return "10:00:00"
-    return "sample"
-
-
-def _payload(cls):
-    return {n: _value(cls, n) for n in getattr(cls, "FIELDS", [])}
+# The payload every Factory probe posts: TESTER's base sample through the one
+# builder (payload_helpers.render_probe_payload defines _payload_for here).
+# __PROBE_PAYLOAD__ (rendered in by payload_helpers.render_probe_payload)
 
 
 ENTITY_RESOLVER = None  # rendered in by _render_probe (entity_contract)
@@ -545,10 +501,10 @@ def _check_round_trip(cap_id, cls, body):
 
 # -- phase 1: baseline -----------------------------------------------------
 for cap_id, cls in MODELS.items():
-    body = _payload(cls)
+    body = _payload_for(cap_id)
     _seen["cap"] = cap_id
     try:
-        resp = client.post("/v1/" + cap_id, json=body, headers=AUTH)
+        resp, _corrected = _post_accepting("/v1/" + cap_id, body, AUTH, cap_id)
     except Exception as exc:
         target = persist_misses if isinstance(exc, _db_error_types()) else schema_misses
         target.append(
@@ -572,7 +528,13 @@ for cap_id, cls in MODELS.items():
         continue
     if resp.status_code != 200:
         schema_misses.append(
-            _miss(cap_id, "%s: baseline POST returned HTTP %s" % (cap_id, resp.status_code))
+            # The product's own refusal travels with the miss: a bare status
+            # left the writer nothing to converge on (live 9de69276).
+            _miss(cap_id, "%s: baseline POST returned HTTP %s: %s%s" % (
+                cap_id, resp.status_code, (resp.text or "")[:300],
+                (" [the probe already tried the values the route named: "
+                 + "; ".join(_corrected) + "]") if _corrected else "",
+            ))
         )
         continue
     data = data if isinstance(data, dict) else {}
@@ -660,7 +622,7 @@ honest = 0
 for cap_id, cls in targets:
     entity = _entity_of(cap_id, cls)
     before = _rows(entity)
-    body = _payload(cls)
+    body = _payload_for(cap_id)
     _calls["n"] = 0
     try:
         resp = client.post("/v1/" + cap_id, json=body, headers=AUTH)
@@ -907,12 +869,22 @@ def _pass_detail(
     return "every capability fails closed when its blocks fail"
 
 
-def _render_probe() -> str:
-    """The probe with this factory's resource obligations and halt sentences
-    baked in."""
-    from app.factory.build.block_obligations import resource_obligations
+def _run_probe_source(ctx: Any, source: str) -> Any:
+    """Run a rendered probe from a temp file (payload_helpers.run_probe_source)."""
+    from app.factory.build.payload_helpers import run_probe_source
 
-    return (
+    return run_probe_source(ctx, source)
+
+
+def _render_probe() -> str:
+    """The probe with this factory's resource obligations, halt sentences,
+    entity resolver and ONE payload source (payload_helpers) baked in. The
+    payload base is TESTER's sampler over the live models, computed when the
+    probe runs -- so the rendered bytes depend on the Factory alone."""
+    from app.factory.build.block_obligations import resource_obligations
+    from app.factory.build.payload_helpers import render_probe_payload
+
+    return render_probe_payload(
         BEHAVIOUR_PROBE.replace(
             "RESOURCE_OBLIGATIONS = {}",
             "RESOURCE_OBLIGATIONS = " + repr(dict(resource_obligations())),
@@ -987,14 +959,28 @@ def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
     env.pop("DATABASE_URL", None)
-    proc = subprocess.run(
-        [sys.executable, "-c", PROBE],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=TIMEOUT_S,
-    )
+    # The probe runs from a temp file, as the gate runs it: on the command
+    # line it outgrows the Windows argv limit (WinError 206).
+    import tempfile
+    fd, probe_path = tempfile.mkstemp(prefix="factory-check-probe-", suffix=".py")
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(PROBE)
+    loader = ("import runpy, sys; sys.path.insert(0, ''); "
+              "runpy.run_path(" + repr(probe_path) + ", run_name='__main__')")
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", loader],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=TIMEOUT_S,
+        )
+    finally:
+        try:
+            os.unlink(probe_path)
+        except OSError:
+            pass
     records = []
     for line in ((proc.stdout or "") + "\\n" + (proc.stderr or "")).splitlines():
         try:
@@ -1027,8 +1013,9 @@ if __name__ == "__main__":
 
 
 def render_self_check() -> str:
-    """The stamped self-check: the SAME rendered probe the gate runs, then
-    the product-gate suites TESTER stamped (product_suites)."""
+    """The stamped self-check: the SAME rendered probe the gate runs (its
+    payload base read off the live models when it runs), then the
+    product-gate suites TESTER stamped (product_suites)."""
     from app.factory.build.product_suites import PRODUCT_SUITES
 
     return _SELF_CHECK_TEMPLATE.format(
@@ -1040,7 +1027,8 @@ def render_self_check() -> str:
 
 
 def emit_self_check(workspace: object) -> None:
-    """Stamp the self-check (Factory-owned) before any writer path runs."""
+    """Stamp the self-check (Factory-owned) before any writer path runs;
+    re-stamped by factory_refresh before every TESTER."""
     from app.factory.build.workspace import write_workspace_text
 
     write_workspace_text(workspace, SELF_CHECK_REL, render_self_check())
@@ -1067,7 +1055,7 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
             findings=["writer produced no models"],
         )
 
-    proc = ctx.run([sys.executable, "-c", _render_probe()])
+    proc = _run_probe_source(ctx, _render_probe())
     if proc.returncode != 0:
         records = probe_records(proc.stderr or "")
         return GateResult(

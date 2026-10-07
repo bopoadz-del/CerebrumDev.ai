@@ -149,16 +149,72 @@ def render_roster(state: Mapping[str, Any], plan: Any, capabilities: List[Mappin
     )
 
 
-def stamp_roster(ctx: Any) -> bool:
-    """Stamp ``app/jobs.py`` on the CodeWhale path; True when it changed.
+def _defined_names(node: ast.stmt) -> List[str]:
+    """The top-level names one statement binds."""
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return [node.name]
+    if isinstance(node, ast.Assign):
+        return [t.id for t in node.targets if isinstance(t, ast.Name)]
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        return [node.target.id]
+    return []
 
-    The roster (JOBS/CATALOG/GATES) is rendered from the role contracts; the
-    capability manifest the product already declares is kept as declared.
+
+def _product_declares_capabilities(product_text: str) -> bool:
+    """True when the product's own bytes (outside the Factory block) bind
+    ``CAPABILITIES`` -- a literal or a roster computed from its models."""
+    try:
+        tree = ast.parse(product_text)
+    except SyntaxError:
+        return False
+    return any("CAPABILITIES" in _defined_names(n) for n in tree.body)
+
+
+def roster_block(rendered: str, *, include_capabilities: bool) -> str:
+    """The Factory's roster as a block body: every top-level statement of the
+    rendered roster except the docstring and ``from __future__`` (which only
+    a file's head may carry), and ``CAPABILITIES`` only when the product
+    declares none of its own."""
+    tree = ast.parse(rendered)
+    lines = rendered.splitlines()
+    parts: List[str] = []
+    for node in tree.body:
+        if isinstance(node, ast.Expr) and isinstance(getattr(node, "value", None), ast.Constant):
+            continue
+        if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+            continue
+        if not include_capabilities and "CAPABILITIES" in _defined_names(node):
+            continue
+        parts.append("\n".join(lines[node.lineno - 1:node.end_lineno]))
+    return "\n\n\n".join(parts) + "\n"
+
+
+def stamp_roster(ctx: Any) -> bool:
+    """Stamp the kernel roster into ``app/jobs.py``; True when it changed.
+
+    ``app/jobs.py`` is SHARED: the product owns its capability manifest
+    (``CAPABILITIES``, which its routes may be built from, in any form), the
+    Factory owns the roster (JOBS/CATALOG/GATES and their readers). So the
+    stamp edits ONLY its marked block (factory_block) -- appended last, so
+    its names are the ones the module ends up binding -- and every byte
+    outside it stays exactly as the product wrote it. Re-rendering the whole
+    file wrote ``CAPABILITIES = []`` over a computed manifest and every
+    capability route vanished (live 9de69276 vineyard repro, 8 POSTs 404).
     """
+    from app.factory.build.factory_block import apply_block, outside, split_block
+
     root = Path(getattr(ctx.workspace, "workspace", ctx.workspace))
     path = root / JOBS_REL
-    existing = path.read_text(encoding="utf-8") if path.is_file() else None
-    text = render_roster(ctx.state, ctx.plan, declared_capabilities(existing))
+    existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+    product = outside(existing)
+    product_declares = _product_declares_capabilities(product)
+    # Keep a manifest the Factory itself carried in its block (template path).
+    _b, block_now, _a = split_block(existing)
+    carried = declared_capabilities(block_now) if block_now else declared_capabilities(product)
+    rendered = render_roster(ctx.state, ctx.plan, [] if product_declares else carried)
+    text = apply_block(
+        existing, roster_block(rendered, include_capabilities=not product_declares)
+    )
     if existing == text:
         return False
     ctx.workspace.write_text(JOBS_REL, text)

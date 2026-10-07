@@ -71,10 +71,27 @@ def test_probe_sample_rules_match_writer_behaviour_literals():
     """
     from app.factory.build.block_obligations import ENVELOPE_STATUS_VALUES
 
+    import ast
+
+    from app.factory.build.payload_helpers import PROBE_PAYLOAD_SLOT
+    from app.factory.build.roles_handlers import _sample_value
+
     assert SCHEMA_ACCEPT_HALT == SCHEMA_HALT
+    # ONE source: the probe carries no sample rules of its own -- only the
+    # slot the shared builder renders into -- and every contract literal IS
+    # what that builder (TESTER's sampler) returns for the declaration.
     probe = BEHAVIOUR_PROBE
-    for literal in (GENERIC_STR_SAMPLE, DATETIME_SAMPLE, DATE_SAMPLE, TIME_SAMPLE, EMAIL_SAMPLE):
-        assert f'return "{literal}"' in probe, literal
+    assert PROBE_PAYLOAD_SLOT in probe
+    own = {n.name for n in ast.parse(probe).body if isinstance(n, ast.FunctionDef)}
+    assert not {"_ann", "_value", "_payload"} & own, own
+    for literal, field in (
+        (GENERIC_STR_SAMPLE, {"name": "zorblat", "type": "str"}),
+        (DATETIME_SAMPLE, {"name": "zorblat", "type": "datetime"}),
+        (DATE_SAMPLE, {"name": "zorblat", "type": "date"}),
+        (TIME_SAMPLE, {"name": "zorblat", "type": "str", "format": "time"}),
+        (EMAIL_SAMPLE, {"name": "zorblat", "type": "str", "format": "email"}),
+    ):
+        assert _sample_value(field) == literal, (literal, field)
     # Declared vocabularies: the envelope status, a channel list, any enum.
     assert probe_sample_value(
         "status", constraints={"allowed_values": list(ENVELOPE_STATUS_VALUES)}
@@ -90,7 +107,11 @@ def test_probe_sample_rules_match_writer_behaviour_literals():
     assert probe_sample_value("appointment_date", constraints={"format": "date"}) == DATE_SAMPLE
     assert probe_sample_value("created_at", annotation="datetime") == DATETIME_SAMPLE
     assert probe_sample_value("owner_email", constraints={"format": "email"}) == EMAIL_SAMPLE
-    assert probe_sample_value("quantity", annotation="int", constraints={"min": 0}) == 0
+    # A declared bound is honoured (the builder's value, inside the bound).
+    for con in ({"min": 0}, {"min": 3}, {"max": 0}, {"min": -5, "max": -2}):
+        got = probe_sample_value("quantity", annotation="int", constraints=con)
+        assert got == _sample_value({"name": "quantity", "type": "int", **con}), con
+        assert con.get("min", got) <= got <= con.get("max", got), (con, got)
     # Undeclared: the type's neutral value, whatever the field is called.
     for name in ("status", "channel", "created_at", "owner_email", "scheduled_time", "zorblat_date"):
         assert probe_sample_value(name) == GENERIC_STR_SAMPLE, name
