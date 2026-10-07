@@ -15,6 +15,15 @@ dispatch) are never touched.
 requirements.txt is MERGED, never replaced: every line the build declares
 (a Postgres driver, say) stays, and only the vendored blocks' missing
 obligations are added.
+
+Before #683 the Factory appended its lines UNMARKED, under
+``LEGACY_BLOCK_HEADER``, once per refresh. Those lines are the Factory's, not
+the product's, but the marker reader cannot tell -- so a branch of record kept
+every package an older Factory ever stamped, for blocks it no longer vendors
+(live 2026-10-07: ``marker-pdf`` pinned ``pillow<11`` into a vineyard image
+that imports neither, and 33 pillow advisories were billed to the writer).
+The merge removes those legacy blocks and re-derives the Factory's lines into
+its marked block, so a stale Factory line goes with the stamp that owns it.
 """
 
 from __future__ import annotations
@@ -52,6 +61,41 @@ def _write_if_changed(
     changed.append(rel)
 
 
+#: The header the pre-#683 merge emitted above each unmarked block of
+#: Factory lines (git show 588ab537^:backend/app/factory/build/factory_refresh.py).
+#: The Factory's own former output, read only to remove it.
+LEGACY_BLOCK_HEADER = (
+    "# Packages this tree needs and did not declare: vendored block\n"
+    "# imports, and framework features FastAPI does not declare\n"
+    "# (refreshed by the factory)."
+)
+
+
+def strip_legacy_blocks(text: str) -> str:
+    """``text`` without the unmarked blocks the pre-#683 Factory appended.
+
+    That emitter wrote a blank line, ``LEGACY_BLOCK_HEADER``, then one
+    requirement line per package -- and nothing else -- so a block ends at the
+    first blank or comment line. Every other byte is returned as it was.
+    """
+    header = LEGACY_BLOCK_HEADER.split(_LF)
+    lines = text.splitlines(keepends=True)
+    out: List[str] = []
+    i = 0
+    while i < len(lines):
+        window = [line.rstrip("\r\n") for line in lines[i:i + len(header)]]
+        if window != header:
+            out.append(lines[i])
+            i += 1
+            continue
+        if out and not out[-1].strip():
+            out.pop()  # the blank line the emitter put before its header
+        i += len(header)
+        while i < len(lines) and lines[i].strip() and not lines[i].lstrip().startswith("#"):
+            i += 1
+    return "".join(out)
+
+
 def merged_requirements(root: Path) -> str:
     """The build's requirements.txt plus every package the tree needs and lacks.
 
@@ -69,7 +113,7 @@ def merged_requirements(root: Path) -> str:
     # (factory_block); the Factory's additions live only in its marked block,
     # recomputed from scratch each pass so the edit is idempotent.
     path = root / "requirements.txt"
-    existing = path.read_bytes().decode("utf-8") if path.is_file() else ""
+    existing = strip_legacy_blocks(path.read_bytes().decode("utf-8") if path.is_file() else "")
     product = outside(existing).replace("\r\n", _LF)
     have = {d for d in (_dist(line) for line in product.split(_LF)) if d}
     extra = []
