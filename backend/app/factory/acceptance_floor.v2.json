@@ -50,8 +50,8 @@
     },
     {
       "id": "single_persistence_root",
-      "requirement_text": "One storage root, read from STORAGE_PATH. No second database, no stray sqlite file beside it. The persistence root is writable by the user the service runs as: the image creates STORAGE_PATH owned by that user before it switches to it, so a fresh volume mounted there starts with that ownership; the service never needs root to write its own data.",
-      "brief_render": "- single_persistence_root: One storage root, read from STORAGE_PATH. No second database, no stray sqlite file beside it. The persistence root is writable by the user the service runs as: the image creates STORAGE_PATH owned by that user before it switches to it, so a fresh volume mounted there starts with that ownership; the service never needs root to write its own data.",
+      "requirement_text": "One storage root, read from STORAGE_PATH. No second database, no stray sqlite file beside it. The persistence root is writable by the user the service runs as: the image creates STORAGE_PATH owned by that user before it switches to it, so a fresh volume mounted there starts with that ownership; the service never needs root to write its own data. The Dockerfile declares STORAGE_PATH as an ENV: the Store gate mounts its volume at exactly that declared path and never overrides it.",
+      "brief_render": "- single_persistence_root: One storage root, read from STORAGE_PATH. No second database, no stray sqlite file beside it. The persistence root is writable by the user the service runs as: the image creates STORAGE_PATH owned by that user before it switches to it, so a fresh volume mounted there starts with that ownership; the service never needs root to write its own data. The Dockerfile declares STORAGE_PATH as an ENV: the Store gate mounts its volume at exactly that declared path and never overrides it.",
       "gate_fn": "check_single_persistence_root",
       "check": "exactly one persistence root in the tree",
       "universal": true,
