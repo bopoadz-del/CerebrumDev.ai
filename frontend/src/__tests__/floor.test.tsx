@@ -1172,7 +1172,9 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
     releaseApprove?.()
     expect(await screen.findByText('coding agent')).toBeInTheDocument()
-    expect(screen.getByTestId('floor-coder-takeover')).toBeInTheDocument()
+    // The generation event re-renders the takeover panel; a synchronous query
+    // here raced that re-render (CI flake on #697). Await the same element.
+    expect(await screen.findByTestId('floor-coder-takeover')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: /Coding agent finished/ })).not.toBeInTheDocument()
   })
 
