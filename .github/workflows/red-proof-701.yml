@@ -1,0 +1,30 @@
+# PROOF ONLY (owner item 7a) -- lives on agent-h3/red-701-proof, never merged.
+# Runs the #701 ceiling-bump test at exactly this branch's commit (pre-#701
+# master 0e50fcc + the test file). pull_request CI tests the merge with
+# current master, which already carries #701, so it cannot show this red.
+name: red-proof-701
+on:
+  push:
+    branches: [agent-h3/red-701-proof]
+jobs:
+  pre-701:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      ENV: test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+      - name: "git sha under test (expect 0e50fcc parent)"
+        run: git log --oneline -2
+      - name: The #701 test on pre-#701 code (expected RED)
+        run: python -m pytest -rf tests/factory/test_ceiling_bump_sees_writer_progress.py
