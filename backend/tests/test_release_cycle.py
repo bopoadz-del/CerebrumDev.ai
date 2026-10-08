@@ -302,16 +302,23 @@ def test_a_prefix_of_the_live_sha_is_never_accepted_as_it(cycle):
 
 def test_the_briefs_come_from_the_config_file_not_the_code(cycle):
     config = cycle.load_config(CONFIG_PATH)
-    names = [r["name"] for r in config["repros"]]
+    names = [r["name"] for r in config["anchors"]]
     assert len(names) == len(set(names)) >= 1
     source = CYCLE_PATH.read_text(encoding="utf-8")
-    for repro in config["repros"]:
-        assert repro["brief"] not in source
+    for anchor in config["anchors"]:
+        assert anchor["brief"] not in source
 
 
 def test_a_config_entry_without_a_brief_is_refused(cycle, tmp_path):
     bad = tmp_path / "c.json"
-    bad.write_text(json.dumps({"repros": [{"name": "x"}]}), encoding="utf-8")
+    bad.write_text(
+        json.dumps({
+            "anchors": [{"name": "x"}],
+            "rotation": {"pool": "p.json"},
+            "user_build_slots": 2,
+        }),
+        encoding="utf-8",
+    )
     with pytest.raises(cycle.CycleError):
         cycle.load_config(bad)
 

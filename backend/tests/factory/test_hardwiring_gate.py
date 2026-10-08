@@ -32,6 +32,11 @@ def gate(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "BASELINE", tmp_path / "scripts" / "hardwiring_baseline.json")
     # The real set comes from the Store and every build; tests inject one.
     monkeypatch.setattr(mod, "load_known_literals", lambda: frozenset({"zorblat_intake", "quillon fleet"}))
+    # Likewise the release cycle's rotation pool: invented blueprint names.
+    monkeypatch.setattr(
+        mod, "load_pool_literals",
+        lambda: frozenset({"repro_zorblat_ledger", "zorblat ledger desk", "zorblat_payments"}),
+    )
     (tmp_path / "scripts").mkdir()
     (tmp_path / "pkg").mkdir()
     return mod
@@ -247,6 +252,72 @@ def test_the_default_gate_rejects_each_injection_then_is_green(gate, tmp_path, c
     assert "REJECTED" in err and form in err and "pkg/bad.py:" in err
     (tmp_path / "pkg" / "bad.py").unlink()
     assert gate.main(["--root", "pkg"]) == 0
+
+
+# --- blueprint_name: the release cycle's rotation pool -----------------------
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'def route(bp):\n    if bp.vertical == "zorblat_payments":\n        return 1\n    return 0\n',
+        'SPECIAL = {"repro_zorblat_ledger": 2}\n',
+        'TITLE = "Zorblat Ledger Desk"\n',
+    ],
+)
+def test_a_literal_naming_a_pool_blueprint_is_refused(gate, tmp_path, capsys, source):
+    """Owner, 2026-10-08: nothing in the Factory may branch on which rotation
+    blueprint is running; a fix that mentions one is rejected. The id, the
+    display name and the vertical each count, whatever their case."""
+    assert "blueprint_name" in gate.DEFAULT_FORMS
+    _write(tmp_path, "pkg/ok.py", "x = 1\n")
+    assert gate.main(["--root", "pkg"]) == 0
+    _write(tmp_path, "pkg/bad.py", source)
+    assert gate.main(["--root", "pkg"]) == 1
+    err = capsys.readouterr().err
+    assert "REJECTED" in err and "blueprint_name" in err and "pkg/bad.py:" in err
+
+
+def test_a_pool_blueprint_in_prose_is_not_a_literal(gate, tmp_path):
+    _write(
+        tmp_path,
+        "pkg/prose.py",
+        '"""Found by the repro_zorblat_ledger rotation build."""\n'
+        "# zorblat_payments exercised the money contract\n"
+        'MSG = "the repro_zorblat_ledger build failed its gate"\n',
+    )
+    assert gate.main(["--root", "pkg"]) == 0
+
+
+def test_the_forbidden_names_are_read_from_the_pool_files():
+    """Adding a blueprint to the pool extends the gate: every pool
+    blueprint's id, name and vertical is in the set, nothing else is listed."""
+    mod = _load()
+    pool_mod_spec = importlib.util.spec_from_file_location("repro_pool", mod.POOL_SCRIPT)
+    pool_mod = importlib.util.module_from_spec(pool_mod_spec)
+    pool_mod_spec.loader.exec_module(pool_mod)
+    pool = pool_mod.load_pool()
+    names = mod.load_pool_literals()
+    expected = {str(bp[f]).lower() for bp in pool for f in ("id", "name", "vertical")}
+    assert names == expected
+    assert len(pool) >= 8
+
+
+def test_an_unreadable_pool_fails_the_gate_closed(tmp_path, monkeypatch, capsys):
+    mod = _load()
+    monkeypatch.setattr(mod, "POOL_SCRIPT", tmp_path / "missing_repro_pool.py")
+    with pytest.raises(mod.NoReproPool):
+        mod.load_pool_literals()
+    monkeypatch.setattr(mod, "load_known_literals", lambda: frozenset())
+    monkeypatch.setattr(mod, "load_block_ids", lambda: frozenset({"some_block"}))
+    assert mod.main(["--root", "backend/app/main.py"]) == 1
+    assert "REJECTED" in capsys.readouterr().err
+
+
+def test_the_real_tree_names_no_pool_blueprint():
+    mod = _load()
+    found = mod.scan(mod.DEFAULT_ROOTS, ("blueprint_name",))
+    assert found == {}, found
 
 
 def test_the_committed_baseline_grandfathers_nothing():

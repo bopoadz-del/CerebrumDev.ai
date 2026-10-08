@@ -57,6 +57,13 @@ identifier in the path is a fixed point):
                 closed. A site that must treat a kind of block differently
                 reads what the block DECLARES (capability_class, reads/writes,
                 preconditions, factory_attach), never its id.
+  blueprint_name  a string literal EQUAL (case-insensitively) to a release-
+                cycle pool blueprint's id, name or vertical. The release bar
+                builds rotating blueprints from backend/tests/repro_pool; the
+                Factory must never branch on which one is running, and a fix
+                that mentions one is rejected. The set is read from the pool
+                files by scripts/repro_pool.py -- adding a blueprint extends
+                the gate -- and with no readable pool the gate fails closed.
 
 What this cannot see: a per-case branch keyed on a field NAME (``if name ==
 "status"``) or an answer table (``{"database": "query"}``) has no lexical
@@ -140,13 +147,43 @@ DEFAULT_FORMS = (
     "probe_id",
     "phrase_match",
     "block_name_dispatch",
+    "blueprint_name",
 )
 #: Forms decided by a loaded set rather than a pattern.
-DATA_FORMS = ("product_literal", "block_name_dispatch")
+DATA_FORMS = ("product_literal", "block_name_dispatch", "blueprint_name")
+#: The release cycle's rotation pool (scripts/repro_pool.py reads it).
+POOL_SCRIPT = ROOT / "scripts" / "repro_pool.py"
 
 
 class NoStoreRegistry(RuntimeError):
     """block_name_dispatch was asked for and no Store registry is reachable."""
+
+
+class NoReproPool(RuntimeError):
+    """blueprint_name was asked for and the rotation pool cannot be read."""
+
+
+def load_pool_literals() -> FrozenSet[str]:
+    """Every rotation-pool blueprint's id, name and vertical, lower-cased.
+
+    Read from the pool files, never listed here. An unreadable or empty pool
+    is a failure, never an empty set: a gate that loads nothing passes
+    everything.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("repro_pool", POOL_SCRIPT)
+    if spec is None or spec.loader is None or not POOL_SCRIPT.is_file():
+        raise NoReproPool(f"blueprint_name needs {POOL_SCRIPT}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    try:
+        names = mod.identity_literals(mod.load_pool())
+    except mod.PoolError as exc:
+        raise NoReproPool(f"blueprint_name: {exc}") from exc
+    if not names:
+        raise NoReproPool("blueprint_name: the rotation pool names nothing")
+    return names
 
 
 def load_block_ids(root: Optional[str] = None) -> FrozenSet[str]:
@@ -686,6 +723,7 @@ def scan_file(
     forms: Iterable[str] = DEFAULT_FORMS,
     known: Optional[FrozenSet[str]] = None,
     block_ids: Optional[FrozenSet[str]] = None,
+    pool_names: Optional[FrozenSet[str]] = None,
 ) -> List[Tuple[int, str, str]]:
     """(line, form, token) for every hardwiring form in the file's CODE."""
     # utf-8-sig: a byte-order mark would make ast.parse fail, and a file whose
@@ -701,6 +739,7 @@ def scan_file(
     forms = tuple(forms)
     active = [(f, FORMS[f]) for f in forms if f in FORMS]
     literals = known if (known and "product_literal" in forms) else frozenset()
+    blueprints = pool_names if (pool_names and "blueprint_name" in forms) else frozenset()
     if "word_list" in forms:
         out.extend((line, "word_list", name) for line, name in word_lists(source))
     if "phrase_match" in forms:
@@ -719,6 +758,10 @@ def scan_file(
             body = _literal_body(tok.string)
             if body.strip().lower() in literals:
                 out.append((tok.start[0], "product_literal", body.strip()))
+        if blueprints and tok.type is tokenize.STRING:
+            body = _literal_body(tok.string)
+            if body.strip().lower() in blueprints:
+                out.append((tok.start[0], "blueprint_name", body.strip()))
         for form, pattern in active:
             if form in STRING_ONLY_FORMS:
                 if tok.type is not tokenize.STRING:
@@ -740,6 +783,7 @@ def scan(
     forms: Iterable[str] = DEFAULT_FORMS,
     known: Optional[FrozenSet[str]] = None,
     block_ids: Optional[FrozenSet[str]] = None,
+    pool_names: Optional[FrozenSet[str]] = None,
 ) -> Dict[str, List[Tuple[int, str, str]]]:
     found: Dict[str, List[Tuple[int, str, str]]] = {}
     forms = tuple(forms)
@@ -747,13 +791,15 @@ def scan(
         known = load_known_literals()
     if block_ids is None and "block_name_dispatch" in forms:
         block_ids = load_block_ids()
+    if pool_names is None and "blueprint_name" in forms:
+        pool_names = load_pool_literals()
     for root in roots:
         base = ROOT / root
         paths = [base] if base.is_file() else sorted(base.rglob("*.py"))
         for path in paths:
             if "tests" in path.parts or "__pycache__" in path.parts:
                 continue
-            hits = scan_file(path, forms, known, block_ids)
+            hits = scan_file(path, forms, known, block_ids, pool_names)
             if hits:
                 found[path.relative_to(ROOT).as_posix()] = hits
     return found
@@ -820,7 +866,7 @@ def main(argv: List[str] | None = None) -> int:
 
     try:
         found = scan(roots, forms)
-    except NoStoreRegistry as exc:
+    except (NoStoreRegistry, NoReproPool) as exc:
         print(f"REJECTED: {exc}", file=sys.stderr)
         return 1
     current = as_counts(found)

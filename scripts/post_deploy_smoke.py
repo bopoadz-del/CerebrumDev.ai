@@ -300,16 +300,19 @@ def typed_action(action, value=None):
     return {"action": action, "value": value}
 
 
-def chat(sid, tok, msg, retries=4, action=None, value=None):
+def chat(sid, tok, msg, retries=4, action=None, value=None, fields=None):
     """POST one Floor chat turn. ``action``/``value`` are the TYPED Floor
     action (approve, continue, draft, ...), built by ``typed_action`` from the
-    shared spec: the Factory never decides an action from the words in ``msg``."""
+    shared spec: the Factory never decides an action from the words in ``msg``.
+    ``fields`` are typed intake fields the request carries beside it (the chat
+    body's ``country`` / ``currency`` / ``vertical``), as the intake line sends
+    what the user typed."""
     typed = typed_action(action, value) if action else {}
     last_err = None
     for attempt in range(retries + 1):
         rq = urllib.request.Request(
             BASE + f"/v1/sessions/{sid}/chat", method="POST",
-            data=json.dumps({"message": msg, **typed}).encode(),
+            data=json.dumps({"message": msg, **typed, **dict(fields or {})}).encode(),
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {tok}"},
         )
         try:

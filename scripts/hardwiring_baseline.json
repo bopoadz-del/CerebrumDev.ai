@@ -10,7 +10,8 @@
     "word_list",
     "probe_id",
     "phrase_match",
-    "block_name_dispatch"
+    "block_name_dispatch",
+    "blueprint_name"
   ],
   "roots": [
     "backend/app/factory",

@@ -136,16 +136,23 @@ jobs:
   # moment as smoke A -- each on its own verified account from the smoke
   # gate's roster (index 0 is the smoke's, the only one with the reserved
   # build slot). A short roster fails closed. Polling rides out 502/503/504.
+  # They are the ANCHORS (scripts/release_cycle.json) plus this cycle's
+  # ROTATION picks from backend/tests/repro_pool, all in one process.
   release-repros:
     name: Release cycle repros (beside smoke A)
     needs: [resolve]
     runs-on: ubuntu-latest
-    # Ready wait + the phase-wall ceiling of the slowest repro + margin.
-    timeout-minutes: 150
+    # Ready wait + one phase-wall ceiling per WAVE: four builds on a box that
+    # runs two user builds at once queue into two waves (release_cycle.py
+    # repro_wait_s). 2 x 90 + 20 = 200 min, plus margin; GitHub's cap is 360.
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.resolve.outputs.sha }}
+          # The rotation counter is git history (commits since the pool
+          # landed); a shallow clone has none and the cycle refuses to guess.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v7
         with:
