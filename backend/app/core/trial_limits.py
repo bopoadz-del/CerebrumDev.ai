@@ -23,12 +23,23 @@ from fastapi import HTTPException
 
 from . import accounts_store
 
-# The two principals the deploy gate's smoke-login issues (routers/accounts.py
-# reads these; this is their one definition). Quota exemption and the reserved
-# build slot both key on "an account the smoke gate issued".
-SMOKE_PRINCIPAL_A = "factory-smoke-a@cerebrum-dev.invalid"
-SMOKE_PRINCIPAL_B = "factory-smoke-b@cerebrum-dev.invalid"
-OPS_SMOKE_EMAILS = frozenset({SMOKE_PRINCIPAL_A, SMOKE_PRINCIPAL_B})
+# The principals the deploy gate's smoke-login issues (routers/accounts.py
+# reads these; this is their one definition). The release cycle runs the smoke
+# and its repro builds AT THE SAME TIME, each on its own account, so the roster
+# is a declared count rather than a fixed pair: index 0 is the smoke's own
+# principal, the rest carry the repro builds. Quota exemption keys on "an
+# account the smoke gate issued"; the reserved build slot keys on index 0
+# ONLY, so a repro build can never take the slot the smoke depends on.
+SMOKE_PRINCIPAL_COUNT = 4
+SMOKE_PRINCIPALS = tuple(
+    f"factory-smoke-{chr(ord('a') + i)}@cerebrum-dev.invalid"
+    for i in range(SMOKE_PRINCIPAL_COUNT)
+)
+SMOKE_PRINCIPAL_A = SMOKE_PRINCIPALS[0]
+SMOKE_PRINCIPAL_B = SMOKE_PRINCIPALS[1]
+#: The one principal whose builds may use the worker's reserved slot.
+SMOKE_RESERVED_PRINCIPAL = SMOKE_PRINCIPAL_A
+OPS_SMOKE_EMAILS = frozenset(SMOKE_PRINCIPALS)
 
 # counter -> (env var, default limit, scope)
 TRIAL_COUNTERS: Dict[str, tuple] = {
@@ -100,21 +111,36 @@ def trials_enforced() -> bool:
         return False
 
 
+def _stored_email(account_id: Optional[str]) -> str:
+    """The account's stored email, lowercased; empty when unknown/unreadable."""
+    if not account_id:
+        return ""
+    try:
+        fields = accounts_store.subscription_fields(account_id)
+    except Exception:  # noqa: BLE001 -- an unreadable store grants nothing
+        return ""
+    if fields is None:
+        return ""
+    return str(fields.get("email") or "").strip().lower()
+
+
 def is_ops_smoke_account(account_id: Optional[str]) -> bool:
     """Whether ``account_id`` is one of the smoke gate's own principals.
 
     Resolved server-side from the stored account, never from anything the
     caller sends. Unknown or unreadable accounts are not smoke principals.
     """
-    if not account_id:
-        return False
-    try:
-        fields = accounts_store.subscription_fields(account_id)
-    except Exception:  # noqa: BLE001 -- an unreadable store grants nothing
-        return False
-    if fields is None:
-        return False
-    return str(fields.get("email") or "").strip().lower() in OPS_SMOKE_EMAILS
+    return _stored_email(account_id) in OPS_SMOKE_EMAILS
+
+
+def is_reserved_smoke_account(account_id: Optional[str]) -> bool:
+    """Whether ``account_id`` is the smoke's OWN principal (roster index 0).
+
+    Only this account's builds may use the worker's reserved slot. The other
+    smoke-issued principals carry repro builds that run beside the smoke; they
+    queue like any user so they can never take the slot the smoke needs.
+    """
+    return _stored_email(account_id) == SMOKE_RESERVED_PRINCIPAL
 
 
 def _is_limited_account(account_id: Optional[str]) -> bool:

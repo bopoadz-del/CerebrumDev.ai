@@ -68,11 +68,11 @@ def bind_tenant_store(account_id: Optional[str]) -> Optional[TenantStoreBinding]
         return None
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
     store_dir = tenant_stores_root() / digest
-    from app.core.trial_limits import is_ops_smoke_account
+    from app.core.trial_limits import is_reserved_smoke_account
 
     return TenantStoreBinding(
         tenant_key=digest,
         store_dir=store_dir,
         bound_at=time.time(),
-        reserved=is_ops_smoke_account(identity),
+        reserved=is_reserved_smoke_account(identity),
     )

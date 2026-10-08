@@ -397,7 +397,12 @@ class TestSmokeWaitsForTheRollout:
         text = self._wf("post-deploy-smoke.yml")
         assert "workflow_run.conclusion != 'success'" in text
         assert 'SMOKE_READY_WAIT_S: "1200"' in text
-        assert "SMOKE_EXPECTED_SHA: ${{ github.event.workflow_run.head_sha" in text
+        # The deployed head is the commit the cycle must see live: the resolve
+        # job waits for /version to serve it, and every smoke expects exactly
+        # the commit resolve verified.
+        assert "EXPECT: ${{ github.event.workflow_run.head_sha" in text
+        smoke_env = wf["jobs"]["live-smoke"]["steps"][-1]["env"]
+        assert smoke_env["SMOKE_EXPECTED_SHA"] == "${{ needs.resolve.outputs.sha }}"
 
     def test_deploy_waits_for_ecs_rollout_completed_with_a_cap(self):
         text = self._wf("deploy-aws.yml")
