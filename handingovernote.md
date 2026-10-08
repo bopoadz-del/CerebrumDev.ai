@@ -40,3 +40,39 @@ Revoked: store-gate run 37767964892 on `plt_5ac16f50c9384536` (cycle-2 smoke B b
 
 ## Report format the owner wants
 One line per landed step (PR, sha, run link). Final: deployed sha; replay result incl. known-bad fixture; cycle-3 per-blueprint verdict table; #701 red run link; smoke-B re-cert score and rework outcome; the fintech provenance.json root cause.
+
+---
+
+# Update — cloud agent, 2026-10-08 evening
+
+## Landed (each: CI green → replay incl. known-bad → squash merge → one deploy → health)
+| Repo | PR | What | sha | runs |
+|---|---|---|---|---|
+| cerebrum-builds | #42 | Known-bad replay fixture as data (`.github/store_gate/known_bad_fixtures.json`, branch `known-bad/image-omits-runtime-dir` @ `60d7cd08`, expected `cross_tenant_404`); replay = every certified still certifies AND every known-bad fails on its expected check | `e2943ec` | #40 gate certified it: 37777375246; today's gate fails it: 37777370845; replay 37779747670 |
+| CerebrumDev.ai | #712 | Batch: #707 cycle-2 fixes, #709 rotation v2 (repeat last failure, then fresh; certified never re-run; seed is data), #710 writer never authors Factory-owned files (restore + rework naming the path), item 4A emulated image self-sufficiency on every writer pass (`image missing <path>`), 7b smoke asserts PID 1 survives `kill -TERM 0` from an agent shell, clean-runner fixes for the 3 pre-existing red suites | `5410237b` | replay 37802475891; deploy 37805788273 |
+| CerebrumDev.ai | #713 | Loader: `verify_locked_blocks()` refuses to start if a locked block can't load; image check refuses a block loaded outside its locked path (`locked_block_loaded_elsewhere` — names 7 `app/local_blocks` fallbacks in the revoked smoke B). Hardwiring gate blocks every commit (`.githooks/pre-commit`, install with `scripts/install_git_hooks.sh`). Cycle-3 fix: build refresh renders absent Factory-owned files (`render_absent=True`) | `55d91d62` | replay 37815196594; deploy 37827522232 |
+
+**Live Factory: `55d91d62`** (cycle 4 started on it, `/version` check green). #706/#707/#709/#710 closed (landed via #712).
+
+## 7a — #701 red run
+https://github.com/bopoadz-del/CerebrumDev.ai/actions/runs/37802479551/job/113398005899 — test on pre-#701 `0e50fcc`: 4 failed / 1 passed (`await_cli` ≠ `continue_ceiling`). pull_request CI can't show this (it tests the merge with master); a proof-only push workflow on `agent-h3/red-701-proof` ran it at the exact commit. #711 closed.
+
+## Cycle results
+| Cycle | Commit | Smoke A | Co-op | Vineyard | Fintech (repeat) | Motor insurance (fresh) | Smoke B |
+|---|---|---|---|---|---|---|---|
+| 3 (run 37806645155) | 5410237b | fail | fail | fail 20/22 (gate 37811318058) | fail, no WRITER commit in 43 min | fail, no WRITER commit in 42 min | fail |
+| 4 (run 37828266456) | 55d91d62 | **pass** (gate 37834740186 ✓) | **gate pass** (37833911168) | **gate pass** (37832735476) | fail, no WRITER commit in 53 min | fail, no WRITER commit in 53 min | running at write time |
+
+- Cycle 3 smoke A/co-op/vineyard/smoke B = **Factory** regression from #710: the guard removed the writer's ci.yml and the refresh rendered ci.yml only "if present" → base branch's pytest-only workflow shipped → `ci_present_and_full_suite` + `audit_clean` FAIL. Fixed in #713; cycle 4 builds carry the Factory ci.yml and pass the gate.
+- **Fintech + motor (both cycles): UNCLASSIFIED — next task.** Both reach CLONER, then the WRITER never commits; the cycle report reads `failed` at ~42–53 min (≈ the 2700 s writer wall). Anchors in the same cycle pass. The reason is in the live build ledger / build-status, which the cloud sandbox cannot reach (api.cerebrum-dev.com and the Actions artifact store are proxy-blocked). Read `build-status` + ledger for the sessions of `build/plt_2a3278c2274c4ac9`, `plt_7ba648b1bdd341da` (cycle 3), `plt_ae9e0e55f12444e6`, `plt_e130ee02014843a4` (cycle 4) before touching anything. Both are rotation picks with typed intake (country/currency, money contract) — check the writer receipt and the money/image gates first.
+
+## Still to do
+1. Classify + fix fintech/motor writer failure (above). Rotation v2 will repeat fintech next cycle.
+2. **Smoke B re-cert** (`plt_5ac16f50…`, session `sess_ad4e3cbb755543a5`, account 0) through the Factory rework path — NOT done: needs the live API, unreachable from the cloud sandbox. Certifies only if the image check passes on every locked block.
+3. **Item 4B** (in-image gate step in store-gate.yml) — separate gate PR, after a green cycle.
+4. **7c** fintech export client-share stripping + Your Platforms download — once fintech certifies; Your Platforms needs a UI check.
+5. Fintech `provenance.json` root cause (from the note above): the CodeWhale writer invented it from blueprint block_ids / blocks.lock.json because `docs/provenance/**` was a writer lane and fill-gaps converge kept it; #710 now makes it Factory-owned (restored + rework).
+
+## New rules / tools since the note above
+- Run `scripts/install_git_hooks.sh` in every clone: the hardwiring scan blocks the commit. Never pipe the scan (`scan | tail` masks its exit code — how a new form was once pushed).
+- Every gate PR replays incl. the known-bad fixture; a replay passes only if the known-bad build fails on its expected check.
