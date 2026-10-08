@@ -132,6 +132,15 @@ def merged_requirements(root: Path) -> str:
     return apply_block(existing, body)
 
 
+def product_display_name(blueprint: Any) -> str:
+    """The name a refresh renders under: the brief's product name, else its id."""
+    return str(
+        getattr(blueprint, "product_name", "")
+        or getattr(blueprint, "product_id", "")
+        or "Platform"
+    )
+
+
 def refresh_factory_files(
     root: Path, product_name: str, blueprint: Any = None
 ) -> List[str]:
