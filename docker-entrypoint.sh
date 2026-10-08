@@ -12,7 +12,7 @@ mkdir -p "$STORAGE" "$STORAGE/factory_outputs"
 # STORAGE_PATH and (b) session-baked /app/factory_outputs/... paths both land
 # on cerebrumdev-storage. Without this, HANDOFF_TO_N3 ledgers vanish on every
 # release and Continue re-enters WRITER thrash.
-_FO_LINK=/app/factory_outputs
+_FO_LINK="${FACTORY_OUTPUTS_LINK:-/app/factory_outputs}"
 _FO_REAL="$STORAGE/factory_outputs"
 if [ -L "$_FO_LINK" ]; then
   :
@@ -46,7 +46,22 @@ if [ -n "${PGSSLKEY:-}" ] && [ ! -r "$PGSSLKEY" ]; then
 fi
 
 if [ "$(id -u)" = "0" ]; then
-  chown -R appuser:appuser "$STORAGE" 2>/dev/null || true
+  # Ownership is fixed recursively ONCE, on a disk that arrives root-owned
+  # (a fresh mount). Every file after that is written by appuser, so it is
+  # already appuser's. This used to be an unconditional `chown -R` over the
+  # whole storage tree -- every build workspace ever made, on network
+  # storage -- before alembic ran: 221-346 s of silent boot on every task
+  # start (2026-10-07: 12 of 12), long enough that a Fargate task
+  # replacement was a 5-minute outage.
+  _APP_UID="$(id -u appuser)"
+  _STORAGE_UID="$(stat -c %u "$STORAGE" 2>/dev/null || echo unknown)"
+  if [ "$_STORAGE_UID" != "$_APP_UID" ]; then
+    echo "entrypoint: $STORAGE owned by uid $_STORAGE_UID, not appuser ($_APP_UID): chown -R" >&2
+    chown -R appuser:appuser "$STORAGE" 2>/dev/null || true
+    echo "entrypoint: chown -R $STORAGE done" >&2
+  fi
+  # The directories this script may just have created are root's.
+  chown appuser:appuser "$STORAGE" "$STORAGE/factory_outputs" 2>/dev/null || true
   # Symlink itself must stay readable by appuser (parent /app is already owned).
   if command -v setpriv >/dev/null 2>&1; then
     exec setpriv --reuid=appuser --regid=appuser --init-groups -- "$@"

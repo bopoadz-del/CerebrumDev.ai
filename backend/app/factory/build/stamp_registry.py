@@ -41,9 +41,15 @@ class Stamp:
     name: str
     kind: str
     paths: Tuple[str, ...]
-    #: Applies the stamp to a workspace root (the structural test drives it);
-    #: None for a stamp only the runner can drive (TESTER's suites).
-    apply: Optional[Callable[[Path], Any]] = None
+    #: Applies the stamp to a workspace root or a workspace handle (the
+    #: structural test drives it); None for a stamp only the runner can drive
+    #: (TESTER's suites).
+    apply: Optional[Callable[[Any], Any]] = None
+    #: True when the stamp runs inside the STAGED WRITER pass, where writes
+    #: land in a staging tree and the product's bytes may live only in the
+    #: destination. Such a stamp must read through the workspace (staging
+    #: first, then the destination), never a raw staging path.
+    staged_writer: bool = False
 
 
 class _Workspace:
@@ -61,6 +67,9 @@ class _Workspace:
     def read_text(self, rel: Any) -> str:
         return self._p(rel).read_text(encoding="utf-8")
 
+    def read_path(self, rel: Any) -> Path:
+        return self._p(rel)
+
     def write_text(self, rel: Any, text: str) -> Path:
         path = self._p(rel)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -71,37 +80,45 @@ class _Workspace:
         return self._p(rel)
 
 
-def _ctx(root: Path) -> SimpleNamespace:
+def _as_workspace(target: Any) -> Any:
+    """A workspace handle (e.g. the WRITER's staged RoleWorkspace) as given;
+    a bare root wrapped."""
+    if isinstance(target, (str, Path)):
+        return _Workspace(Path(target))
+    return target
+
+
+def _ctx(root: Any) -> SimpleNamespace:
     return SimpleNamespace(
-        workspace=_Workspace(root),
+        workspace=_as_workspace(root),
         state={},
         plan=SimpleNamespace(capabilities=()),
         blueprint=None,
     )
 
 
-def _roster(root: Path) -> Any:
+def _roster(root: Any) -> Any:
     from app.factory.build.kernel_publish import stamp_roster
 
     return stamp_roster(_ctx(root))
 
 
-def _deploy_modules(root: Path) -> Any:
+def _deploy_modules(root: Any) -> Any:
     from app.factory.build.deploy import stamp_factory_deploy_modules
 
-    return stamp_factory_deploy_modules(_Workspace(root))
+    return stamp_factory_deploy_modules(_as_workspace(root))
 
 
-def _acceptance(root: Path) -> Any:
+def _acceptance(root: Any) -> Any:
     from app.factory.build.store_acceptance import stamp_acceptance_harness
 
-    return stamp_acceptance_harness(_Workspace(root))
+    return stamp_acceptance_harness(_as_workspace(root))
 
 
-def _self_check(root: Path) -> Any:
+def _self_check(root: Any) -> Any:
     from app.factory.build.writer_behaviour import emit_self_check
 
-    return emit_self_check(_Workspace(root))
+    return emit_self_check(_as_workspace(root))
 
 
 def _refresh(root: Path) -> Any:
@@ -110,16 +127,16 @@ def _refresh(root: Path) -> Any:
     return refresh_factory_files(root, "platform")
 
 
-def _platform_gap(root: Path) -> Any:
+def _platform_gap(root: Any) -> Any:
     from app.factory.build.data_lifecycle import backfill_platform_substrate
 
-    return backfill_platform_substrate(_Workspace(root))
+    return backfill_platform_substrate(_as_workspace(root))
 
 
-def _deploy_gap(root: Path) -> Any:
+def _deploy_gap(root: Any) -> Any:
     from app.factory.build.deploy import backfill_deploy_substrate
 
-    return backfill_deploy_substrate(_Workspace(root))
+    return backfill_deploy_substrate(_as_workspace(root))
 
 
 def stamps() -> Tuple[Stamp, ...]:
@@ -138,10 +155,10 @@ def stamps() -> Tuple[Stamp, ...]:
 
     deploy_owned = tuple(rel(p) for p in FACTORY_OWNED_DEPLOY_MODULES)
     return (
-        Stamp("kernel roster", SHARED, (rel(JOBS_REL),), _roster),
-        Stamp("deploy modules", OWNED, deploy_owned, _deploy_modules),
-        Stamp("acceptance harness", OWNED, (rel(ACCEPTANCE_SCRIPT_REL),), _acceptance),
-        Stamp("writer self-check", OWNED, (rel(SELF_CHECK_REL),), _self_check),
+        Stamp("kernel roster", SHARED, (rel(JOBS_REL),), _roster, staged_writer=True),
+        Stamp("deploy modules", OWNED, deploy_owned, _deploy_modules, staged_writer=True),
+        Stamp("acceptance harness", OWNED, (rel(ACCEPTANCE_SCRIPT_REL),), _acceptance, staged_writer=True),
+        Stamp("writer self-check", OWNED, (rel(SELF_CHECK_REL),), _self_check, staged_writer=True),
         Stamp(
             "re-entry refresh (Factory files)",
             OWNED,
@@ -156,12 +173,14 @@ def stamps() -> Tuple[Stamp, ...]:
             tuple(dict.fromkeys((*PRODUCT_SUITES, rel(CONTRACT_TEST), "tests/test_data_lifecycle.py",
                                  "tests/test_deploy.py"))),
         ),
-        Stamp("platform substrate (gaps)", GAP, tuple(rel(p) for p, _t in platform_substrate()), _platform_gap),
+        Stamp("platform substrate (gaps)", GAP, tuple(rel(p) for p, _t in platform_substrate()), _platform_gap,
+              staged_writer=True),
         Stamp(
             "deploy substrate (gaps)",
             GAP,
             tuple(rel(p) for p, _t in deploy_substrate() if rel(p) not in deploy_owned),
             _deploy_gap,
+            staged_writer=True,
         ),
     )
 

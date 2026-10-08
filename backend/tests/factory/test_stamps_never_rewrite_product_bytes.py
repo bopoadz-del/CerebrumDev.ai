@@ -184,6 +184,41 @@ def test_control_678s_whole_file_roster_stamp_fails_the_same_check(tmp_path):
     assert _load_jobs(tmp_path)["CAPABILITIES"] == []  # the live defect
 
 
+def _staged_writer_pass(tmp_path: Path) -> Path:
+    """A rework WRITER pass as the runner stages it: the product's bytes live
+    in the destination, the staging tree starts EMPTY (the CodeWhale agent
+    edits the destination directly), every stamp the staged pass runs is
+    applied through the WRITER's RoleWorkspace, then the pass commits."""
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.workspace import RoleWorkspace
+
+    dest = tmp_path / "product"
+    ws = RoleWorkspace(BuildRole.WRITER, dest, staging=tmp_path / ".product.staging-writer")
+    for stamp in stamps():
+        if stamp.apply is not None and stamp.staged_writer:
+            stamp.apply(ws)
+    ws.commit()
+    return dest
+
+
+def test_a_staged_writer_pass_keeps_the_product_bytes_its_staging_does_not_hold(tmp_path):
+    # Live 5dd46d47 (vineyard repro): the writer's self-check was clean on the
+    # tree it edited; then the roster stamp read app/jobs.py from the EMPTY
+    # staging tree, saw no product manifest, appended a block binding
+    # CAPABILITIES = [] and the commit copied that over the product's file --
+    # every declared capability route 404'd ("baseline POST returned HTTP
+    # 404"), twice, and the run stopped SAME_FAILURE_TWICE.
+    dest = tmp_path / "product"
+    _write(dest)
+    before = _snapshot(dest)
+    _staged_writer_pass(tmp_path)
+
+    assert _violations(before, _snapshot(dest)) == []
+    ns = _load_jobs(dest)
+    assert ns["CAPABILITIES"] == [{"id": "tank_log", "entity": "tank_reading", "source": "agent"}]
+    assert ns["JOBS"] and ns["CATALOG"]["kernel"] and ns["GATES"]["kernel"]
+
+
 def test_ownership_comes_from_the_one_registry():
     owned = {p for s in stamps() if s.kind == OWNED for p in s.paths}
     shared = {p for s in stamps() if s.kind == SHARED for p in s.paths}
