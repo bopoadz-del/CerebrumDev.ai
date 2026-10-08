@@ -20,6 +20,42 @@ os.environ.setdefault("ALLOW_ANONYMOUS_DEV", "1")
 os.environ.setdefault("BACKUP_SCHEDULE_ENABLED", "0")
 os.environ.pop("SMOKE_GATE_TOKEN", None)
 
+
+def _pinned_store_beside_the_repo():
+    """A Store checkout next to this repo at exactly the ``store.pin`` commit.
+
+    CI checks the pinned Store out and sets CEREBRUM_BLOCKS_ROOT; a developer
+    runner usually has it cloned alongside instead. Only a checkout whose HEAD
+    is the pin counts -- a Store at another commit would test something else.
+    """
+    import subprocess
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    try:
+        pin = (repo / "store.pin").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    for sibling in sorted(repo.parent.iterdir()):
+        if sibling == repo or not (sibling / "block_registry").is_dir():
+            continue
+        try:
+            head = subprocess.run(
+                ["git", "-C", str(sibling), "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=10, check=False,
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if pin and head == pin:
+            return str(sibling)
+    return None
+
+
+if not os.environ.get("CEREBRUM_BLOCKS_ROOT"):
+    _store = _pinned_store_beside_the_repo()
+    if _store:
+        os.environ["CEREBRUM_BLOCKS_ROOT"] = _store
+
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 

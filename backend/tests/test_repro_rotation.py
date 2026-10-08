@@ -9,16 +9,16 @@ certified + smoke A and smoke B pass, one commit.
 The pool is DATA: nothing in the Factory may branch on which blueprint runs
 (the hardwiring gate's ``blueprint_name`` form, tested in
 tests/factory/test_hardwiring_gate.py). Selection is deterministic -- pool
-order is the index's declared order, the cycle counter advances only past a
-passed cycle (read from the previous cycle's own report), and nothing is
-random.
+order is the index's declared order; slot 1 repeats the previous cycle's
+failing pick, slot 2 is the next blueprint never built, a certified blueprint
+is never re-run (derived from the cycle reports plus a committed seed), and
+nothing is random.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
-import math
 from pathlib import Path
 
 import pytest
@@ -157,32 +157,113 @@ def test_an_id_that_differs_from_its_file_name_is_refused(pool_mod, tmp_path):
         pool_mod.load_pool(root / "pool.json")
 
 
-# -- the selector ------------------------------------------------------------
+# -- rotation v2 (owner rule, 2026-10-08) -------------------------------------
+#
+# Slot 1 repeats the previous cycle's failing pick; slot 2 is the next pool
+# blueprint never built before; an already-certified blueprint is never
+# re-run. The state is derived from every readable cycle report (newest
+# first) plus a committed seed (scripts/release_cycle.json rotation.seed) --
+# nothing is stored anywhere else, and nothing is random.
 
 
-def test_cycle_zero_picks_fintech_and_hotel_operations(cycle, pool):
-    picks = cycle.select_rotation(pool, k=0, picks=2)
-    assert [bp["id"] for bp in picks] == [pool[0]["id"], pool[1]["id"]]
+def _run(certified):
+    run = {"role": "rotation", "status": "exported" if certified else "failed"}
+    if certified:
+        run["export"] = {"manifest": {"certified": True}}
+    return run
 
 
-def test_the_selector_is_deterministic_and_walks_the_pool_in_order(cycle, pool):
-    n = len(pool)
-    for k in range(3 * n):
-        first = [bp["id"] for bp in cycle.select_rotation(pool, k=k, picks=2)]
-        again = [bp["id"] for bp in cycle.select_rotation(pool, k=k, picks=2)]
-        assert first == again
-        assert first == [pool[(2 * k) % n]["id"], pool[(2 * k + 1) % n]["id"]]
-        assert len(set(first)) == 2, "one cycle never builds a blueprint twice"
+def _history_report(picks, verdict="fail"):
+    """picks: {blueprint id: certified?}, in the order the cycle picked them."""
+    return {
+        "verdict": verdict,
+        "rotation": {"picks": list(picks)},
+        "runs": {name: _run(ok) for name, ok in picks.items()},
+    }
 
 
-def test_every_blueprint_comes_round_within_four_cycles(cycle, pool):
-    window = math.ceil(len(pool) / 2)
-    assert window == 4
-    for start in range(len(pool)):
-        seen = set()
-        for k in range(start, start + window):
-            seen |= {bp["id"] for bp in cycle.select_rotation(pool, k=k, picks=2)}
-        assert seen == {bp["id"] for bp in pool}, start
+NO_SEED = {"certified": [], "tried": []}
+
+
+def _ids(bps):
+    return [bp["id"] for bp in bps]
+
+
+def test_with_no_history_the_first_two_unused_blueprints_are_picked(cycle, pool):
+    state = cycle.rotation_state([], NO_SEED)
+    assert _ids(cycle.select_rotation(pool, state, picks=2)) == [pool[0]["id"], pool[1]["id"]]
+
+
+def test_slot_one_repeats_the_failing_pick_and_slot_two_is_the_next_unused(cycle, pool):
+    a, b, c = pool[0]["id"], pool[1]["id"], pool[2]["id"]
+    state = cycle.rotation_state([_history_report({a: False, b: True})], NO_SEED)
+    assert _ids(cycle.select_rotation(pool, state, picks=2)) == [a, c]
+
+
+def test_a_certified_blueprint_is_never_re_run(cycle, pool):
+    a, b = pool[0]["id"], pool[1]["id"]
+    history = [_history_report({a: False, b: True}), _history_report({a: False, b: True})]
+    picked = _ids(cycle.select_rotation(pool, cycle.rotation_state(history, NO_SEED), picks=2))
+    assert b not in picked
+
+
+def test_a_pass_moves_both_slots_to_unused_blueprints(cycle, pool):
+    a, b, c, d = (bp["id"] for bp in pool[:4])
+    state = cycle.rotation_state([_history_report({a: True, b: True}, verdict="pass")], NO_SEED)
+    assert _ids(cycle.select_rotation(pool, state, picks=2)) == [c, d]
+
+
+def test_a_failure_older_than_the_last_cycle_is_still_repeated_eventually(cycle, pool):
+    a, b, c, d = (bp["id"] for bp in pool[:4])
+    # Cycle 1: a and b both failed. Cycle 2 repeated a (certified) beside c.
+    history = [_history_report({a: True, c: True}), _history_report({a: False, b: False})]
+    picked = _ids(cycle.select_rotation(pool, cycle.rotation_state(history, NO_SEED), picks=2))
+    assert picked == [b, d]
+
+
+def test_the_seed_counts_as_history(cycle, pool):
+    a, b, c = pool[0]["id"], pool[1]["id"], pool[2]["id"]
+    seed = {"certified": [b], "tried": [a, b]}
+    state = cycle.rotation_state([], seed)
+    # a was tried and not certified: it repeats; b is certified: never again.
+    assert _ids(cycle.select_rotation(pool, state, picks=2)) == [a, c]
+
+
+def test_cycle_three_is_fintech_repeat_and_motor_insurance_fresh(cycle, pool):
+    """The handover's cycle 3, from the committed seed and the cycle 1-2
+    reports' shape: fintech failed both cycles, hotel ops certified both."""
+    config = cycle.load_config(CONFIG_PATH)
+    fintech, hotel, motor = pool[0]["id"], pool[1]["id"], pool[2]["id"]
+    history = [_history_report({fintech: False, hotel: True}), _history_report({fintech: False, hotel: True})]
+    state = cycle.rotation_state(history, cycle.rotation_seed(config))
+    assert _ids(cycle.select_rotation(pool, state, picks=2)) == [fintech, motor]
+    # And from the seed alone (cycle reports expired): the same pair.
+    state = cycle.rotation_state([], cycle.rotation_seed(config))
+    assert _ids(cycle.select_rotation(pool, state, picks=2)) == [fintech, motor]
+
+
+def test_a_pick_listed_without_a_run_counts_as_not_certified(cycle, pool):
+    a, b, c = pool[0]["id"], pool[1]["id"], pool[2]["id"]
+    report = {"verdict": "fail", "rotation": {"picks": [a, b]}, "runs": {b: _run(True)}}
+    state = cycle.rotation_state([report], NO_SEED)
+    assert _ids(cycle.select_rotation(pool, state, picks=2)) == [a, c]
+
+
+def test_an_exhausted_pool_picks_nothing_rather_than_re_running_a_certified_one(cycle, pool):
+    seed = {"certified": [bp["id"] for bp in pool], "tried": [bp["id"] for bp in pool]}
+    assert cycle.select_rotation(pool, cycle.rotation_state([], seed), picks=2) == []
+
+
+def test_one_cycle_never_builds_a_blueprint_twice(cycle, pool):
+    a = pool[0]["id"]
+    state = cycle.rotation_state([_history_report({a: False})], NO_SEED)
+    picked = _ids(cycle.select_rotation(pool, state, picks=2))
+    assert len(picked) == len(set(picked)) == 2
+
+
+def test_a_seed_naming_a_blueprint_outside_the_pool_is_refused(cycle, pool):
+    with pytest.raises(cycle.CycleError):
+        cycle.select_rotation(pool, cycle.rotation_state([], {"certified": ["nope"], "tried": []}), picks=2)
 
 
 def test_the_selector_never_reads_a_clock_or_a_random_source():
@@ -191,68 +272,27 @@ def test_the_selector_never_reads_a_clock_or_a_random_source():
     assert "secrets.choice" not in source and "shuffle(" not in source
 
 
-def test_a_negative_or_missing_counter_is_refused(cycle, pool):
-    with pytest.raises(cycle.CycleError):
-        cycle.select_rotation(pool, k=-1, picks=2)
-    with pytest.raises(cycle.CycleError):
-        cycle.select_rotation(pool, k=0, picks=len(pool) + 1)
+def test_a_run_that_never_wrote_a_report_is_skipped(cycle, pool):
+    a, b, c = pool[0]["id"], pool[1]["id"], pool[2]["id"]
+    state = cycle.rotation_state([None, _history_report({a: False, b: True})], NO_SEED)
+    assert _ids(cycle.select_rotation(pool, state, picks=2)) == [a, c]
 
 
-# -- the cycle counter: the previous cycle's verdict, nothing stored ---------
-#
-# Owner rule (2026-10-08): a failure is classified, fixed, and "one more
-# cycle" runs -- and that cycle must re-run the picks that failed. So ``k``
-# advances only past a cycle whose release verdict PASSED. The record is the
-# newest completed cycle's own uploaded report (cycle_report.json): passed ->
-# k+1, failed -> the same k, no report with a rotation ever -> 0. Reports are
-# read newest first; a run that never wrote a report (its commit never went
-# live) is skipped; a report that cannot be read fails closed.
-
-
-def _cycle_report(k, verdict):
-    return {"verdict": verdict, "rotation": {"k": k, "picks": ["a", "b"]}}
-
-
-def test_the_first_cycle_ever_is_k_zero(cycle):
-    assert cycle.rotation_k_from_history([])[0] == 0
-    # Cycles from before the rotation existed carry no rotation record.
-    assert cycle.rotation_k_from_history([{"verdict": "pass"}])[0] == 0
-
-
-def test_a_failed_cycle_re_runs_the_same_pair(cycle, pool):
-    k, basis = cycle.rotation_k_from_history([_cycle_report(0, "fail")])
-    assert k == 0
-    assert "fail" in basis
-    picks = [bp["id"] for bp in cycle.select_rotation(pool, k=k, picks=2)]
-    assert picks == [pool[0]["id"], pool[1]["id"]]
-
-
-def test_a_passed_cycle_moves_to_the_next_pair(cycle):
-    assert cycle.rotation_k_from_history([_cycle_report(0, "pass")])[0] == 1
-    assert cycle.rotation_k_from_history([_cycle_report(3, "pass")])[0] == 4
-
-
-def test_only_the_newest_report_decides(cycle):
-    history = [_cycle_report(2, "fail"), _cycle_report(1, "pass"), _cycle_report(0, "pass")]
-    assert cycle.rotation_k_from_history(history)[0] == 2
-
-
-def test_a_run_that_never_wrote_a_report_is_skipped(cycle):
-    # None: a completed cycle run whose commit never went live, so it never
-    # reached its report job -- it ran no cycle and says nothing about k.
-    assert cycle.rotation_k_from_history([None, _cycle_report(1, "pass")])[0] == 2
+def test_a_cycle_from_before_the_rotation_says_nothing(cycle, pool):
+    state = cycle.rotation_state([{"verdict": "pass"}], NO_SEED)
+    assert _ids(cycle.select_rotation(pool, state, picks=2)) == [pool[0]["id"], pool[1]["id"]]
 
 
 @pytest.mark.parametrize("bad", [
-    {"verdict": "pass", "rotation": {"k": -1}},
-    {"verdict": "pass", "rotation": {"k": "1"}},
-    {"verdict": "maybe", "rotation": {"k": 1}},
-    {"rotation": {"k": 1}},
+    {"verdict": "maybe", "rotation": {"picks": []}},
+    {"rotation": {"picks": []}},
+    {"verdict": "fail", "rotation": {"picks": "a"}},
+    {"verdict": "fail", "rotation": "x"},
     "not a report",
 ])
 def test_an_unreadable_report_fails_closed(cycle, bad):
     with pytest.raises(cycle.CycleError):
-        cycle.rotation_k_from_history([bad])
+        cycle.rotation_state([bad], NO_SEED)
 
 
 def test_a_history_that_cannot_be_read_fails_closed(cycle):
@@ -261,15 +301,16 @@ def test_a_history_that_cannot_be_read_fails_closed(cycle):
         yield  # pragma: no cover
 
     with pytest.raises(cycle.CycleError):
-        cycle.rotation_k_from_history(broken())
+        cycle.rotation_state(broken(), NO_SEED)
 
 
-def test_the_counter_reads_no_clock_no_random_source_and_no_local_state(cycle):
+def test_the_state_reads_no_clock_no_random_source_and_no_local_state(cycle):
     import inspect
 
-    src = inspect.getsource(cycle.rotation_k_from_history)
-    for forbidden in ("random", "time.", "datetime", "open(", "Path("):
-        assert forbidden not in src, forbidden
+    for fn in (cycle.rotation_state, cycle.select_rotation):
+        src = inspect.getsource(fn)
+        for forbidden in ("random", "time.", "datetime", "open(", "Path("):
+            assert forbidden not in src, (fn.__name__, forbidden)
 
 
 def test_planning_without_a_readable_history_fails_closed(cycle, monkeypatch):
@@ -280,13 +321,15 @@ def test_planning_without_a_readable_history_fails_closed(cycle, monkeypatch):
         cycle.plan_cycle(config, "0" * 40)
 
 
-def test_a_plan_records_the_counter_and_what_decided_it(cycle):
+def test_a_plan_records_its_picks_and_why(cycle, pool):
     config = cycle.load_config(CONFIG_PATH)
-    plan = cycle.plan_cycle(config, "0" * 40, reports=[_cycle_report(0, "fail")])
-    assert plan["rotation"]["k"] == 0
-    assert "fail" in plan["rotation"]["counter"]
-    plan = cycle.plan_cycle(config, "0" * 40, reports=[_cycle_report(0, "pass")])
-    assert plan["rotation"]["k"] == 1
+    fintech, hotel, motor = pool[0]["id"], pool[1]["id"], pool[2]["id"]
+    plan = cycle.plan_cycle(config, "0" * 40, reports=[_history_report({fintech: False, hotel: True})])
+    rot = plan["rotation"]
+    assert rot["picks"] == [fintech, motor]
+    assert rot["repeats"] == [fintech] and rot["fresh"] == [motor]
+    assert hotel in rot["certified"]
+    assert rot["pool_size"] == len(pool)
 
 
 # -- planning one cycle -------------------------------------------------------
@@ -294,7 +337,7 @@ def test_a_plan_records_the_counter_and_what_decided_it(cycle):
 
 def test_a_cycle_runs_the_anchors_then_the_rotation_picks(cycle, pool):
     config = cycle.load_config(CONFIG_PATH)
-    runs = cycle.plan_runs(config, pool, k=0, picks=2)
+    runs = cycle.plan_runs(config, pool[:2])
     anchors = [r for r in runs if r["role"] == "anchor"]
     picks = [r for r in runs if r["role"] == "rotation"]
     assert [r["name"] for r in anchors] == [a["name"] for a in config["anchors"]]
@@ -444,14 +487,14 @@ def _report(cycle, pick_certified=True):
         },
         smoke_b={"status": "pass"},
         started_at=0.0, finished_at=4000.0, commit="abc", live_sha="abc",
-        rotation={"k": 0, "picks": ["repro_a", "repro_b"], "pool_size": 8},
+        rotation={"picks": ["repro_a", "repro_b"], "repeats": ["repro_a"], "fresh": ["repro_b"], "pool_size": 8},
     )
 
 
 def test_the_report_has_a_row_per_pick_with_the_same_columns(cycle):
     report = _report(cycle)
     assert report["verdict"] == "pass"
-    assert report["rotation"] == {"k": 0, "picks": ["repro_a", "repro_b"], "pool_size": 8}
+    assert report["rotation"]["picks"] == ["repro_a", "repro_b"]
     for name in ("repro_a", "repro_b"):
         row = report["runs"][name]
         assert row["role"] == "rotation"
@@ -460,7 +503,7 @@ def test_the_report_has_a_row_per_pick_with_the_same_columns(cycle):
     md = cycle.render_markdown(report)
     assert "| Run | Role |" in md
     assert "repro_a" in md and "repro_b" in md and "rotation" in md
-    assert "k=0" in md
+    assert "repeats repro_a" in md and "fresh repro_b" in md
 
 
 def test_an_uncertified_rotation_pick_fails_the_release(cycle):

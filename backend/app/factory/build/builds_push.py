@@ -95,6 +95,9 @@ FACTORY_INTERNAL_PATHS = frozenset(
         # The Factory's receipt of what it stamped/vendored/declared: read
         # locally at gate ingest to own audit findings, never shipped.
         "docs/factory_receipt.json",
+        # The WRITER pass's record of Factory-owned files it touched
+        # (factory_owned.VIOLATIONS_REL): read by the WRITER gate, never shipped.
+        "docs/writer_factory_owned.json",
     }
 )
 
@@ -358,6 +361,22 @@ _INHERITED_FROM_MAIN = frozenset({".git", ".github"})
 #: it is always ``main``'s, never a copy a workspace happens to hold.
 STORE_GATE_PATH = ".github/workflows/store-gate.yml"
 
+#: The WHOLE gate: the workflow and the helper scripts it executes from the
+#: branch's own tree. They change together on ``main``, so a branch must carry
+#: them from the same ``main`` -- live 2026-10-08 (build/plt_5b8166c1a43c4622,
+#: run 37764042614) a checkpoint refreshed the workflow alone, the new workflow
+#: called ``repo_mount.py exec-path`` on the branch's older helper, and the gate
+#: ran ``python3 ""``. A directory entry covers everything under it.
+STORE_GATE_PATHS: tuple = (STORE_GATE_PATH, ".github/store_gate")
+
+
+def is_gate_owned(rel: str | Path) -> bool:
+    """True when ``rel`` is part of the Store gate (``main``'s, never a copy)."""
+    text = Path(rel).as_posix()
+    if text.startswith("./"):
+        text = text[2:]
+    return any(text == p or text.startswith(p.rstrip("/") + "/") for p in STORE_GATE_PATHS)
+
 
 def _drop_inherited_product(tree: Path) -> None:
     """Remove whatever product ``main`` happens to carry before the overlay.
@@ -411,10 +430,11 @@ def _sync_workspace_onto_tree(src: Path, dest: Path) -> None:
                 rel = sub.relative_to(src)
                 if sub.is_dir() or not is_exported(rel):
                     continue
-                if rel.as_posix() == STORE_GATE_PATH:
+                if is_gate_owned(rel):
                     # The gate is main's (live 2026-10-05: a stale workspace
                     # copy replaced it, dropped the bandit step, and
-                    # audit_clean read "unmeasured" -- 21/22).
+                    # audit_clean read "unmeasured" -- 21/22). Its helper
+                    # scripts are the gate too (STORE_GATE_PATHS).
                     continue
                 out = dest / rel
                 out.parent.mkdir(parents=True, exist_ok=True)

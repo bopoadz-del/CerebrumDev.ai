@@ -648,6 +648,36 @@ def fetch_store_gate_status(
     )
 
 
+def certification_withdrawn(
+    output_dir: Path | str,
+    *,
+    env: Optional[Mapping[str, str]] = None,
+    opener: Callable[..., Any] = urlopen,
+) -> Optional[str]:
+    """Why this build's Store-gate certification no longer stands, or None.
+
+    Read again at export time from the same ``store-gate`` commit status the
+    build was certified by. cerebrum-builds withdraws it when a certification
+    is revoked (revoked_certifications.json -- data, not code), so an export
+    whose verdict was later proven false is never presented as certified.
+    No builds token (not armed) or no answer from GitHub is no verdict: None.
+    """
+    blob = env if env is not None else os.environ
+    if not builds_token(blob):
+        return None
+    try:
+        target = resolve_builds_target(output_dir, env=blob, opener=opener)
+        snap = fetch_store_gate_status(target, env=blob, opener=opener)
+    except Exception:  # noqa: BLE001 -- unreadable is no verdict; logged by the caller's path
+        return None
+    if snap.unreachable or snap.missing or snap.pending or snap.state in ("", "success", "pending"):
+        return None
+    return (
+        f"store-gate certification of {target.branch or target.sha} no longer stands "
+        f"({snap.state}): {snap.description or snap.detail}"
+    )
+
+
 def snapshot_from_status(
     target: BuildsTarget,
     state: str,

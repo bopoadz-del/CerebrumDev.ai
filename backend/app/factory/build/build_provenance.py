@@ -71,11 +71,16 @@ def resolve_blocks_commit(ctx: Any) -> str:
     if explicit:
         return explicit
     root = getattr(ctx, "blocks_root", None)
-    if root:
+    # Only a Store tree that IS a checkout answers with its own HEAD. Without
+    # its own .git, git walks up to an enclosing repo (the Factory's, on a
+    # developer box) and git_head's env fallback answers with the Factory's
+    # DEPLOY sha (live 2026-10-08: every export's blocks_commit equalled its
+    # factory_commit). Either way the answer would be the Factory's commit.
+    if root and (Path(root) / ".git").exists():
         try:
             from app.factory.generator import git_head
 
-            head = _clean(git_head(Path(root)))
+            head = _clean(git_head(Path(root), env_fallback=False))
             if head:
                 return head
         except Exception:  # noqa: BLE001

@@ -1,0 +1,124 @@
+"""The files the Factory owns in a product, and whether the writer touched one.
+
+Owner rule (2026-10-08): the writer never authors a Factory-owned file. A
+writer that creates, edits or deletes one is sent back to rework with the path
+named -- never silently overwritten afterwards, never silently kept.
+
+Live 2026-10-08 (cycle 2 fintech, sess_59090c3bd0964425,
+build/plt_464389e32e544810 @ 22e6be03): the writer invented
+docs/provenance/provenance.json from the blueprint and blocks.lock.json; the
+Factory's gap-filling converge then kept it, so the Factory's own provenance
+(factory_commit, blocks_commit) never landed and provenance_complete failed.
+
+One declared list, built from the sources that already own these paths --
+nothing here names a product, a blueprint or a branch:
+
+* every path a Factory stamp owns outright (``stamp_registry.owned_paths``):
+  the acceptance harness, the writer self-check, the deploy modules, the
+  release gate, CI, the TESTER bootstrap and suites, the pins;
+* the product's provenance record, which only the Factory writes (converge);
+* the Store gate workflow the checkpoint carries from cerebrum-builds main.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Dict, Iterable, List, Mapping, Optional, Tuple
+
+#: The product's provenance record (cerebrum_product_kernel.provenance; written
+#: by converge.converge_writer_emitters). Factory-only by construction.
+PROVENANCE_REL = "docs/provenance/provenance.json"
+#: Where one writer pass records the Factory-owned paths it touched. Factory
+#: internal (builds_push.FACTORY_INTERNAL_PATHS): read by the WRITER gate,
+#: never shipped.
+VIOLATIONS_REL = "docs/writer_factory_owned.json"
+
+CREATED = "created"
+MODIFIED = "modified"
+DELETED = "deleted"
+
+
+def factory_owned_paths() -> Tuple[str, ...]:
+    """Every product path the Factory owns, sorted. The one list."""
+    from app.factory.build.builds_push import STORE_GATE_PATH
+    from app.factory.build.stamp_registry import owned_paths
+
+    return tuple(sorted({*owned_paths(), PROVENANCE_REL, STORE_GATE_PATH}))
+
+
+def snapshot(root: Path | str, paths: Optional[Iterable[str]] = None) -> Dict[str, Optional[bytes]]:
+    """``{path: bytes or None}`` for every Factory-owned path under ``root``."""
+    base = Path(root)
+    out: Dict[str, Optional[bytes]] = {}
+    for rel in paths if paths is not None else factory_owned_paths():
+        target = base / rel
+        try:
+            out[rel] = target.read_bytes() if target.is_file() else None
+        except OSError:
+            out[rel] = None
+    return out
+
+
+def writer_touched(
+    before: Mapping[str, Optional[bytes]], after: Mapping[str, Optional[bytes]]
+) -> List[Dict[str, str]]:
+    """Each Factory-owned path the writer created, modified or deleted."""
+    touched: List[Dict[str, str]] = []
+    for rel in sorted(set(before) | set(after)):
+        old, new = before.get(rel), after.get(rel)
+        if old == new:
+            continue
+        if old is None:
+            how = CREATED
+        elif new is None:
+            how = DELETED
+        else:
+            how = MODIFIED
+        touched.append({"path": rel, "change": how})
+    return touched
+
+
+def restore(root: Path | str, before: Mapping[str, Optional[bytes]], touched: Iterable[Mapping[str, str]]) -> None:
+    """Put every touched path back as the Factory left it before the writer
+    ran: its bytes, or absent. The rework names the path, so this is never a
+    silent overwrite -- it keeps the next pass and the Factory's own
+    renderers working from the Factory's file, not the writer's."""
+    base = Path(root)
+    for row in touched:
+        rel = row["path"]
+        target = base / rel
+        old = before.get(rel)
+        if old is None:
+            if target.is_file():
+                target.unlink()
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(old)
+
+
+def record(root: Path | str, touched: List[Dict[str, str]]) -> None:
+    """Write this pass's record (an empty list on a clean pass)."""
+    target = Path(root) / VIOLATIONS_REL
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({"touched": touched}, indent=2) + "\n", encoding="utf-8")
+
+
+def recorded(root: Path | str) -> List[Dict[str, str]]:
+    """The last writer pass's record; empty when there is none."""
+    try:
+        data = json.loads((Path(root) / VIOLATIONS_REL).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    rows = data.get("touched") if isinstance(data, dict) else None
+    return [r for r in rows or [] if isinstance(r, dict) and r.get("path")]
+
+
+def rework_findings(touched: Iterable[Mapping[str, str]]) -> List[str]:
+    """One rework line per path, naming it."""
+    return [
+        f"{row['path']}: {row.get('change', MODIFIED)} by the writer -- this file is "
+        "Factory-owned (the Factory renders it); leave it to the Factory and do not write it"
+        for row in touched
+    ]
+

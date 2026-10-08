@@ -422,6 +422,18 @@ class ProcessIsolationWatch:
             f"agents_in_server_session={shared} spawn_isolated={spawn}"
             + (f" errors={self.errors}" if self.errors else ""),
         )
+        # PID-1 survives a group-wide kill from an agent's shell: the server
+        # ran ``kill -TERM 0`` from an agent-spawned child and still answered
+        # (the answer arriving at all is the survival), and the child died of
+        # its own signal. A POSIX server that cannot judge it is not a pass.
+        posix = [b for b in self.samples if b.get("posix")]
+        contained = [b.get("group_kill_contained") for b in posix]
+        check(
+            "server survives kill -TERM 0 from an agent shell",
+            all(c is True for c in contained),
+            f"probes={len(contained)} contained={contained.count(True)} "
+            f"not_contained={contained.count(False)} unjudged={contained.count(None)}",
+        )
 
 
 class BuildDeadline:

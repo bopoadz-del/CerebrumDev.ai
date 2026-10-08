@@ -37,6 +37,9 @@ def gate(tmp_path, monkeypatch):
         mod, "load_pool_literals",
         lambda: frozenset({"repro_zorblat_ledger", "zorblat ledger desk", "zorblat_payments"}),
     )
+    # And the Store's block ids (block_name_dispatch): invented ids, so a
+    # clean runner without a Cerebrum-Blocks checkout exercises every form.
+    monkeypatch.setattr(mod, "load_block_ids", lambda root=None: frozenset({"zorblat_parser"}))
     (tmp_path / "scripts").mkdir()
     (tmp_path / "pkg").mkdir()
     return mod

@@ -28,15 +28,15 @@ What a cycle builds (owner ruling, 2026-10-08). The ANCHORS -- the regression
 pair in ``release_cycle.json``, whose certified exports make a flip there a
 regression -- plus ROTATION picks from the pool in ``backend/tests/repro_pool``
 (at least eight blueprints across verticals, each with its own country,
-currency and build level). Cycle ``k`` builds ``pool[(p*k + i) mod n]`` for the
-pool's ``p`` picks, so with eight blueprints and two picks each comes round
-every four cycles. Nothing here knows any blueprint; nothing is random. ``k``
-advances only past a cycle that PASSED: the newest completed cycle's own
-uploaded report decides -- passed, ``k+1``; failed, the same ``k``, so the
-"one more cycle" after a fix re-runs the picks that failed; no report with a
-rotation yet, ``0``. The record is GitHub's (the previous runs of this
-workflow and their report artifacts), read with the run's own token; nothing
-is stored anywhere, and an unreadable report fails closed. Release = every
+currency and build level). Rotation v2 (owner ruling, 2026-10-08): slot 1
+repeats the previous cycle's failing pick, slot 2 is the next pool blueprint
+never built before, and a blueprint that has certified is never re-run.
+Which is which is derived, never stored: every readable report of this
+workflow's completed runs, plus the committed seed
+(``release_cycle.json`` ``rotation.seed``) for cycles whose reports are gone.
+The record is GitHub's (the previous runs and their report artifacts), read
+with the run's own token; an unreadable report fails closed. Nothing here
+knows any blueprint; nothing is random. Release = every
 anchor AND every pick exports certified, and smoke A and smoke B pass, on one
 commit.
 
@@ -92,10 +92,10 @@ PROGRESS_S = 300
 REPORT_NAME = "cycle_report.json"
 REPROS_NAME = "repros.json"
 #: The workflow that runs a cycle, and the artifact its report job uploads:
-#: the rotation counter reads the previous cycle's verdict from there.
+#: the rotation reads the previous cycles' picks and verdicts from there.
 CYCLE_WORKFLOW = "post-deploy-smoke.yml"
 REPORT_ARTIFACT = "release-cycle-report"
-#: How many completed cycle runs back the counter looks for a report.
+#: How many completed cycle runs back the rotation reads reports.
 HISTORY_RUNS = 30
 #: The fields of an export's MANIFEST.json the report carries.
 MANIFEST_FIELDS = ("certified", "build_level", "advisory_checks")
@@ -156,51 +156,110 @@ def load_rotation(config: Mapping[str, Any]) -> Dict[str, Any]:
 # -- the rotation ------------------------------------------------------------
 
 
-def select_rotation(pool: list, *, k: int, picks: int) -> list:
-    """Cycle ``k``'s picks: ``pool[(picks*k + i) mod n]`` for i in 0..picks-1.
+def rotation_seed(config: Mapping[str, Any]) -> Dict[str, list]:
+    """The committed rotation record (``rotation.seed``): which blueprints
+    had already been TRIED and which had CERTIFIED before the reports that are
+    still readable. Data, so a cycle whose report artifact expired still
+    counts."""
+    seed = (config.get("rotation") or {}).get("seed") or {}
+    if not isinstance(seed, Mapping):
+        raise CycleError(f"rotation.seed must be an object, got {seed!r}")
+    out: Dict[str, list] = {}
+    for field in ("certified", "tried"):
+        values = seed.get(field) or []
+        if not isinstance(values, list) or not all(isinstance(v, str) and v for v in values):
+            raise CycleError(f"rotation.seed.{field} must be a list of blueprint ids")
+        out[field] = list(values)
+    return out
 
-    Deterministic -- the pool's declared order and the counter decide it, no
-    clock and no random source -- and a cycle never builds one blueprint twice.
-    """
-    n = len(pool)
-    if not isinstance(k, int) or isinstance(k, bool) or k < 0:
-        raise CycleError(f"the rotation counter must be a non-negative integer, got {k!r}")
-    if not 1 <= picks <= n:
-        raise CycleError(f"a cycle picks 1..{n} blueprints from a pool of {n}, not {picks}")
-    return [pool[(picks * k + i) % n] for i in range(picks)]
 
+def rotation_state(reports: Iterable[Any], seed: Mapping[str, Any]) -> Dict[str, Any]:
+    """What the rotation has done so far, from the cycle reports and the seed.
 
-def rotation_k_from_history(reports: Iterable[Any]) -> "tuple[int, str]":
-    """The cycle counter ``k`` and what decided it.
+    ``reports`` are the reports of COMPLETED cycle runs, newest first (``None``
+    for a run that never wrote one -- its commit never went live, so it ran no
+    cycle). Returns:
 
-    ``reports`` are the cycle reports of COMPLETED cycle runs, newest first
-    (``None`` for a run that never wrote one -- its commit never went live, so
-    it ran no cycle). The newest report decides: it passed, ``k+1``; it failed,
-    the same ``k`` -- the cycle after a fix re-runs the picks that failed. A
-    report from before the rotation existed, or no report at all, is the first
-    cycle: ``0``. A report that is there but unreadable fails closed; so does
-    a history that cannot be read (the iterator raises).
-    """
+    * ``certified`` -- every blueprint a cycle exported certified (or the seed
+      says did); never picked again;
+    * ``tried`` -- every blueprint ever picked, oldest first;
+    * ``failing`` -- tried and never certified, the most recent failure first
+      (the previous cycle's failing picks lead).
+
+    A report that is there but unreadable fails closed; so does a history
+    that cannot be read (the iterator raises)."""
+    certified = set(seed.get("certified") or [])
+    tried_newest_first: list = []
+    failing: list = []
+    cycles = 0
     for report in reports:
         if report is None:
             continue
         if not isinstance(report, Mapping):
-            raise CycleError(f"the previous cycle report is not a record: {str(report)[:80]!r}")
-        verdict = report.get("verdict")
+            raise CycleError(f"a previous cycle report is not a record: {str(report)[:80]!r}")
+        if report.get("verdict") not in ("pass", "fail"):
+            raise CycleError(f"a previous cycle report has no verdict: {report.get('verdict')!r}")
         rotation = report.get("rotation")
         if rotation is None:
-            if verdict not in ("pass", "fail"):
-                raise CycleError(f"the previous cycle report has no verdict: {verdict!r}")
-            return 0, "first rotation cycle (the previous cycle ran no rotation)"
-        k = rotation.get("k") if isinstance(rotation, Mapping) else None
-        if not isinstance(k, int) or isinstance(k, bool) or k < 0:
-            raise CycleError(f"the previous cycle report carries no counter: {rotation!r}")
-        if verdict == "pass":
-            return k + 1, f"the previous cycle (k={k}) passed: the next pair"
-        if verdict == "fail":
-            return k, f"the previous cycle (k={k}) failed: the same pair again"
-        raise CycleError(f"the previous cycle report has no verdict: {verdict!r}")
-    return 0, "first rotation cycle (no earlier cycle report)"
+            continue  # a cycle from before the rotation existed
+        picks = rotation.get("picks") if isinstance(rotation, Mapping) else None
+        if not isinstance(picks, list) or not all(isinstance(p, str) for p in picks):
+            raise CycleError(f"a previous cycle report names no picks: {rotation!r}")
+        cycles += 1
+        runs = report.get("runs") if isinstance(report.get("runs"), Mapping) else {}
+        for name in picks:
+            run = runs.get(name)
+            if isinstance(run, Mapping) and _repro_passed(run):
+                certified.add(name)
+            elif name not in failing:
+                failing.append(name)
+            if name not in tried_newest_first:
+                tried_newest_first.append(name)
+    tried = list(seed.get("tried") or [])
+    for name in reversed(tried_newest_first):
+        if name not in tried:
+            tried.append(name)
+    for name in seed.get("tried") or []:
+        if name not in failing:
+            failing.append(name)  # seed failures rank after any reported one
+    failing = [name for name in failing if name not in certified]
+    return {
+        "certified": sorted(certified),
+        "tried": tried,
+        "failing": failing,
+        "cycles": cycles,
+    }
+
+
+def select_rotation(pool: list, state: Mapping[str, Any], *, picks: int) -> list:
+    """This cycle's picks: the most recent failing blueprint first (slot 1),
+    then the next pool blueprints never built (in the pool's declared order).
+    A certified blueprint is never picked. With more slots than fresh
+    blueprints, older failures fill them; an exhausted pool picks nothing.
+
+    Deterministic -- the pool's declared order and the record decide it,
+    nothing else -- and a cycle never builds one blueprint twice.
+    """
+    n = len(pool)
+    if not 1 <= picks <= n:
+        raise CycleError(f"a cycle picks 1..{n} blueprints from a pool of {n}, not {picks}")
+    by_id = {bp["id"]: bp for bp in pool}
+    known = set(state.get("certified") or []) | set(state.get("tried") or [])
+    unknown = sorted(known - set(by_id))
+    if unknown:
+        raise CycleError(f"the rotation record names blueprints outside the pool: {unknown}")
+    certified = set(state.get("certified") or [])
+    tried = set(state.get("tried") or [])
+    failing = [name for name in state.get("failing") or [] if name not in certified]
+    fresh = [bp["id"] for bp in pool if bp["id"] not in tried and bp["id"] not in certified]
+    repeats = failing[: max(1, picks - 1)] if failing else []
+    chosen = list(repeats)
+    for name in fresh + failing:
+        if len(chosen) >= picks:
+            break
+        if name not in chosen:
+            chosen.append(name)
+    return [by_id[name] for name in chosen]
 
 
 def _github_json(url: str, token: str) -> Any:
@@ -248,8 +307,7 @@ def cycle_reports_from_github(
     *, repo: str, token: str, exclude_run_id: str = "", api: str = "https://api.github.com",
 ) -> Iterable[Any]:
     """The reports of this workflow's completed runs, newest first (``None``
-    for a run that uploaded no report). Lazy: the counter stops at the first
-    report. Any failure to read raises CycleError -- the counter never
+    for a run that uploaded no report). Any failure to read raises CycleError -- the counter never
     guesses."""
     try:
         runs = _github_json(
@@ -293,16 +351,16 @@ def _reports_from_environment() -> Iterable[Any]:
     )
 
 
-def plan_runs(config: Mapping[str, Any], pool: list, *, k: int, picks: int) -> list:
-    """Every build this cycle runs, in order: the anchors, then cycle ``k``'s
-    rotation picks. Each carries its brief, level and typed intake (anchors
+def plan_runs(config: Mapping[str, Any], picked: list) -> list:
+    """Every build this cycle runs, in order: the anchors, then the rotation
+    picks (``select_rotation``). Each carries its brief, level and typed intake (anchors
     declare none, exactly as they always have)."""
     runs = [
         {"name": str(a["name"]), "role": ANCHOR, "brief": a["brief"],
          "level": config["build_level"], "intake": {}}
         for a in config["anchors"]
     ]
-    for bp in select_rotation(pool, k=k, picks=picks):
+    for bp in picked:
         runs.append({
             "name": str(bp["id"]), "role": ROTATION, "brief": bp["brief"],
             "level": bp["build_level"],
@@ -586,9 +644,10 @@ def render_markdown(report: Mapping[str, Any]) -> str:
     ]
     rotation = report.get("rotation") or {}
     if rotation:
+        repeats = ", ".join(str(p) for p in rotation.get("repeats") or []) or "none"
+        fresh = ", ".join(str(p) for p in rotation.get("fresh") or []) or "none"
         lines += [
-            f"Rotation k={rotation.get('k')} of a pool of {rotation.get('pool_size')}: "
-            + ", ".join(str(p) for p in rotation.get("picks") or []),
+            f"Rotation from a pool of {rotation.get('pool_size')}: repeats {repeats}; fresh {fresh}.",
             "",
         ]
     if report.get("reason"):
@@ -632,13 +691,19 @@ def plan_cycle(
     ``reports``: the previous cycles' reports, newest first; read from GitHub
     (this workflow's completed runs) when not given."""
     rot = load_rotation(config)
-    k, basis = rotation_k_from_history(_reports_from_environment() if reports is None else reports)
-    runs = plan_runs(config, rot["pool"], k=k, picks=rot["picks"])
+    history = _reports_from_environment() if reports is None else reports
+    state = rotation_state(history, rotation_seed(config))
+    picked = select_rotation(rot["pool"], state, picks=rot["picks"])
+    runs = plan_runs(config, picked)
+    names = [bp["id"] for bp in picked]
+    failing = set(state["failing"])
     rotation = {
-        "k": k,
-        "picks": [r["name"] for r in runs if r["role"] == ROTATION],
+        "picks": names,
+        "repeats": [n for n in names if n in failing],
+        "fresh": [n for n in names if n not in failing],
+        "certified": state["certified"],
+        "cycles_read": state["cycles"],
         "pool_size": len(rot["pool"]),
-        "counter": basis,
         "commit": commit,
     }
     return {"runs": runs, "rotation": rotation}
