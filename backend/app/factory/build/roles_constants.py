@@ -651,6 +651,37 @@ def execute(
                 )
             return refused
     return result
+
+
+def verify_locked_blocks() -> None:
+    """Start-up check: every block blocks.lock.json lists loads from this
+    platform's vendored tree, or the platform refuses to start. A locked block
+    that cannot be loaded is never replaced by anything else, silently."""
+    import json as _json
+
+    lock = _VENDOR.parents[1] / "blocks.lock.json"
+    try:
+        data = _json.loads(lock.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return
+    blocks = data.get("blocks") if isinstance(data, dict) else None
+    if isinstance(blocks, dict):
+        ids = list(blocks)
+    else:
+        ids = [str(b.get("id") or "") for b in blocks or [] if isinstance(b, dict)]
+    failed = []
+    for block_id in [i for i in ids if i]:
+        try:
+            load_block(block_id)
+        except Exception as exc:  # noqa: BLE001 -- every failure is named below
+            failed.append("%s (%s: %s)" % (block_id, type(exc).__name__, exc))
+    if failed:
+        raise BlockNotVendored(
+            "locked block(s) cannot be loaded; refusing to start: " + "; ".join(failed)
+        )
+
+
+verify_locked_blocks()
 '''
 
 _PY_DEFAULTS = {

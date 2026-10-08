@@ -1003,6 +1003,19 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
     from app.factory.build.image_sufficiency import check as image_check
 
     image = image_check(ctx.workspace)
+    if image.misloaded:
+        return GateResult(
+            ok=False,
+            gate=WRITER_CONTRACT_CHECK,
+            reason="locked_block_loaded_elsewhere",
+            detail=f"locked_block_loaded_elsewhere: {image.detail}",
+            findings=[
+                f"{line}: a block listed in blocks.lock.json must load from its locked path or fail "
+                "loudly at start-up, never fall back silently"
+                for line in image.misloaded
+            ],
+            payload={"misloaded": list(image.misloaded)},
+        )
     if not image.ok:
         return GateResult(
             ok=False,
