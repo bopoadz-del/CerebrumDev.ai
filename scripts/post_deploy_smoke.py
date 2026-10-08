@@ -360,6 +360,50 @@ BUILD_WAIT_S = int(os.environ.get("SMOKE_BUILD_WAIT_S", "5400"))
 SMOKE_BUILD_LEVEL = "production"
 
 
+def wait_for_export(sid, tok, *, wait_s, sleep=time.sleep, clock=time.time):
+    """Poll the export until the build's own terminal state.
+
+    A real build runs COLLECTOR -> STORE gate in 30-45 min (the writer alone
+    is 20-40). 900 s was shorter than any healthy build, so "export zip"
+    read DEAD on every build that did not fail fast (2026-10-04, 080652d9:
+    "still being built 2/5"). Wait for the build's own terminal state.
+
+    A gateway answer (TRANSIENT) is a platform restart, not the build's
+    verdict: the server resumes an orphaned build on boot, so keep polling.
+    Live 2026-10-08 03:19 UTC: smoke B read DEAD on "http=504" while the
+    restarted server was already resuming its WRITER.
+    """
+    s, blob = 0, b""
+    build = {}
+    deadline = clock() + wait_s
+    last_print = 0.0
+    while clock() < deadline:
+        s, blob = req("GET", f"/v1/sessions/{sid}/product/package", token=tok, raw=True)
+        st, status_body = req(
+            "GET", f"/v1/sessions/{sid}/product/build-status", token=tok
+        )
+        payload = status_body if isinstance(status_body, dict) else {}
+        nested = payload.get("build")
+        build = nested if isinstance(nested, dict) else payload
+        state = build.get("state")
+        if s == 200:
+            break
+        if s == 409 and state in {"failed", "stalled"}:
+            break
+        if s != 409 and s not in TRANSIENT:
+            break
+        now = clock()
+        if now - last_print >= 30:
+            print(
+                f"  waiting for zip: http={s} build={state} "
+                f"{build.get('phases_done')}/{build.get('phases_total')} "
+                f"{(build.get('activity') or '')[:80]}"
+            )
+            last_print = now
+        sleep(5)
+    return s, blob, build
+
+
 #: Upper bound on answered question rounds. The server caps elicitation
 #: (MAX_ELICITATION_ROUNDS) and turns the next ask into a draft, so the loop
 #: ends by the product's own contract; this only stops a server that broke it.
@@ -634,38 +678,7 @@ def main():
     # The coding-agent runner builds in the background. A 409 here means
     # "still writing", not a dead kernel — poll until the ledger is terminal.
     # build-status nests the ledger under "build".
-    s, blob = 0, b""
-    build = {}
-    # A real build runs COLLECTOR -> STORE gate in 30-45 min (the writer alone
-    # is 20-40). 900 s was shorter than any healthy build, so "export zip"
-    # read DEAD on every build that did not fail fast (2026-10-04, 080652d9:
-    # "still being built 2/5"). Wait for the build's own terminal state.
-    deadline = time.time() + BUILD_WAIT_S
-    last_print = 0.0
-    while time.time() < deadline:
-        s, blob = req("GET", f"/v1/sessions/{sid}/product/package", token=tok, raw=True)
-        st, status_body = req(
-            "GET", f"/v1/sessions/{sid}/product/build-status", token=tok
-        )
-        payload = status_body if isinstance(status_body, dict) else {}
-        nested = payload.get("build")
-        build = nested if isinstance(nested, dict) else payload
-        state = build.get("state")
-        if s == 200:
-            break
-        if state in {"failed", "stalled"}:
-            break
-        if s != 409:
-            break
-        now = time.time()
-        if now - last_print >= 30:
-            print(
-                f"  waiting for zip: http={s} build={state} "
-                f"{build.get('phases_done')}/{build.get('phases_total')} "
-                f"{(build.get('activity') or '')[:80]}"
-            )
-            last_print = now
-        time.sleep(5)
+    s, blob, build = wait_for_export(sid, tok, wait_s=BUILD_WAIT_S)
     ok = s == 200 and isinstance(blob, (bytes, bytearray)) and blob[:2] == b"PK"
     names = zipfile.ZipFile(io.BytesIO(blob)).namelist() if ok else []
     evidence = f"http={s} files={len(names)}"

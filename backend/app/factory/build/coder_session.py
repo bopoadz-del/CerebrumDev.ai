@@ -42,6 +42,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from app.factory.build.agent_process import (
+    agent_popen_kwargs,
+    kill_agent_tree,
+    terminate_agent_tree,
+)
 from app.factory.build.failure_kinds import TIMEOUT, record_failure_kind
 from app.factory.build.workflow_accept import (
     handler_has_prepared_event_bus_step,
@@ -3033,6 +3038,9 @@ def _run_cli_session(
         "errors": "replace",
         "bufsize": 1,
         "env": session_env,
+        # The agent's shell gets its own process group: a group-wide signal
+        # it sends can never reach the Factory server (agent_process).
+        **agent_popen_kwargs(),
     }
     if stdin_payload is not None:
         popen_kw["stdin"] = subprocess.PIPE
@@ -3061,11 +3069,11 @@ def _run_cli_session(
             if action == CONTROL_STOP:
                 stopped = True
                 _append_log(log_path, "[owner STOP]")
-                proc.terminate()
+                terminate_agent_tree(proc)
                 try:
                     proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
-                    proc.kill()
+                    kill_agent_tree(proc)
                 break
             if deadline is not None and clock() >= deadline:
                 hung_killed = True
@@ -3074,11 +3082,11 @@ def _run_cli_session(
                     f"[{NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL}] "
                     "budget wall — stopping CLI session",
                 )
-                proc.terminate()
+                terminate_agent_tree(proc)
                 try:
                     proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
-                    proc.kill()
+                    kill_agent_tree(proc)
                 break
             if proc.poll() is not None:
                 break
@@ -3099,7 +3107,7 @@ def _run_cli_session(
         code = proc.wait(timeout=2) if proc.poll() is None else proc.returncode
     except Exception as exc:  # noqa: BLE001
         if proc.poll() is None:
-            proc.kill()
+            kill_agent_tree(proc)
         return DispatchResult(
             via="cli",
             ok=False,
