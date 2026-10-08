@@ -48,6 +48,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
+from app.factory.build.agent_process import agent_popen_kwargs, kill_agent_tree
+
 logger = logging.getLogger("cerebrumdev.factory.codewhale_worker")
 
 WORKER_CONCURRENCY_CAPPED = "worker_concurrency_capped"
@@ -987,6 +989,7 @@ def run_worker_job(
                     text=True,
                     timeout=10.0,
                     stdin=subprocess.DEVNULL,
+                    **agent_popen_kwargs(),
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
                 raise WorkerError(
@@ -1019,7 +1022,7 @@ def run_worker_job(
         relay_queue: "queue.Queue[str]" = queue.Queue()
         quiet_clock = {"last": time.monotonic()}
 
-        def _relay(raw: str) -> None:
+        def _relay(raw: str, fields: Optional[Dict[str, Any]] = None) -> None:
             line = sanitize_for_status(raw)[:400]
             if not line.strip():
                 return
@@ -1041,7 +1044,7 @@ def run_worker_job(
                     pass
             if progress is not None:
                 try:
-                    progress(line, {"tool": _tool_hint(line)})
+                    progress(line, {"tool": _tool_hint(line), **(fields or {})})
                 except Exception:  # noqa: BLE001 — telemetry never fails the build
                     pass
 
@@ -1073,6 +1076,9 @@ def run_worker_job(
                 text=True,
                 bufsize=1,
                 env=_child_env(session_id, cli_home),
+                # The agent's shell gets its own process group: a group-wide
+                # signal it sends can never reach the Factory server.
+                **agent_popen_kwargs(),
             )
         except OSError as exc:
             raise WorkerError(
@@ -1111,12 +1117,12 @@ def run_worker_job(
             if since < HEARTBEAT_EVERY_S:
                 return
             narration["last_said"] = now
+            files = max(0, count_authored_files(cwd) - files_at_start)
             _relay(
-                heartbeat_line(
-                    now - started_at,
-                    max(0, count_authored_files(cwd) - files_at_start),
-                    narration["steps"],
-                )
+                heartbeat_line(now - started_at, files, narration["steps"]),
+                # The same facts as data, for the budget ramp: the line is for
+                # people, these fields are what the inspector counts.
+                {FILES_ON_DISK: files, STEPS_REPORTED: narration["steps"]},
             )
 
         def _pump_prompt_progress() -> None:
@@ -1141,7 +1147,7 @@ def run_worker_job(
             for raw in chunk.splitlines():
                 if raw.strip():
                     narration["steps"] += 1
-                    _relay("writer: " + raw)
+                    _relay("writer: " + raw, {STEPS_REPORTED: narration["steps"]})
 
         stdout_reader.start()
         stderr_reader.start()
@@ -1219,7 +1225,8 @@ def run_worker_job(
                     pass
 
         _note_cli_started()
-        deadline = time.monotonic() + timeout
+        wait_started = time.monotonic()
+        deadline = wait_started + timeout
         try:
             while True:
                 try:
@@ -1234,11 +1241,15 @@ def run_worker_job(
                         if left is not None:
                             deadline = max(deadline, time.monotonic() + float(left))
                     if time.monotonic() > deadline:
-                        proc.kill()
+                        kill_agent_tree(proc)
                         proc.wait()
+                        # Name the wall that actually fired: the ramp may
+                        # have lifted it past the dispatch value (live
+                        # 2026-10-08 read "exceeded 1800.0s" at ~2640s).
                         raise WorkerError(
                             f"{WORKER_TIMED_OUT}: headless job exceeded "
-                            f"{timeout}s"
+                            f"its {deadline - wait_started:.0f}s wall "
+                            f"(dispatched with {timeout}s)"
                         )
                     # Drain relays on THIS thread: ledger notes stay
                     # single-writer (the build thread is blocked here).
@@ -1346,6 +1357,12 @@ def _tool_hint(line: str) -> str:
 HEARTBEAT_EVERY_S = 60.0
 HEARTBEAT_PREFIX = "writer working"
 _STEP_PREFIX = "writer: STEP"
+#: Progress-record fields (typed, never parsed from the narration text): the
+#: steps the agent has reported in this pass, and the files it has put on
+#: disk. The budget ramp reads them to tell a working writer from a quiet one.
+STEPS_REPORTED = "steps_reported"
+FILES_ON_DISK = "files_on_disk"
+WRITER_PROGRESS_FIELDS = (STEPS_REPORTED, FILES_ON_DISK)
 
 
 def is_narration_line(line: str) -> bool:

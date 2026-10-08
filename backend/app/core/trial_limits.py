@@ -30,7 +30,10 @@ from . import accounts_store
 # principal, the rest carry the repro builds. Quota exemption keys on "an
 # account the smoke gate issued"; the reserved build slot keys on index 0
 # ONLY, so a repro build can never take the slot the smoke depends on.
-SMOKE_PRINCIPAL_COUNT = 4
+# Five: the smoke plus four builds per cycle -- the two anchors and the two
+# rotation picks (scripts/release_cycle.json, backend/tests/repro_pool);
+# tests/test_repro_rotation.py fails if the cycle ever needs more.
+SMOKE_PRINCIPAL_COUNT = 5
 SMOKE_PRINCIPALS = tuple(
     f"factory-smoke-{chr(ord('a') + i)}@cerebrum-dev.invalid"
     for i in range(SMOKE_PRINCIPAL_COUNT)

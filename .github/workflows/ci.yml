@@ -212,7 +212,10 @@ jobs:
       # blueprints and logs that the builds branches were skipped).
       # block_name_dispatch: a Store block id (loaded from the same Store
       # checkout) compared against / keyed on / aliased to a block reference.
-      # Enforced at baseline 0; with no Store the step fails closed.
+      # blueprint_name: a string equal to a release-cycle rotation blueprint's
+      # id, name or vertical (read from backend/tests/repro_pool): nothing in
+      # the Factory may branch on which blueprint a cycle is building.
+      # Enforced at baseline 0; with no Store or no pool the step fails closed.
       - name: Hardwiring gate (no new per-case form)
         working-directory: .
         env:

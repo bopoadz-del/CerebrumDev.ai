@@ -24,9 +24,24 @@ the report claimed a parallel cycle.
 
 Briefs are data (``scripts/release_cycle.json``); this file knows none of them.
 
+What a cycle builds (owner ruling, 2026-10-08). The ANCHORS -- the regression
+pair in ``release_cycle.json``, whose certified exports make a flip there a
+regression -- plus ROTATION picks from the pool in ``backend/tests/repro_pool``
+(at least eight blueprints across verticals, each with its own country,
+currency and build level). Cycle ``k`` builds ``pool[(p*k + i) mod n]`` for the
+pool's ``p`` picks, so with eight blueprints and two picks each comes round
+every four cycles. Nothing here knows any blueprint; nothing is random. ``k``
+is git history: the number of first-parent commits from the one that added the
+pool index to the cycle's commit -- every master push deploys and starts a
+cycle, a re-run on the same commit picks the same pair, and no counter is
+stored anywhere. Release = every anchor AND every pick exports certified, and
+smoke A and smoke B pass, on one commit.
+
     # the commit this cycle is about (prints sha=...; exit 1 unless it is live)
     python scripts/release_cycle.py live-sha [--expect <sha>]
-    # the repros, beside the live-smoke job
+    # what a cycle on this commit builds (anchors + rotation picks), offline
+    python scripts/release_cycle.py plan
+    # the repros (anchors + this cycle's picks), beside the live-smoke job
     python scripts/release_cycle.py repros --out cycle/
     # after smoke A and the repros: smoke B ran; merge one report
     python scripts/release_cycle.py report --out cycle/ --smoke-a pass --smoke-b pass
@@ -40,6 +55,7 @@ import argparse
 import importlib.util
 import io
 import json
+import math
 import os
 import subprocess
 import sys
@@ -52,7 +68,14 @@ from typing import Any, Callable, Dict, Iterable, Mapping, Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 SMOKE_SCRIPT = ROOT / "scripts" / "post_deploy_smoke.py"
+POOL_SCRIPT = ROOT / "scripts" / "repro_pool.py"
 DEFAULT_CONFIG = ROOT / "scripts" / "release_cycle.json"
+#: Run roles in the report: the regression pair, and the cycle's pool picks.
+ANCHOR = "anchor"
+ROTATION = "rotation"
+#: The typed Floor intake a pool blueprint declares (the chat request's
+#: ``vertical`` / ``country`` / ``currency`` fields).
+INTAKE_FIELDS = ("vertical", "country", "currency")
 
 #: The smoke's own principal on the roster. Only its builds may use the
 #: worker's reserved slot (server: trial_limits.SMOKE_RESERVED_PRINCIPAL).
@@ -76,21 +99,124 @@ class CycleError(RuntimeError):
 
 
 def load_config(path: Path | str = DEFAULT_CONFIG) -> Dict[str, Any]:
-    """The cycle's data: build level, target, and the repro briefs."""
+    """The cycle's data: build level, the anchor briefs, the rotation pool and
+    how many builds the live box runs at once."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    repros = data.get("repros")
-    if not isinstance(repros, list) or not repros:
-        raise CycleError(f"{path}: 'repros' must be a non-empty list")
-    for entry in repros:
+    anchors = data.get("anchors")
+    if not isinstance(anchors, list) or not anchors:
+        raise CycleError(f"{path}: 'anchors' must be a non-empty list")
+    for entry in anchors:
         if not isinstance(entry, dict) or not str(entry.get("name") or "").strip():
-            raise CycleError(f"{path}: every repro needs a 'name'")
+            raise CycleError(f"{path}: every anchor needs a 'name'")
         if not str(entry.get("brief") or "").strip():
-            raise CycleError(f"{path}: repro {entry.get('name')!r} has no 'brief'")
-    names = [str(r["name"]) for r in repros]
+            raise CycleError(f"{path}: anchor {entry.get('name')!r} has no 'brief'")
+    names = [str(r["name"]) for r in anchors]
     if len(names) != len(set(names)):
-        raise CycleError(f"{path}: repro names must be distinct: {names}")
+        raise CycleError(f"{path}: anchor names must be distinct: {names}")
+    rotation = data.get("rotation")
+    if not isinstance(rotation, dict) or not str(rotation.get("pool") or "").strip():
+        raise CycleError(f"{path}: 'rotation' must name its 'pool' index")
+    slots = data.get("user_build_slots")
+    if not isinstance(slots, int) or isinstance(slots, bool) or slots < 1:
+        raise CycleError(f"{path}: 'user_build_slots' must be a positive integer")
     data.setdefault("build_level", "production")
     return data
+
+
+def _pool_module():
+    spec = importlib.util.spec_from_file_location("repro_pool", POOL_SCRIPT)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def load_rotation(config: Mapping[str, Any]) -> Dict[str, Any]:
+    """The configured pool in its declared order, and how many blueprints a
+    cycle picks from it -- both from the pool index, the one source
+    (scripts/repro_pool.py)."""
+    mod = _pool_module()
+    index = ROOT / str(config["rotation"]["pool"])
+    try:
+        return {"pool": mod.load_pool(index), "picks": int(mod.load_index(index)["picks_per_cycle"])}
+    except mod.PoolError as exc:
+        raise CycleError(str(exc)) from exc
+
+
+# -- the rotation ------------------------------------------------------------
+
+
+def select_rotation(pool: list, *, k: int, picks: int) -> list:
+    """Cycle ``k``'s picks: ``pool[(picks*k + i) mod n]`` for i in 0..picks-1.
+
+    Deterministic -- the pool's declared order and the counter decide it, no
+    clock and no random source -- and a cycle never builds one blueprint twice.
+    """
+    n = len(pool)
+    if not isinstance(k, int) or isinstance(k, bool) or k < 0:
+        raise CycleError(f"the rotation counter must be a non-negative integer, got {k!r}")
+    if not 1 <= picks <= n:
+        raise CycleError(f"a cycle picks 1..{n} blueprints from a pool of {n}, not {picks}")
+    return [pool[(picks * k + i) % n] for i in range(picks)]
+
+
+def _git(repo_root: Path, *args: str) -> str:
+    done = subprocess.run(
+        ["git", "-C", str(repo_root), *args], capture_output=True, text=True,
+    )
+    if done.returncode != 0:
+        raise CycleError(f"git {' '.join(args)}: {(done.stderr or done.stdout).strip()[:300]}")
+    return done.stdout.strip()
+
+
+def rotation_index(sha: str, *, repo_root: Path | str = ROOT, index_rel: str) -> int:
+    """The cycle counter ``k`` for ``sha``: how many first-parent commits lie
+    between the commit that ADDED the pool index and ``sha`` (0 on that commit).
+
+    Git history is the record -- auditable, identical on every runner, nothing
+    stored. Fails closed on a shallow checkout (the history is not there to
+    count) and on a commit from before the pool existed; it never guesses.
+    """
+    repo = Path(repo_root)
+    if _git(repo, "rev-parse", "--is-shallow-repository") == "true":
+        raise CycleError(
+            "the rotation counter needs full git history; this checkout is shallow "
+            "(actions/checkout fetch-depth: 0)"
+        )
+    added = _git(repo, "log", "--diff-filter=A", "--format=%H", sha, "--", index_rel).splitlines()
+    if not added:
+        raise CycleError(f"{index_rel} does not exist at {sha}: there is no rotation to count")
+    landed = added[-1]
+    return int(_git(repo, "rev-list", "--count", "--first-parent", f"{landed}..{sha}"))
+
+
+def plan_runs(config: Mapping[str, Any], pool: list, *, k: int, picks: int) -> list:
+    """Every build this cycle runs, in order: the anchors, then cycle ``k``'s
+    rotation picks. Each carries its brief, level and typed intake (anchors
+    declare none, exactly as they always have)."""
+    runs = [
+        {"name": str(a["name"]), "role": ANCHOR, "brief": a["brief"],
+         "level": config["build_level"], "intake": {}}
+        for a in config["anchors"]
+    ]
+    for bp in select_rotation(pool, k=k, picks=picks):
+        runs.append({
+            "name": str(bp["id"]), "role": ROTATION, "brief": bp["brief"],
+            "level": bp["build_level"],
+            "intake": {field: bp[field] for field in INTAKE_FIELDS},
+        })
+    names = [r["name"] for r in runs]
+    if len(names) != len(set(names)):
+        raise CycleError(f"run names must be distinct: {names}")
+    return runs
+
+
+def repro_wait_s(*, builds: int, user_slots: int, build_wait_s: float) -> float:
+    """How long one repro may take: a build's own ceiling times the waves the
+    live box needs to run them all. Slots QUEUE, so a repro in the second wave
+    is waiting, not failing -- it must not be timed out while it waits."""
+    waves = max(1, math.ceil(int(builds) / max(1, int(user_slots))))
+    return float(build_wait_s) * waves
 
 
 # -- the live commit ---------------------------------------------------------
@@ -212,20 +338,28 @@ def drive_build(
     poll_s: float = POLL_S,
     label: str = "",
     save_to: Optional[Path] = None,
+    intake: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, Any]:
     """Draft, choose the level, confirm, approve, then wait for the build's own
     terminal state and take the export. Uses the smoke's client so the flow is
     exactly the smoke's. A transient gateway answer while polling (a platform
-    restart) is a reason to keep polling -- never the build's verdict."""
+    restart) is a reason to keep polling -- never the build's verdict.
+
+    ``intake`` is the typed country / currency / vertical a customer enters on
+    the intake line. It rides with the level choice, and again with Approve, so
+    a proposal the chat model made from the brief and Confirm stored in between
+    can never replace what was typed."""
     started = time.monotonic()
     s, body = smoke.req("POST", "/v1/sessions/", {}, token=token)
     sid = (body or {}).get("session_id") if isinstance(body, dict) else None
     if not sid:
         return {"status": "error", "error": f"session create http={s}"}
+    typed = {k: v for k, v in (intake or {}).items() if k in INTAKE_FIELDS and v}
+    extra = {"fields": typed} if typed else {}
     smoke.chat_until_drafted(sid, token, brief)
-    smoke.chat(sid, token, "", action="set_build_level", value=level)
+    smoke.chat(sid, token, "", action="set_build_level", value=level, **extra)
     smoke.chat(sid, token, "", action="confirm_intake")
-    smoke.chat(sid, token, "", action="approve")
+    smoke.chat(sid, token, "", action="approve", **extra)
 
     transient = getattr(smoke, "TRANSIENT", {502, 503, 504})
     deadline = time.monotonic() + wait_s
@@ -295,11 +429,13 @@ def build_report(
     finished_at: float,
     commit: str,
     live_sha: Optional[str],
+    rotation: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """One record of the cycle. Passes only when both smokes pass, every
-    repro exported a CERTIFIED zip, and live /version still serves the commit
-    the report names (``live_sha``, read when the report is written). The
-    cycle's wall time is recorded, never judged."""
+    repro -- each anchor AND each rotation pick -- exported a CERTIFIED zip,
+    and live /version still serves the commit the report names (``live_sha``,
+    read when the report is written). The cycle's wall time is recorded, never
+    judged. ``rotation`` names which counter value and picks this cycle ran."""
     cycle_s = round(float(finished_at) - float(started_at), 1)
     reasons = []
     if smoke_a.get("status") != "pass":
@@ -314,7 +450,7 @@ def build_report(
     runs: Dict[str, Any] = {"smoke_a": dict(smoke_a)}
     runs.update({name: dict(r) for name, r in repros.items()})
     runs["smoke_b"] = dict(smoke_b)
-    return {
+    report: Dict[str, Any] = {
         "commit": commit,
         "live_sha": live_sha,
         "verdict": "fail" if reasons else "pass",
@@ -322,6 +458,17 @@ def build_report(
         "cycle_s": cycle_s,
         "runs": runs,
     }
+    if rotation is not None:
+        report["rotation"] = dict(rotation)
+    return report
+
+
+def _cell(value: Any) -> str:
+    if value is None or value == "":
+        return "—"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, separators=(",", ":"))
+    return str(value)
 
 
 def render_markdown(report: Mapping[str, Any]) -> str:
@@ -331,20 +478,30 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         f"Cycle time {report['cycle_s'] / 60:.0f} min.",
         "",
     ]
+    rotation = report.get("rotation") or {}
+    if rotation:
+        lines += [
+            f"Rotation k={rotation.get('k')} of a pool of {rotation.get('pool_size')}: "
+            + ", ".join(str(p) for p in rotation.get("picks") or []),
+            "",
+        ]
     if report.get("reason"):
         lines += [f"Why: {report['reason']}", ""]
     lines += [
-        "| Run | Account | Result | Export | Certified | Wall |",
-        "|---|---|---|---|---|---|",
+        "| Run | Role | Account | Result | Export | Certified | Build level | Advisory | Wall |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for name, run in report["runs"].items():
         export = run.get("export") or {}
         manifest = export.get("manifest") or {}
         size = f"{export['bytes']:,} B / {export['files']} files" if export else "—"
         wall = f"{float(run['wall_s']) / 60:.0f} min" if run.get("wall_s") is not None else "—"
+        role = run.get("role") or ("smoke" if name.startswith("smoke") else "—")
         lines.append(
-            f"| {name} | {run.get('account_index', '—')} | {run.get('status')} | {size} | "
-            f"{manifest.get('certified', '—') if export else '—'} | {wall} |"
+            f"| {name} | {role} | {run.get('account_index', '—')} | {run.get('status')} | {size} | "
+            f"{_cell(manifest.get('certified')) if export else '—'} | "
+            f"{_cell(manifest.get('build_level')) if export else '—'} | "
+            f"{_cell(manifest.get('advisory_checks')) if export else '—'} | {wall} |"
         )
     return "\n".join(lines) + "\n"
 
@@ -361,24 +518,47 @@ def _load_smoke(base: str):
     return mod
 
 
-def _repro_tasks(smoke: Any, config: Mapping[str, Any], out: Path) -> Dict[str, Callable[[], Dict[str, Any]]]:
-    names = [r["name"] for r in config["repros"]]
+def plan_cycle(config: Mapping[str, Any], commit: str) -> Dict[str, Any]:
+    """This cycle's builds and the rotation record the report carries."""
+    rot = load_rotation(config)
+    sha = commit or _git(ROOT, "rev-parse", "HEAD")
+    k = rotation_index(sha, repo_root=ROOT, index_rel=str(config["rotation"]["pool"]))
+    runs = plan_runs(config, rot["pool"], k=k, picks=rot["picks"])
+    rotation = {
+        "k": k,
+        "picks": [r["name"] for r in runs if r["role"] == ROTATION],
+        "pool_size": len(rot["pool"]),
+        "counter": f"first-parent commits since {config['rotation']['pool']} was added, at {sha[:12]}",
+    }
+    return {"runs": runs, "rotation": rotation}
+
+
+def _repro_tasks(
+    smoke: Any, config: Mapping[str, Any], runs: list, out: Path,
+) -> Dict[str, Callable[[], Dict[str, Any]]]:
+    names = [r["name"] for r in runs]
     roster = smoke.verified_token_roster(len(names) + 1)
     plan = assign_accounts(names, available=len(roster))
-    wait_s = float(getattr(smoke, "BUILD_WAIT_S", 5400))
+    wait_s = repro_wait_s(
+        builds=len(runs),
+        user_slots=int(config["user_build_slots"]),
+        build_wait_s=float(getattr(smoke, "BUILD_WAIT_S", 5400)),
+    )
     tasks: Dict[str, Callable[[], Dict[str, Any]]] = {}
-    for repro in config["repros"]:
-        name, index = repro["name"], plan["repros"][repro["name"]]
+    for run in runs:
+        index = plan["repros"][run["name"]]
 
-        def task(name=name, index=index, brief=repro["brief"]):
+        def task(run=run, index=index):
             result = drive_build(
-                smoke, roster[index], brief,
-                level=config["build_level"], wait_s=wait_s, label=name, save_to=out,
+                smoke, roster[index], run["brief"],
+                level=run["level"], wait_s=wait_s, label=run["name"], save_to=out,
+                intake=run["intake"],
             )
             result["account_index"] = index
+            result["role"] = run["role"]
             return result
 
-        tasks[name] = task
+        tasks[run["name"]] = task
     return tasks
 
 
@@ -414,7 +594,7 @@ def _finish(out: Path, report: Dict[str, Any]) -> int:
 
 def main(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("mode", choices=("live-sha", "repros", "report", "full"))
+    parser.add_argument("mode", choices=("live-sha", "plan", "repros", "report", "full"))
     parser.add_argument("--base", default=os.environ.get("FACTORY_BASE_URL") or "https://api.cerebrum-dev.com")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     parser.add_argument("--out", default="cycle")
@@ -447,14 +627,36 @@ def main(argv: Optional[list] = None) -> int:
 
     config = load_config(args.config)
 
+    if args.mode == "plan":
+        # What a cycle on this commit would build -- no server touched.
+        try:
+            cycle_plan = plan_cycle(config, commit)
+        except CycleError as exc:
+            print(f"::error::{exc}", file=sys.stderr)
+            return 1
+        print(json.dumps({
+            "rotation": cycle_plan["rotation"],
+            "runs": [{k: r[k] for k in ("name", "role", "level", "intake")} for r in cycle_plan["runs"]],
+        }, indent=1))
+        return 0
+
     if args.mode == "repros":
+        try:
+            cycle_plan = plan_cycle(config, commit)
+        except CycleError as exc:
+            print(f"::error::{exc}", file=sys.stderr)
+            return 1
+        print(f"rotation: {json.dumps(cycle_plan['rotation'])}", flush=True)
         smoke = _load_smoke(args.base)
         if not smoke.wait_for_ready():
             print("the deployed commit never became ready; no repro started")
             return 1
         started = time.time()
-        results = run_parallel(_repro_tasks(smoke, config, out))
-        _write(out, REPROS_NAME, {"started_at": started, "finished_at": time.time(), "repros": results})
+        results = run_parallel(_repro_tasks(smoke, config, cycle_plan["runs"], out))
+        _write(out, REPROS_NAME, {
+            "started_at": started, "finished_at": time.time(),
+            "rotation": cycle_plan["rotation"], "repros": results,
+        })
         return 0 if all(_repro_passed(r) for r in results.values()) else 1
 
     if args.mode == "report":
@@ -467,14 +669,16 @@ def main(argv: Optional[list] = None) -> int:
             finished_at=time.time(),
             commit=commit,
             live_sha=read_live_sha(_load_smoke(args.base)),
+            rotation=recorded.get("rotation"),
         )
         return _finish(out, report)
 
     # full: smoke A beside the repros, then smoke B, one process.
+    cycle_plan = plan_cycle(config, commit)
     smoke = _load_smoke(args.base)
     started = time.time()
     tasks = {"smoke_a": lambda: _smoke_subprocess(args.base)}
-    tasks.update(_repro_tasks(smoke, config, out))
+    tasks.update(_repro_tasks(smoke, config, cycle_plan["runs"], out))
     results = run_parallel(tasks)
     smoke_a = results.pop("smoke_a")
     smoke_b = _smoke_subprocess(args.base)
@@ -482,6 +686,7 @@ def main(argv: Optional[list] = None) -> int:
         smoke_a=smoke_a, repros=results, smoke_b=smoke_b,
         started_at=started, finished_at=time.time(),
         commit=commit, live_sha=read_live_sha(smoke),
+        rotation=cycle_plan["rotation"],
     )
     return _finish(out, report)
 
