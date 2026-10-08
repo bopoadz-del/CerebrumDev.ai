@@ -150,3 +150,26 @@ def test_nothing_here_names_a_product_block_or_directory():
     source = Path(image_sufficiency.__file__).read_text(encoding="utf-8")
     for literal in ('"vendor"', "'vendor'", '"storage"', '"analytics"', '"/app"'):
         assert literal not in source, literal
+
+
+def test_a_file_copied_to_the_workdir_or_an_existing_directory_lands_inside_it(tmp_path):
+    """Docker semantics: ``COPY f .`` and ``COPY f <existing dir>`` copy INTO
+    the directory (live CI 2026-10-08: the emulator wrote over the directory
+    and reported "Is a directory")."""
+    root = _product(tmp_path, "FROM python:3.12-slim\nWORKDIR /app\nCOPY blocks.lock.json .\n"
+                    "COPY app app\nCOPY app/main.py app\nCOPY vendor ./vendor\n")
+    verdict = image_sufficiency.check(root)
+    assert verdict.judged and verdict.ok, verdict.detail
+
+
+def test_the_verdict_never_names_the_scratch_directory(tmp_path, monkeypatch):
+    """The detail is written to the build ledger, which must be identical run
+    to run: no temp path ever appears in it."""
+    def boom(_root, image):
+        raise OSError(f"[Errno 21] Is a directory: '{image}/app'")
+
+    monkeypatch.setattr(image_sufficiency, "emulate_image", boom)
+    verdict = image_sufficiency.check(_product(tmp_path, FULL))
+    assert not verdict.judged and verdict.ok
+    assert "image-emulation" not in verdict.detail and "/tmp" not in verdict.detail
+    assert "Is a directory: '/app'" in verdict.detail  # the image path, not the scratch one

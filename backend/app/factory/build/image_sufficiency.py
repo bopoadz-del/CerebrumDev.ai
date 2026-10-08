@@ -206,7 +206,12 @@ def emulate_image(root: Path, image: Path) -> Tuple[str, List[str]]:
             unfollowable.append(f"{word} {args}")
             continue
         dest_abs = dest if dest.startswith("/") else str(PurePosixPath(workdir) / dest)
-        dest_is_dir = dest.endswith("/") or len(sources) > 1
+        # Docker copies INTO the destination when it ends in "/", names "." /
+        # "..", already exists as a directory, or receives several sources.
+        dest_is_dir = (
+            dest.endswith("/") or dest in (".", "..") or len(sources) > 1
+            or (image / dest_abs.lstrip("/")).is_dir()
+        )
         for src in sources:
             src_norm = src.strip("/") if src not in (".", "./") else ""
             if src_norm.startswith("./"):
@@ -305,6 +310,12 @@ def _missing_paths(result: dict, image: Path, root: Path) -> Tuple[List[str], bo
     return missing, judgeable or bool(missing)
 
 
+def _in_image(text: str, image: Path) -> str:
+    """``text`` with the scratch directory mapped back to image paths: a
+    verdict lands in the build ledger, which must read the same every run."""
+    return text.replace(str(image), "")
+
+
 def check(root: Path | str, *, python: str = sys.executable, timeout_s: int = PROBE_TIMEOUT_S) -> Verdict:
     """Import the app and load every locked block inside the emulated image."""
     root = Path(root)
@@ -318,7 +329,8 @@ def check(root: Path | str, *, python: str = sys.executable, timeout_s: int = PR
         try:
             workdir, unfollowable = emulate_image(root, image)
         except (OSError, ValueError) as exc:
-            return Verdict(ok=True, judged=False, detail=f"Dockerfile not emulatable: {exc}")
+            reason = _in_image(str(exc), image)
+            return Verdict(ok=True, judged=False, detail=f"Dockerfile not emulatable: {reason}")
         if unfollowable:
             return Verdict(
                 ok=True, judged=False,
@@ -337,7 +349,7 @@ def check(root: Path | str, *, python: str = sys.executable, timeout_s: int = PR
         result = _probe_result(proc.stdout or "")
         if result is None:
             last = next((ln for ln in reversed(out.strip().splitlines()) if ln.strip()), "")
-            return Verdict(ok=False, judged=True, detail=f"image cannot run the app: {last[:300]}")
+            return Verdict(ok=False, judged=True, detail=f"image cannot run the app: {_in_image(last, image)[:300]}")
         if not result.get("traces"):
             return Verdict(
                 ok=True, judged=True,
@@ -352,4 +364,4 @@ def check(root: Path | str, *, python: str = sys.executable, timeout_s: int = PR
                 detail="; ".join(f"image missing {p}" for p in missing),
             )
         last = (result["traces"][-1].strip().splitlines() or [""])[-1]
-        return Verdict(ok=False, judged=True, detail=f"image cannot load the app: {last[:300]}")
+        return Verdict(ok=False, judged=True, detail=f"image cannot load the app: {_in_image(last, image)[:300]}")
