@@ -600,6 +600,14 @@ def download_product_package(
     if accept:
         raise HTTPException(status_code=409, detail=accept)
 
+    # A certification the gate later withdrew (revoked_certifications.json in
+    # cerebrum-builds) is not presented as certified.
+    from app.factory.build.n3_store_gate import certification_withdrawn
+
+    withdrawn = certification_withdrawn(out)
+    if withdrawn:
+        raise HTTPException(status_code=409, detail=withdrawn)
+
     # Every gate held: this export is CERTIFIED. Tag the platform's head
     # release/<platform_id>/<n>; the manifest (and the Store registry entry)
     # point at the tag. A failed build never reaches this line.
