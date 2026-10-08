@@ -80,6 +80,49 @@ def test_the_repo_config_is_the_one_read():
     )["certified_branches"]
 
 
+# -- the replay's install -------------------------------------------------------
+
+REPLAY_REQS = REPO / "backend" / "requirements-replay.txt"
+
+
+def _req_lines(path: Path) -> list:
+    return [
+        line.split("#", 1)[0].strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.split("#", 1)[0].strip()
+    ]
+
+
+def test_the_replay_install_names_no_constraints_file_with_extras():
+    # Live #696: `-c requirements.txt` -> "Constraints cannot have extras"
+    # (psycopg[binary]); pip refuses any constraint carrying [extras].
+    for line in _req_lines(REPLAY_REQS):
+        if line.startswith(("-c", "--constraint")):
+            target = REPLAY_REQS.parent / line.split(None, 1)[1]
+            assert not [x for x in _req_lines(target) if "[" in x], f"{target.name} has extras"
+
+
+def test_the_replay_pins_what_requirements_pins_at_the_same_version():
+    from app.factory.build.dependency_pins import dist_name
+
+    main = {dist_name(x): x.split("==", 1)[1] for x in _req_lines(REPO / "backend" / "requirements.txt") if "==" in x}
+    for line in _req_lines(REPLAY_REQS):
+        name = dist_name(line)
+        if name in main:
+            assert line == f"{name}=={main[name]}", f"{line!r} drifts from requirements.txt ({main[name]})"
+
+
+def test_a_rendered_product_constraints_file_never_carries_extras():
+    # The same pip rule binds every product image (`pip install -c
+    # constraints.txt`): a constraint is a bare name and a version.
+    from app.factory.build.dependency_pins import render_constraints
+
+    text = render_constraints(["psycopg[binary]>=3", "sentry-sdk[fastapi]", "uvicorn[standard]"])
+    pins = [x for x in text.splitlines() if x and not x.startswith("#")]
+    assert pins
+    assert not [x for x in pins if "[" in x]
+
+
 # -- the workflow ---------------------------------------------------------------
 
 
