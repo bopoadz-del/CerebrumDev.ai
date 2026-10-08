@@ -28,7 +28,8 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 
 from app.factory.build.builds_push import (
     BRANCH_PREFIX,
-    STORE_GATE_PATH,
+    STORE_GATE_PATH,  # noqa: F401 -- re-exported: the gate path has one definition
+    STORE_GATE_PATHS,
     BuildsPushError,
     builds_token,
     github_request,
@@ -292,6 +293,25 @@ def attach(branch: str, parent: Path, env: Mapping[str, str] | None = None) -> A
                     reused=reused, passed=passed)
 
 
+def carry_mains_gate(tree: Path) -> None:
+    """Replace every STORE_GATE_PATHS entry in ``tree`` with ``FETCH_HEAD``'s.
+
+    The workflow and its helpers move as ONE unit: a gate path ``main`` no
+    longer has is removed, one it has is restored byte-for-byte. A gate path
+    ``main`` does not carry at all is left as the branch has it (nothing to
+    carry). Called after ``git fetch origin main`` in ``tree``.
+    """
+    for rel in STORE_GATE_PATHS:
+        if _git(["cat-file", "-e", f"FETCH_HEAD:{rel}"], tree).returncode != 0:
+            continue
+        target = tree / rel
+        if target.is_dir() and not target.is_symlink():
+            shutil.rmtree(target)
+        elif target.exists() or target.is_symlink():
+            target.unlink()
+        _git(["-c", "core.autocrlf=false", "checkout", "FETCH_HEAD", "--", rel], tree)
+
+
 def checkpoint(workspace: Path, branch: str, message: str, env: Mapping[str, str] | None = None) -> str:
     """Commit the exportable tree onto ``branch`` and push it. Returns the sha.
 
@@ -323,11 +343,7 @@ def checkpoint(workspace: Path, branch: str, message: str, env: Mapping[str, str
         # today's -- one gate for every build, not one per branch age.
         fetched = _git(["fetch", "--quiet", "--depth=1", "origin", "main"], tmp)
         if fetched.returncode == 0:
-            gate = _git(["show", "FETCH_HEAD:" + STORE_GATE_PATH], tmp)
-            if gate.returncode == 0 and gate.stdout:
-                target = tmp / STORE_GATE_PATH
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(gate.stdout.replace("\r\n", "\n").encode("utf-8"))
+            carry_mains_gate(tmp)
         _git(["add", "-A"], tmp)
         _git(["-c", f"user.email={GIT_EMAIL}", "-c", f"user.name={GIT_NAME}",
               "commit", "--allow-empty", "-q", "-m", message], tmp)

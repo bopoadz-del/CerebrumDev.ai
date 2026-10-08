@@ -1460,7 +1460,10 @@ export default function {component}() {{
         )
 
 
-def git_head(repo: Path) -> str:
+def git_head(repo: Path, *, env_fallback: bool = True) -> str:
+    """HEAD of ``repo``. ``env_fallback`` answers with the DEPLOY's commit when
+    ``repo`` has no .git -- right only when ``repo`` is the Factory itself; a
+    Store tree without .git must say ``unknown``, never the Factory's sha."""
     try:
         r = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -1477,6 +1480,8 @@ def git_head(repo: Path) -> str:
     # same keys /version already reads. Prefer a real deploy SHA over
     # "unknown" so S0 does not fail-closed on git_sha_unknown after the
     # factory-source inventory is present.
+    if not env_fallback:
+        return "unknown"
     for key in ("RENDER_GIT_COMMIT", "GIT_COMMIT", "SOURCE_VERSION"):
         val = os.getenv(key, "").strip()
         if val:

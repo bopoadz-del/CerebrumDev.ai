@@ -15,7 +15,7 @@ import hashlib
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from app.factory.blueprint import ProductBlueprint, blueprint_to_dict
 from app.factory.planner import ProductPlan
@@ -207,9 +207,43 @@ def converge_writer_emitters(ctx: Any, *, fill_gaps_only: bool = False) -> Dict[
     if resolved.get("writer_receipt"):
         prov["writer_receipt"] = resolved["writer_receipt"]
     prov_rel = Path("docs") / "provenance" / "provenance.json"
-    if not (fill_gaps_only and ctx.workspace.exists(prov_rel)):
-        ctx.workspace.write_text(
-            prov_rel, json.dumps(prov, indent=2, sort_keys=True) + "\n"
-        )
+    existing = None
+    if fill_gaps_only and ctx.workspace.exists(prov_rel):
+        existing = _read_workspace_text(ctx.workspace, prov_rel)
+    text = factory_provenance_text(existing, prov)
+    if text != existing:
+        ctx.workspace.write_text(prov_rel, text)
         copied.append("docs/provenance/provenance.json")
     return {"ok": True, "copied": copied, "skipped": ""}
+
+
+def _read_workspace_text(workspace: Any, rel: Path) -> Optional[str]:
+    reader = getattr(workspace, "read_path", None)
+    path = reader(rel) if callable(reader) else Path(workspace.destination) / rel
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def factory_provenance_text(existing: Optional[str], prov: Mapping[str, Any]) -> str:
+    """The provenance document with the Factory's fields always the Factory's.
+
+    Every key ``build_provenance`` emits answers "which Factory, which Store,
+    which inputs produced this build" -- only the Factory knows those. A
+    writer may author the same file (its lane includes ``docs/provenance/``),
+    and gap-fill mode used to keep it whole: live 2026-10-08 a writer's own
+    provenance.json (sources/bindings, no commit fields) shipped and
+    ``provenance_complete`` failed on "factory_commit=unknown". The writer's
+    other keys are kept; the Factory's are set. Pure and idempotent.
+    """
+    base: Dict[str, Any] = {}
+    if existing:
+        try:
+            parsed = json.loads(existing)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            base = parsed
+    merged = {**base, **dict(prov)}
+    return json.dumps(merged, indent=2, sort_keys=True) + "\n"
