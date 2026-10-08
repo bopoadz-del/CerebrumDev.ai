@@ -31,7 +31,6 @@ those are not questions about the image's contents.
 from __future__ import annotations
 
 import fnmatch
-import glob
 import json
 import os
 import re
