@@ -16,7 +16,7 @@ from ..core import accounts_store, billing, data_rights, mailer
 from ..core.auth import Principal, require_account_allow_unverified, require_api_key
 from ..core.auth_cookies import clear_login_cookie, cookie_login_token, set_login_cookie
 from ..core.rate_limit import check_rate_limit_for_request
-from ..core.trial_limits import SMOKE_PRINCIPAL_A, SMOKE_PRINCIPAL_B
+from ..core.trial_limits import SMOKE_PRINCIPALS
 
 router = APIRouter()
 
@@ -24,8 +24,9 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MIN_PASSWORD_LEN = 8
 # Ops-only principals for production smoke. The .invalid TLD cannot receive
 # mail; public register never uses these addresses.
-_SMOKE_EMAIL_A = SMOKE_PRINCIPAL_A
-_SMOKE_EMAIL_B = SMOKE_PRINCIPAL_B
+#: How many principals smoke-login issues when the caller does not ask: the
+#: smoke's own plus the second one its isolation check reads with.
+SMOKE_LOGIN_DEFAULT_PRINCIPALS = 2
 
 
 class RegisterBody(BaseModel):
@@ -262,6 +263,12 @@ async def smoke_login(request: Request):
     Public email verification is unchanged. This path exists so the deploy
     gate can create a session with a verified test principal (or two, for
     isolation) without disabling ``ACCOUNTS_REQUIRE_VERIFIED_EMAIL``.
+
+    The release cycle runs repro builds BESIDE the smoke, each on its own
+    account, so the caller may ask for ``{"principals": n}`` (1..the declared
+    roster size). Index 0 is always the smoke's own principal. Asking for more
+    than the roster holds is refused, never silently trimmed: a cycle that
+    planned three accounts and received two would put two builds on one.
     """
     expected = _smoke_gate_token()
     if not expected:
@@ -270,20 +277,44 @@ async def smoke_login(request: Request):
     if not _smoke_gate_matches(provided, expected):
         raise HTTPException(status_code=401, detail="Invalid or missing smoke gate token")
     _rate_limit(request, "smoke-login")
+    count = SMOKE_LOGIN_DEFAULT_PRINCIPALS
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 -- no body asks for the default pair
+        body = None
+    if isinstance(body, dict) and "principals" in body:
+        asked = body.get("principals")
+        if (
+            not isinstance(asked, int)
+            or isinstance(asked, bool)
+            or not 1 <= asked <= len(SMOKE_PRINCIPALS)
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"principals must be an integer 1..{len(SMOKE_PRINCIPALS)} "
+                    f"(the declared smoke roster); got {asked!r}"
+                ),
+            )
+        count = asked
     password = _smoke_account_password(expected)
-    account_a = accounts_store.ensure_verified_account(_SMOKE_EMAIL_A, password)
-    account_b = accounts_store.ensure_verified_account(_SMOKE_EMAIL_B, password)
-    return _json_with_login_cookie(
-        request,
-        {
-            "ok": True,
-            "email_verified": True,
-            "login_token": accounts_store.issue_login_token(account_a["account_id"]),
-            "login_token_b": accounts_store.issue_login_token(account_b["account_id"]),
-            "account_id": account_a["account_id"],
-            "account_id_b": account_b["account_id"],
-        },
-    )
+    accounts = [
+        accounts_store.ensure_verified_account(email, password)
+        for email in SMOKE_PRINCIPALS[:count]
+    ]
+    tokens = [accounts_store.issue_login_token(a["account_id"]) for a in accounts]
+    payload = {
+        "ok": True,
+        "email_verified": True,
+        "login_token": tokens[0],
+        "account_id": accounts[0]["account_id"],
+        "login_tokens": tokens,
+        "account_ids": [a["account_id"] for a in accounts],
+    }
+    if count >= 2:
+        payload["login_token_b"] = tokens[1]
+        payload["account_id_b"] = accounts[1]["account_id"]
+    return _json_with_login_cookie(request, payload)
 
 
 @router.post("/verify-email")
