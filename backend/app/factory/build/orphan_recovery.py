@@ -42,6 +42,15 @@ ORPHAN_DISK_ERROR_DETAIL = (
     "FACTORY_CODE_CLI_ORPHANED: ledger not writable after process restart "
     "— coding agent stopped (not resumed)"
 )
+#: Typed reason a restart resume did not start: the session records no
+#: account to bind, and the worker refuses an unbound build. The owner's
+#: Continue re-enters it under their own authenticated account.
+ORPHAN_NO_TENANT_REASON = "resume_needs_tenant"
+ORPHAN_NO_TENANT_DETAIL = (
+    "build interrupted by a server restart: resuming it needs the account "
+    "that started it, and none is recorded -- press Continue to resume it "
+    "under your account"
+)
 _RUN_SUFFIX_RE = re.compile(r"__run(\d+)$")
 _SKIP_NOT_ACTIVE = "not_the_active_orphan"
 
@@ -129,6 +138,47 @@ def load_blueprint_for_workspace(
             except Exception:  # noqa: BLE001
                 continue
     return None
+
+
+def load_tenant_for_workspace(
+    output_dir: Path | str,
+    *,
+    storage_root: Optional[Path] = None,
+) -> Optional[str]:
+    """The account the build was started under, from durable session state.
+
+    At boot there is no request and no principal. The session state the
+    Floor started the build from records the account (``user_id``) -- the
+    same identity every Floor start passes as ``tenant_identity`` -- so a
+    restart resume binds exactly that tenant. None when nothing is recorded:
+    the caller must then stop, never run unbound.
+    """
+    session_id = session_id_from_output(output_dir)
+    if not session_id:
+        return None
+    roots: List[Path] = []
+    if storage_root is not None:
+        roots.append(Path(storage_root) / "sessions")
+    roots.append(_storage_sessions_root())
+    for root in roots:
+        path = root / session_id / "state.json"
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        account = str((data or {}).get("user_id") or "").strip()
+        if account:
+            return account
+    try:
+        from app.core.session_persistence import load_session_state
+
+        state = load_session_state(session_id)
+    except Exception:  # noqa: BLE001
+        state = None
+    account = str(getattr(state, "user_id", None) or "").strip()
+    return account or None
 
 
 def _blueprint_from_state_path(path: Path) -> Optional[Any]:
@@ -298,7 +348,10 @@ def is_boot_resumable_orphan(output_dir: Path | str) -> bool:
 
 
 def fail_orphaned_model_call(
-    output_dir: Path | str, *, detail: Optional[str] = None
+    output_dir: Path | str,
+    *,
+    detail: Optional[str] = None,
+    reason: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Write RUN_FAILED so Floor shows coder-stopped, not a 7230s zombie."""
     from app.factory.build.coder_session import NAMED_BLOCKER_CLI_ORPHANED
@@ -312,15 +365,20 @@ def fail_orphaned_model_call(
     text = (detail or ORPHAN_FAIL_DETAIL).strip()
     if NAMED_BLOCKER_CLI_ORPHANED not in text:
         text = f"{NAMED_BLOCKER_CLI_ORPHANED}: {text}"
+    payload: Dict[str, Any] = {
+        "outcome": "FAILED_ROLE_ERROR",
+        "honesty": FACTORY_CODE_CLI_ORPHANED,
+        "orphan_recovery": True,
+    }
+    if reason:
+        # A typed stop the owner acts on: Continue re-enters the build under
+        # the owner's own authenticated account.
+        payload.update({"reason": reason, "next": "continue"})
     try:
         BuildLedger(_ledger_path(output_dir)).append(
             EventKind.RUN_FAILED,
             detail=text,
-            payload={
-                "outcome": "FAILED_ROLE_ERROR",
-                "honesty": FACTORY_CODE_CLI_ORPHANED,
-                "orphan_recovery": True,
-            },
+            payload=payload,
         )
     except (OSError, LedgerError):
         logger.exception("could not fail-close orphaned model call at %s", output_dir)
@@ -331,21 +389,35 @@ def fail_orphaned_model_call(
         _write_crash_marker(output_dir, text)
         return {"action": "error", "output_dir": str(output_dir), "detail": text}
     logger.error("failed closed orphaned FACTORY_CODE_CLI at %s: %s", output_dir, text)
-    return {
+    result: Dict[str, Any] = {
         "action": "failed",
         "output_dir": str(output_dir),
         "detail": text,
         "honesty": FACTORY_CODE_CLI_ORPHANED,
     }
+    if reason:
+        result["reason"] = reason
+    return result
 
 
 def resume_orphaned_model_call(
     output_dir: Path | str,
     blueprint: Any,
     *,
+    tenant_identity: Optional[str],
     cycle: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Re-enter RoleRunner at interrupted WRITER (gated C-BRIEF, not micro-fixer)."""
+    """Re-enter RoleRunner at interrupted WRITER (gated C-BRIEF, not micro-fixer).
+
+    ``tenant_identity`` is the account the build was started under (see
+    ``load_tenant_for_workspace``). It is required: the worker refuses an
+    unbound job, so a resume without one would only die later as a WRITER
+    failure it never had. Without it the build stops here, typed.
+    """
+    if not str(tenant_identity or "").strip():
+        return fail_orphaned_model_call(
+            output_dir, detail=ORPHAN_NO_TENANT_DETAIL, reason=ORPHAN_NO_TENANT_REASON
+        )
     from app.factory.build.ledger import BuildLedger, EventKind, LedgerError
     from app.factory.build_jobs import (
         FACTORY_CODE_CLI_ORPHANED,
@@ -371,7 +443,9 @@ def resume_orphaned_model_call(
         logger.exception("could not note orphan resume at %s", out)
         _write_crash_marker(out, text)
         return fail_orphaned_model_call(out, detail=text)
-    result = start_runner_build(blueprint, out, cycle=cycle)
+    result = start_runner_build(
+        blueprint, out, cycle=cycle, tenant_identity=str(tenant_identity).strip()
+    )
     logger.info(
         "resumed orphaned WRITER at %s already_running=%s",
         out,
@@ -437,7 +511,10 @@ def recover_orphaned_model_calls(
         )
     else:
         try:
-            results.append(resume_orphaned_model_call(chosen, blueprint))
+            tenant = load_tenant_for_workspace(chosen, storage_root=storage_root)
+            results.append(
+                resume_orphaned_model_call(chosen, blueprint, tenant_identity=tenant)
+            )
         except CodeCliUnavailable as exc:
             results.append(fail_orphaned_model_call(chosen, detail=str(exc)))
         except Exception as exc:  # noqa: BLE001 — boot must not die
