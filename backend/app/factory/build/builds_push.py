@@ -95,6 +95,9 @@ FACTORY_INTERNAL_PATHS = frozenset(
         # The Factory's receipt of what it stamped/vendored/declared: read
         # locally at gate ingest to own audit findings, never shipped.
         "docs/factory_receipt.json",
+        # The WRITER pass's record of Factory-owned files it touched
+        # (factory_owned.VIOLATIONS_REL): read by the WRITER gate, never shipped.
+        "docs/writer_factory_owned.json",
     }
 )
 

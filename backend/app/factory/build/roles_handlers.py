@@ -3965,6 +3965,12 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
                 )
             relay_progress(line, info)
 
+        # Every Factory-owned file as the Factory left it, so a writer that
+        # creates, edits or deletes one is caught here and sent to rework
+        # by name -- not silently re-stamped or kept further down.
+        from app.factory.build import factory_owned
+
+        owned_before = factory_owned.snapshot(Path(dest))
         try:
             receipt = run_worker_job(
                 prompt,
@@ -4020,6 +4026,24 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
         )
     except OSError:
         logger.exception("writer receipt persistence failed")
+
+    # The writer never authors a Factory-owned file (owner rule 2026-10-08;
+    # live: the cycle-2 fintech writer invented docs/provenance/provenance.json
+    # and the gap-filling converge kept it). Put the Factory's version back
+    # and record the paths: the WRITER gate turns them into rework naming
+    # each one.
+    from app.factory.build import factory_owned
+
+    touched = factory_owned.writer_touched(owned_before, factory_owned.snapshot(Path(dest)))
+    if touched:
+        factory_owned.restore(Path(dest), owned_before, touched)
+        ctx.note(
+            "the writer touched Factory-owned files (restored; sent to rework): "
+            + ", ".join(f"{row['path']} ({row['change']})" for row in touched),
+            stage="factory-owned",
+            source="factory",
+        )
+    factory_owned.record(Path(dest), touched)
 
     # Which writer run produced app/actions/, recorded where converge can
     # stamp it into the product's provenance. The receipt carries no id of
