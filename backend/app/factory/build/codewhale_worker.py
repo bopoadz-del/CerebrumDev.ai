@@ -48,6 +48,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
+from app.factory.build.agent_process import agent_popen_kwargs, kill_agent_tree
+
 logger = logging.getLogger("cerebrumdev.factory.codewhale_worker")
 
 WORKER_CONCURRENCY_CAPPED = "worker_concurrency_capped"
@@ -987,6 +989,7 @@ def run_worker_job(
                     text=True,
                     timeout=10.0,
                     stdin=subprocess.DEVNULL,
+                    **agent_popen_kwargs(),
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
                 raise WorkerError(
@@ -1073,6 +1076,9 @@ def run_worker_job(
                 text=True,
                 bufsize=1,
                 env=_child_env(session_id, cli_home),
+                # The agent's shell gets its own process group: a group-wide
+                # signal it sends can never reach the Factory server.
+                **agent_popen_kwargs(),
             )
         except OSError as exc:
             raise WorkerError(
@@ -1235,7 +1241,7 @@ def run_worker_job(
                         if left is not None:
                             deadline = max(deadline, time.monotonic() + float(left))
                     if time.monotonic() > deadline:
-                        proc.kill()
+                        kill_agent_tree(proc)
                         proc.wait()
                         # Name the wall that actually fired: the ramp may
                         # have lifted it past the dispatch value (live

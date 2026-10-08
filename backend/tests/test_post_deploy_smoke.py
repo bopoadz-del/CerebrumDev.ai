@@ -518,3 +518,52 @@ def test_build_level_check_decodes_the_intake_event(smoke):
     assert other["declared"]["build_level"] != smoke.SMOKE_BUILD_LEVEL
     pending = smoke.sse_events(live.replace('\\"proposal\\": null', '\\"proposal\\": {}'), "intake")[-1]
     assert pending["proposal"] is not None
+
+
+def _export_answers(smoke, monkeypatch, package_https, state="building"):
+    """Stub req(): the package endpoint answers ``package_https`` in turn;
+    build-status answers ``state`` while the server is up."""
+    seq = list(package_https)
+
+    def fake_req(method, path, body=None, token=None, raw=False):
+        if path.endswith("/product/package"):
+            http = seq.pop(0) if len(seq) > 1 else seq[0]
+            fake_req.last = http
+            return http, (b"PK\x03\x04zip" if http == 200 else b"{}")
+        if fake_req.last in smoke.TRANSIENT:
+            return fake_req.last, {}
+        return 200, {"build": {"state": "succeeded" if fake_req.last == 200 else state}}
+
+    fake_req.last = 0
+    monkeypatch.setattr(smoke, "req", fake_req)
+    clock = {"t": 0.0}
+    return dict(
+        sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
+        clock=lambda: clock["t"],
+    )
+
+
+def test_a_restart_while_waiting_for_the_zip_is_not_the_builds_verdict(smoke, monkeypatch):
+    """Live 2026-10-08 03:19 UTC: smoke B read the export DEAD on http=504
+    while the restarted server was already resuming its WRITER."""
+    kw = _export_answers(smoke, monkeypatch, [409, 504, 502, 503, 409, 200])
+    http, blob, build = smoke.wait_for_export("s", "t", wait_s=600, **kw)
+    assert http == 200 and blob[:2] == b"PK"
+
+
+def test_a_failed_build_still_ends_the_wait(smoke, monkeypatch):
+    kw = _export_answers(smoke, monkeypatch, [409], state="failed")
+    http, _blob, build = smoke.wait_for_export("s", "t", wait_s=600, **kw)
+    assert http == 409 and build.get("state") == "failed"
+
+
+def test_a_non_transient_answer_still_ends_the_wait(smoke, monkeypatch):
+    kw = _export_answers(smoke, monkeypatch, [409, 404])
+    http, _blob, _build = smoke.wait_for_export("s", "t", wait_s=600, **kw)
+    assert http == 404
+
+
+def test_an_outage_longer_than_the_wait_ends_it(smoke, monkeypatch):
+    kw = _export_answers(smoke, monkeypatch, [504])
+    http, _blob, _build = smoke.wait_for_export("s", "t", wait_s=60, **kw)
+    assert http == 504
