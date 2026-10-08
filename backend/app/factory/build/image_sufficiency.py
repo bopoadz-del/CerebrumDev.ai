@@ -51,25 +51,32 @@ LOCKFILE = "blocks.lock.json"
 LOADER_MODULE = "app.dispatch"
 LOADER_FUNCTION = "load_block"
 APP_MODULE = "app.main"
-PROBE_OK = "IMAGE_SELF_SUFFICIENT"
 PROBE_TIMEOUT_S = 120
 
+#: The probe reports structurally (one JSON line): which modules could not be
+#: imported (``ModuleNotFoundError.name``), and each failure's traceback, whose
+#: file paths are compared with the emulated image -- never error wording.
+PROBE_RESULT = "IMAGE_PROBE "
 _PROBE = f"""
 import importlib, json, sys, traceback
-importlib.import_module({APP_MODULE!r})
-load = getattr(importlib.import_module({LOADER_MODULE!r}), {LOADER_FUNCTION!r})
-failed = {{}}
-for block_id in json.loads(sys.argv[1]):
-    try:
-        load(block_id)
-    except Exception:
-        failed[block_id] = traceback.format_exc(limit=1)
-if failed:
-    for block_id, trace in failed.items():
-        sys.stderr.write(trace)
-    print("IMAGE_BLOCKS_FAILED " + json.dumps(sorted(failed)))
-    sys.exit(1)
-print({PROBE_OK!r})
+result = {{"modules": [], "traces": [], "loaded": 0}}
+def note(exc):
+    if isinstance(exc, ModuleNotFoundError) and exc.name:
+        result["modules"].append(exc.name)
+    result["traces"].append(traceback.format_exc())
+try:
+    importlib.import_module({APP_MODULE!r})
+    load = getattr(importlib.import_module({LOADER_MODULE!r}), {LOADER_FUNCTION!r})
+except Exception as exc:
+    note(exc)
+else:
+    for block_id in json.loads(sys.argv[1]):
+        try:
+            load(block_id)
+            result["loaded"] += 1
+        except Exception as exc:
+            note(exc)
+print({PROBE_RESULT!r} + json.dumps(result))
 """
 
 
@@ -263,33 +270,40 @@ def locked_blocks(root: Path) -> List[str]:
     return [i for i in ids if i]
 
 
-_MISSING_MODULE = re.compile(r"No module named '([^']+)'")
+def _probe_result(out: str) -> Optional[dict]:
+    for line in reversed(out.splitlines()):
+        if line.startswith(PROBE_RESULT):
+            try:
+                return json.loads(line[len(PROBE_RESULT):])
+            except ValueError:
+                return None
+    return None
 
 
-def _missing_paths(text: str, image: Path, root: Path) -> Tuple[List[str], bool]:
-    """``(image paths the failure names, judgeable)`` from the probe's output."""
+def _missing_paths(result: dict, image: Path, root: Path) -> Tuple[List[str], bool]:
+    """``(image paths the failures name, judgeable)``."""
     base = str(image).rstrip("/")
     missing: List[str] = []
-    for match in re.finditer(re.escape(base) + r"(/[^\s'\")]+)", text):
-        path = match.group(1).rstrip(".,:;")
-        # Traceback frames name files the image DOES carry; only an absent
-        # path is a missing one.
-        if (image / path.lstrip("/")).exists():
-            continue
-        if path not in missing:
+    for trace in result.get("traces") or []:
+        for match in re.finditer(re.escape(base) + r"(/[^\s'\")]+)", trace):
+            path = match.group(1).rstrip(".,:;")
+            # Traceback frames name files the image DOES carry; only an
+            # absent path is a missing one.
+            if (image / path.lstrip("/")).exists() or path in missing:
+                continue
             missing.append(path)
-    if missing:
-        return missing, True
-    module = _MISSING_MODULE.search(text)
-    if module:
-        top = module.group(1).split(".")[0]
+    judgeable = True
+    for module in result.get("modules") or []:
+        top = module.split(".")[0]
         if (root / top).exists() or (root / f"{top}.py").exists():
-            rel = "/" + module.group(1).replace(".", "/")
-            return [rel], True
-        # A third-party package the Factory's interpreter lacks: not a
-        # question about what the image carries.
-        return [], False
-    return [], True
+            path = "/" + module.replace(".", "/")
+            if path not in missing:
+                missing.append(path)
+        else:
+            # A third-party package the Factory's interpreter lacks: not a
+            # question about what the image carries.
+            judgeable = False
+    return missing, judgeable or bool(missing)
 
 
 def check(root: Path | str, *, python: str = sys.executable, timeout_s: int = PROBE_TIMEOUT_S) -> Verdict:
@@ -321,18 +335,22 @@ def check(root: Path | str, *, python: str = sys.executable, timeout_s: int = PR
         except subprocess.TimeoutExpired:
             return Verdict(ok=True, judged=False, detail=f"probe timed out after {timeout_s}s")
         out = (proc.stdout or "") + "\n" + (proc.stderr or "")
-        if proc.returncode == 0 and PROBE_OK in out:
+        result = _probe_result(proc.stdout or "")
+        if result is None:
+            last = next((ln for ln in reversed(out.strip().splitlines()) if ln.strip()), "")
+            return Verdict(ok=False, judged=True, detail=f"image cannot run the app: {last[:300]}")
+        if not result.get("traces"):
             return Verdict(
                 ok=True, judged=True,
                 detail=f"image imports the app and loads all {len(blocks)} locked blocks",
             )
-        missing, judgeable = _missing_paths(out, image, root)
-        last = next((ln for ln in reversed(out.strip().splitlines()) if ln.strip()), "")
+        missing, judgeable = _missing_paths(result, image, root)
         if not judgeable:
-            return Verdict(ok=True, judged=False, detail=f"not judgeable here: {last[:200]}")
+            return Verdict(ok=True, judged=False, detail="not judgeable here: a third-party package is not installed")
         if missing:
             return Verdict(
                 ok=False, judged=True, missing=missing,
-                detail="; ".join(f"image missing {p}" for p in missing) + f" ({last[:200]})",
+                detail="; ".join(f"image missing {p}" for p in missing),
             )
+        last = (result["traces"][-1].strip().splitlines() or [""])[-1]
         return Verdict(ok=False, judged=True, detail=f"image cannot load the app: {last[:300]}")
