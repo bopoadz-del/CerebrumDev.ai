@@ -330,9 +330,13 @@ async def smoke_process_isolation(request: Request):
     provided = (request.headers.get("X-Smoke-Gate") or "").strip()
     if not _smoke_gate_matches(provided, expected):
         raise HTTPException(status_code=401, detail="Invalid or missing smoke gate token")
+    import asyncio
+
     from ..factory.build.agent_process import process_isolation_report
 
-    return {"ok": True, **process_isolation_report()}
+    # The report runs a short group-kill probe (a child process); keep it off
+    # the event loop.
+    return {"ok": True, **(await asyncio.to_thread(process_isolation_report))}
 
 
 @router.post("/verify-email")

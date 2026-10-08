@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import os
 import signal
+import subprocess
+import sys
 import threading
 from typing import Any, Dict, List, Optional
 
@@ -135,12 +137,64 @@ def live_agent_sessions() -> List[int]:
     return sessions
 
 
+# --- the group-kill probe -----------------------------------------------------
+#
+# The roster above proves which session live agents sit in; it cannot prove
+# what a group-wide kill from an agent's shell actually reaches. The probe
+# does: it starts a child exactly as an agent is started (agent_popen_kwargs)
+# and the child sends SIGTERM to its whole process group -- ``kill 0``, the
+# 2026-10-07/08 signature. Contained means the child died of its own signal
+# and the server is still here to say so. A child that finds itself in the
+# server's group refuses to signal (exit 97): a regression reads as "not
+# contained" on the smoke instead of stopping the live server.
+
+_PROBE_REFUSED = 97
+_PROBE_SURVIVED = 98
+_PROBE_SOURCE = (
+    "import os, signal, sys, time\n"
+    "if os.getpgid(0) == int(sys.argv[1]):\n"
+    f"    sys.exit({_PROBE_REFUSED})\n"
+    "os.kill(0, signal.SIGTERM)\n"
+    "time.sleep(5)\n"
+    f"sys.exit({_PROBE_SURVIVED})\n"
+)
+
+
+def group_kill_probe(timeout_s: float = 15.0) -> Optional[bool]:
+    """Does ``kill -TERM 0`` from an agent-spawned child stay in its own group?
+
+    None when it cannot be judged (not POSIX, the child could not start or
+    did not finish in time); True only when the child died of its own SIGTERM.
+    """
+    if not _posix() or not hasattr(os, "getpgid"):
+        return None
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-I", "-c", _PROBE_SOURCE, str(os.getpgid(0))],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            **agent_popen_kwargs(),
+        )
+    except OSError:
+        return None
+    try:
+        code = proc.wait(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        kill_agent_tree(proc)
+        proc.wait()
+        return None
+    return code == -signal.SIGTERM
+
+
 def process_isolation_report() -> Dict[str, Any]:
     """Is every live coding agent outside the server's session?
 
     ``isolated`` needs both halves: no live agent shares the server's session
     now, and (POSIX) the spawn path still asks for a new session -- so the
-    check proves something even when no agent happens to be running. Counts
+    check proves something even when no agent happens to be running -- and
+    (POSIX) a real ``kill 0`` from an agent-spawned child stayed in that
+    child's group while this server kept answering. Counts and booleans
     only: no pid or session id leaves the process.
     """
     posix = _posix()
@@ -148,11 +202,18 @@ def process_isolation_report() -> Dict[str, Any]:
     agents = live_agent_sessions()
     spawn_isolated = agent_popen_kwargs() == ({_NEW_SESSION: True} if posix else {})
     shared = sum(1 for s in agents if server_sid is not None and s == server_sid)
-    isolated = spawn_isolated and shared == 0 and (server_sid is not None or not posix)
+    contained = group_kill_probe() if posix else None
+    isolated = (
+        spawn_isolated
+        and shared == 0
+        and (server_sid is not None or not posix)
+        and (contained is True or not posix)
+    )
     return {
         "posix": posix,
         "spawn_isolated": spawn_isolated,
         "live_agents": len(agents),
         "agents_in_server_session": shared,
+        "group_kill_contained": contained,
         "isolated": isolated,
     }
