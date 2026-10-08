@@ -180,7 +180,10 @@ def test_serve_mjs_emits_all_five_security_headers_on_the_wire(tmp_path):
         stderr=subprocess.PIPE,
     )
     try:
-        deadline = time.time() + 8
+        # Startup time is not what this test measures: a loaded CI runner
+        # took >8 s to start node (run 37727662031). A dead server still fails
+        # fast below via proc.poll().
+        deadline = time.time() + 30
         last_exc = None
         while time.time() < deadline:
             try:
