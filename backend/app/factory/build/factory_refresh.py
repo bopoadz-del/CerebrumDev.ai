@@ -142,9 +142,16 @@ def product_display_name(blueprint: Any) -> str:
 
 
 def refresh_factory_files(
-    root: Path, product_name: str, blueprint: Any = None
+    root: Path, product_name: str, blueprint: Any = None, *, render_absent: bool = False
 ) -> List[str]:
     """Re-render Factory-owned files in ``root``; return the ones that changed.
+
+    ``render_absent``: a BUILD in progress gets every Factory-owned file whether
+    or not a copy is present (live cycle 3, 5410237b: the writer-owned-files
+    guard removed a ci.yml the writer had created, this refresh rendered ci.yml
+    only "if present", and every build shipped the base branch's pytest-only
+    workflow -- Store gate 20/22). Off for a tree replayed or re-entered as it
+    is: a file such a build never had is not created there.
 
     ``blueprint`` keeps a re-entered build's acceptance harness following the
     brief it declared — re-rendering without it would raise every signal and
@@ -154,22 +161,25 @@ def refresh_factory_files(
 
     root = Path(root)
     changed: List[str] = []
-    # Factory-owned outright: rendered whether or not a copy is present. A
-    # missing one is not a reason to skip -- live cycle 3 (5410237b): the
-    # writer-owned-files guard removed a ci.yml the writer had created, the
-    # refresh rendered ci.yml only "if present", and every build shipped the
-    # base branch's pytest-only workflow (Store gate 20/22).
-    _write_if_changed(root, "scripts/release_gate.py", _render_release_gate(product_name), changed)
-    _write_if_changed(
-        root,
-        "scripts/acceptance.py",
-        render_acceptance_script(blueprint),
-        changed,
-    )
+
+    def owned(rel: str) -> bool:
+        return render_absent or (root / rel).is_file()
+
+    if owned("scripts/release_gate.py"):
+        _write_if_changed(root, "scripts/release_gate.py", _render_release_gate(product_name), changed)
+    if owned("scripts/acceptance.py"):
+        _write_if_changed(
+            root,
+            "scripts/acceptance.py",
+            render_acceptance_script(blueprint),
+            changed,
+        )
     from app.factory.build.writer_behaviour import SELF_CHECK_REL, render_self_check
 
-    _write_if_changed(root, SELF_CHECK_REL, render_self_check(), changed)
-    _write_if_changed(root, ".github/workflows/ci.yml", render_github_ci(), changed)
+    if owned(str(SELF_CHECK_REL)):
+        _write_if_changed(root, SELF_CHECK_REL, render_self_check(), changed)
+    if owned(".github/workflows/ci.yml"):
+        _write_if_changed(root, ".github/workflows/ci.yml", render_github_ci(), changed)
     if (root / "requirements.txt").is_file():
         _write_if_changed(root, "requirements.txt", merged_requirements(root), changed, shared=True)
         from app.factory.build.dependency_pins import CONSTRAINTS_REL, constraints_for_tree

@@ -802,8 +802,11 @@ class RoleRunner:
 
         name = product_display_name(self.blueprint)
         try:
+            # A build in progress: every Factory-owned file is rendered, a
+            # missing one included (the writer-owned-files guard may have
+            # removed the writer's copy).
             changed = refresh_factory_files(
-                self.workspace, name, self.blueprint
+                self.workspace, name, self.blueprint, render_absent=True
             )
         except Exception as exc:  # noqa: BLE001 -- recorded; the gates still judge
             self.ledger.append(
