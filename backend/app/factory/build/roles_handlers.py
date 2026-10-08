@@ -3855,6 +3855,7 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
         SLOT_WAIT_CLOSED,
         SLOT_WAIT_EXHAUSTED,
         SLOT_WAIT_OPEN,
+        WRITER_PROGRESS_FIELDS,
         WorkerError,
         is_narration_line,
         run_worker_job,
@@ -3900,11 +3901,22 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
                 if now - throttle["last"] < 3.0:
                     return
                 throttle["last"] = now
+            # The writer's own progress (steps reported, files on disk) rides
+            # the NOTE as data: the budget ramp's "visible work" test reads
+            # it, so a writer reporting steps is never killed at a stage wall
+            # as if it were silent (live 2026-10-08: STEP 7 and STEP 8 landed
+            # 3 minutes before the 2700s wall cut a 238-file pass).
+            progress_fields = {
+                key: info[key]
+                for key in WRITER_PROGRESS_FIELDS
+                if isinstance(info, dict) and info.get(key) is not None
+            }
             ctx.note(
                 line[:200],
                 stage=str(info.get("tool") or "writer-cli"),
                 source="codewhale_worker",
                 **call,
+                **progress_fields,
             )
 
         # No free build slot never fails the writer (owner, 2026-10-06): the

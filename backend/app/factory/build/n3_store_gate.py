@@ -318,6 +318,14 @@ def builds_fields_from_ledger(output_dir: Path | str) -> Dict[str, Any]:
         if isinstance(nested, Mapping):
             blobs.append(nested)
         for blob in blobs:
+            # A record that names the gate's branch names the whole target:
+            # its sha, or none (= that branch's head). An older sha never
+            # outlives it -- live 2026-10-08, a rework round's handoff named
+            # only the branch, round 1's failure kept builds_sha, and round 2
+            # re-read round 1's failed status (SAME_FAILURE_TWICE on a fix
+            # whose own gate run passed).
+            if blob.get("builds_branch"):
+                found.pop("builds_sha", None)
             for key in keys:
                 value = blob.get(key)
                 if value:
