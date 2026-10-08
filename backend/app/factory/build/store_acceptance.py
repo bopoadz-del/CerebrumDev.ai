@@ -97,6 +97,12 @@ ACCEPTANCE_TOTAL_KEY = "acceptance_total"
 #: checkout inside the image. Rendered into the harness as REPO_ROOT_ENV; the
 #: gate reads the name from there, so the two sides hold one name.
 ACCEPTANCE_REPO_ROOT_ENV = "ACCEPTANCE_REPO_ROOT"
+#: The env variable the Store gate sets to the image's runtime tree (the
+#: container's working directory) when it runs the harness FROM THE MOUNTED
+#: CHECKOUT. The harness is a repository artifact: a minimal production image
+#: (``COPY app`` only) need not carry it. Rendered as RUNTIME_ROOT_ENV; the gate
+#: reads the name from there.
+ACCEPTANCE_RUNTIME_ROOT_ENV = "ACCEPTANCE_RUNTIME_ROOT"
 _STATUSES =("PASS", "FAIL", "SKIP")
 
 
@@ -1023,7 +1029,12 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-ROOT = Path(__file__).resolve().parents[1]
+#: The product's RUNTIME tree -- what a runtime check judges and where the
+#: harness serves ``app.main`` from. The Store gate runs this harness from the
+#: mounted checkout and names the image's working directory here; unset (the
+#: writer's --self-check, a local run) it is the tree this harness sits in.
+RUNTIME_ROOT_ENV = {ACCEPTANCE_RUNTIME_ROOT_ENV!r}
+ROOT = Path(os.environ.get(RUNTIME_ROOT_ENV) or Path(__file__).resolve().parents[1]).resolve()
 
 #: Where the Store gate mounts the product's CHECKOUT inside the image, named
 #: by this env variable (the gate reads the name from this constant). A check
