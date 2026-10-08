@@ -115,10 +115,12 @@ class _FakeSmoke:
     """The smoke client's surface the cycle drives, scripted."""
 
     TRANSIENT = {502, 503, 504}
+    BuildDeadline = _load("post_deploy_smoke_for_cycle", SMOKE_PATH).BuildDeadline
 
-    def __init__(self, package_answers, states):
+    def __init__(self, package_answers, states, deadline_in_s=None):
         self.package_answers = list(package_answers)
         self.states = list(states)
+        self.deadline_in_s = deadline_in_s
         self.calls = []
 
     def req(self, method, path, body=None, token=None, raw=False, **kw):
@@ -129,7 +131,10 @@ class _FakeSmoke:
             return self.package_answers.pop(0)
         if path.endswith("/product/build-status"):
             state = self.states.pop(0) if self.states else "building"
-            return 200, {"build": {"state": state, "phases_done": 2, "phases_total": 5}}
+            build = {"state": state, "phases_done": 2, "phases_total": 5}
+            if self.deadline_in_s is not None:
+                build["deadline"] = {"deadline_in_s": self.deadline_in_s}
+            return 200, {"build": build}
         return 200, {}
 
     def chat_until_drafted(self, sid, tok, brief):
@@ -158,6 +163,30 @@ def test_a_gateway_timeout_while_polling_is_not_the_builds_verdict(cycle):
     assert out["export"]["bytes"] == len(blob)
     assert out["export"]["manifest"]["certified"] is True
     assert all(token == "tok-1" for _m, _p, token in smoke.calls)
+
+
+def test_a_repro_waits_on_the_builds_own_deadline_not_its_budget(cycle):
+    """Owner rule: timeouts at the phase-wall ceiling only. wait_s=0 would end
+    the repro on the first poll; the build declares an hour left."""
+    blob = _zip_with_manifest({"certified": True, "build_level": {}, "advisory_checks": []})
+    smoke = _FakeSmoke(
+        package_answers=[(409, b"{}"), (409, b"{}"), (200, blob)],
+        states=["building", "building", "succeeded"],
+        deadline_in_s=3600,
+    )
+    out = cycle.drive_build(smoke, "tok", "brief", level="production", wait_s=0, poll_s=0)
+    assert out["status"] == "exported", out
+
+
+def test_a_repro_stops_when_the_builds_own_deadline_has_passed(cycle):
+    smoke = _FakeSmoke(
+        package_answers=[(409, b"{}")] * 5,
+        states=["building"] * 5,
+        deadline_in_s=-1,
+    )
+    out = cycle.drive_build(smoke, "tok", "brief", level="production", wait_s=3600, poll_s=0)
+    assert out["package_http"] == 409
+    assert len([c for c in smoke.calls if c[1].endswith("/product/package")]) == 1
 
 
 def test_a_failed_build_is_reported_with_the_servers_reason(cycle):
@@ -421,6 +450,21 @@ def test_build_jobs_outlast_the_phase_wall_ceiling():
     assert int(jobs["resolve"]["timeout-minutes"]) >= 1200 // 60
 
 
+def test_build_jobs_outlast_the_builds_own_declared_deadline():
+    """A poller now waits on build-status ``deadline`` (run ceiling, then the
+    Store-gate wall), so the job must outlast ready wait + both."""
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT / "backend"))
+    from app.factory.build.n3_store_gate import DEFAULT_WALL_S
+    from app.factory.build.runner import BuildBudget
+
+    need_min = (1200 + BuildBudget().hard_ceiling_s + DEFAULT_WALL_S) / 60
+    jobs = _workflow()["jobs"]
+    for name in ("live-smoke", "release-repros", "smoke-b"):
+        assert int(jobs[name]["timeout-minutes"]) >= need_min, name
+
+
 def test_two_cycles_never_overlap_and_a_running_one_is_never_cancelled():
     concurrency = _workflow()["concurrency"]
     assert concurrency["group"]
@@ -479,3 +523,51 @@ def test_the_workflow_runs_the_cycle_script_for_the_repros_and_the_report():
     text = WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "scripts/release_cycle.py repros" in text
     assert "scripts/release_cycle.py report" in text
+
+
+def test_report_download_follows_the_redirect_without_the_token(cycle):
+    """The artifact API redirects to a signed URL that refuses a bearer token:
+    the redirect is followed, and the token never reaches the second host."""
+    import http.server
+
+    seen = {}
+    blob = io.BytesIO()
+    with zipfile.ZipFile(blob, "w") as zf:
+        zf.writestr(cycle.REPORT_NAME, json.dumps({"verdict": "pass"}))
+    payload = blob.getvalue()
+
+    class Signed(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            seen["auth"] = self.headers.get("Authorization")
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *a):  # noqa: ANN002
+            pass
+
+    signed = http.server.HTTPServer(("127.0.0.1", 0), Signed)
+
+    class Api(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            seen["api_auth"] = self.headers.get("Authorization")
+            self.send_response(302)
+            self.send_header("Location", f"http://127.0.0.1:{signed.server_port}/blob")
+            self.end_headers()
+
+        def log_message(self, *a):  # noqa: ANN002
+            pass
+
+    api = http.server.HTTPServer(("127.0.0.1", 0), Api)
+    threads = [threading.Thread(target=s.handle_request, daemon=True) for s in (api, signed)]
+    for t in threads:
+        t.start()
+    try:
+        report = cycle._github_report(f"http://127.0.0.1:{api.server_port}/zip", "tok-123")
+    finally:
+        api.server_close()
+        signed.server_close()
+    assert seen["api_auth"] == "Bearer tok-123"
+    assert seen["auth"] is None
+    assert report == {"verdict": "pass"}

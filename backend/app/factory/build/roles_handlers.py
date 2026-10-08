@@ -85,6 +85,7 @@ from app.factory.build.block_obligations import (
 from app.factory.build.roles_constants import (
     _BLOCK_DEF_RE,
     _CONFTEST,
+    CONFTEST_REL,
     _DISPATCH_RUNTIME,
     _GET_BLOCK_RE,
     _INSTANTIATE_HELPER,
@@ -5789,7 +5790,9 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         for cap in ctx.plan.capabilities
     }
 
-    ctx.workspace.write_text(Path("tests") / "conftest.py", _CONFTEST)
+    # The Factory's bootstrap at its own path -- never over the product's
+    # tests/conftest.py (roles_constants.CONFTEST_REL).
+    ctx.workspace.write_text(CONFTEST_REL, _CONFTEST)
 
     # -- capability + offline dispatch ------------------------------------
     smoke = [

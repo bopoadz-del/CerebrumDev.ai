@@ -300,13 +300,13 @@ services:
       # WHY 3 on this box: 2048 MB RAM - 500 MB (uvicorn + FastAPI + chromadb
       # + the app import graph, resident) - 150 MB (Render overhead, page
       # cache, per-build Python objects) = 1398 MB; 1398 / 400 MB per
-      # `codewhale exec` Node child = 3. The CPU bound (1 vCPU x 8, since the
-      # children are blocked on DeepSeek HTTP) is slack. RECOMPUTE all three
-      # numbers -- and MEASURE the 400 -- before raising anything.
+      # `codewhale exec` Node child = 3. The CPU bound is MEASURED: 2 user
+      # builds per vCPU + the smoke's reserved slot (1 vCPU -> 3; live
+      # 2026-10-08, three jobs held one vCPU at 85-99 %). Caps are derived by
+      # codewhale_worker.derive_profile_caps -- never typed.
       #
       # Upgrade table (plan -> process / per-tenant):
-      #   1c-2g 3/1 (live) | 2c-4g 8/1 | 4c-8g 18/1 | 4c-16g 32/2 | 8c-32g 64/4
-      # 8c-32g is the first plan with the RAM for 50 concurrent tenants.
+      #   1c-2g 3/1 (live) | 2c-4g 5/1 | 4c-8g 9/1 | 4c-16g 9/1 | 8c-32g 17/1
       #
       # NOTE ON THIS FILE: it is not applied (see the header), so declaring the
       # keys here is DOCUMENTATION -- it makes the intended operating caps

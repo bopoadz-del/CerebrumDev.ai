@@ -271,6 +271,71 @@ def _event_age_s(ts: str, fallback_s: float) -> float:
         return fallback_s
 
 
+def _event_epoch(ts: str) -> Optional[float]:
+    if not ts:
+        return None
+    try:
+        from datetime import datetime, timezone
+
+        parsed = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def declared_deadline(events: Sequence[Any], *, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """The build's own end, from the stages it recorded.
+
+    Every stage that opens a bounded wall is a ledger event: the run starts
+    (bounded by the runner's hard ceiling -- no ramp, grant or lift passes
+    it), a REWORK round or PILOT_OPENED re-opens phases under that same
+    ceiling, and the N3 handoff waits on the Store gate under its own wall.
+    The latest declared end is the deadline; a client polling the build reads
+    ``deadline_in_s`` (server clock, so no skew) instead of guessing a number.
+    Live 2026-10-08: smoke A's fixed ~58 min wait read DEAD on a healthy
+    build at "2/5 writer working" on a shared one-vCPU box.
+    """
+    from app.factory.build.ledger import EventKind
+    from app.factory.build.n3_store_gate import HANDOFF_TO_N3, n3_wall_s
+    from app.factory.build.runner import BuildBudget
+
+    ceiling = float(BuildBudget().hard_ceiling_s)
+    gate_wall = float(n3_wall_s())
+    end: Optional[float] = None
+    anchor: Optional[str] = None
+    for event in events:
+        kind = getattr(event, "kind", None)
+        payload = getattr(event, "payload", None) or {}
+        handoff = HANDOFF_TO_N3 in (
+            str(payload.get("honesty") or ""),
+            str(payload.get("outcome") or ""),
+        )
+        if handoff:
+            wall, name = gate_wall, HANDOFF_TO_N3
+        elif kind in (EventKind.RUN_STARTED, EventKind.REWORK, EventKind.PILOT_OPENED):
+            wall, name = ceiling, getattr(kind, "value", str(kind))
+        else:
+            continue
+        at = _event_epoch(getattr(event, "ts", ""))
+        if at is None:
+            continue
+        if end is None or at + wall >= end:
+            end, anchor = at + wall, name
+    if end is None:
+        return None
+    import time
+
+    current = time.time() if now is None else float(now)
+    return {
+        "anchor": anchor,
+        "ceiling_s": ceiling,
+        "gate_wall_s": gate_wall,
+        "deadline_in_s": round(end - current, 1),
+    }
+
+
 # -- status ---------------------------------------------------------------
 
 
@@ -1006,6 +1071,9 @@ def build_status(
             if isinstance((e.payload or {}).get("decision"), dict)
         ],
         "stopped": stopped_by_rule(output_dir),
+        # The build's own declared end (server clock); a poller waits on
+        # this, never on a number of its own.
+        "deadline": declared_deadline(events),
         **monitor,
         **_cycle_fields(ledger, terminal),
         **session_status(Path(output_dir)),

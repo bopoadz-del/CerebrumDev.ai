@@ -563,6 +563,62 @@ def test_a_non_transient_answer_still_ends_the_wait(smoke, monkeypatch):
     assert http == 404
 
 
+def _declaring_server(smoke, monkeypatch, *, ready_at, deadline_in_s):
+    """build-status declares the build's own deadline; the zip is ready at
+    ``ready_at`` client seconds."""
+    clock = {"t": 0.0}
+
+    def fake_req(method, path, body=None, token=None, raw=False):
+        now = clock["t"]
+        if path.endswith("/product/package"):
+            return (200, b"PK\x03\x04zip") if now >= ready_at else (409, b"{}")
+        return 200, {"build": {
+            "state": "succeeded" if now >= ready_at else "building",
+            "deadline": {"deadline_in_s": deadline_in_s - now, "anchor": "RUN_STARTED"},
+        }}
+
+    monkeypatch.setattr(smoke, "req", fake_req)
+    return dict(
+        sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
+        clock=lambda: clock["t"],
+    )
+
+
+def test_a_healthy_build_past_the_client_number_is_still_waited_for(smoke, monkeypatch):
+    """Live 2026-10-08 (98d3a356): smoke A gave up after ~58 min on a build at
+    "2/5 writer working" -- the build's own ceiling was hours away."""
+    kw = _declaring_server(smoke, monkeypatch, ready_at=5000, deadline_in_s=7200)
+    http, blob, _build = smoke.wait_for_export("s", "t", wait_s=3480, **kw)
+    assert http == 200 and blob[:2] == b"PK"
+
+
+def test_the_builds_own_deadline_passing_ends_the_wait(smoke, monkeypatch):
+    kw = _declaring_server(smoke, monkeypatch, ready_at=10_000, deadline_in_s=300)
+    http, _blob, _build = smoke.wait_for_export("s", "t", wait_s=9_000, **kw)
+    assert http == 409
+    assert kw["clock"]() < 400  # ended at the build's deadline, not the 9000 s fallback
+
+
+def test_an_outage_keeps_the_last_declared_deadline(smoke, monkeypatch):
+    clock = {"t": 0.0}
+
+    def fake_req(method, path, body=None, token=None, raw=False):
+        now = clock["t"]
+        if 100 <= now < 4000:
+            return 504, ({} if not raw else b"")
+        if path.endswith("/product/package"):
+            return (200, b"PK\x03\x04zip") if now >= 4000 else (409, b"{}")
+        return 200, {"build": {"state": "building",
+                               "deadline": {"deadline_in_s": 7200 - now}}}
+
+    monkeypatch.setattr(smoke, "req", fake_req)
+    http, _b, _ = smoke.wait_for_export(
+        "s", "t", wait_s=60,
+        sleep=lambda s: clock.__setitem__("t", clock["t"] + s), clock=lambda: clock["t"],
+    )
+    assert http == 200
+
+
 def test_an_outage_longer_than_the_wait_ends_it(smoke, monkeypatch):
     kw = _export_answers(smoke, monkeypatch, [504])
     http, _blob, _build = smoke.wait_for_export("s", "t", wait_s=60, **kw)

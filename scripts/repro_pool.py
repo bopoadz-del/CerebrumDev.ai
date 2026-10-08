@@ -29,8 +29,8 @@ from pathlib import Path
 from typing import Any, Dict, FrozenSet, Iterable, List
 
 ROOT = Path(__file__).resolve().parents[1]
-#: The index, repo-relative. The rotation counter is the git history of this
-#: file (scripts/release_cycle.py rotation_index), so it never moves.
+#: The index, repo-relative. Its declared order is the rotation order; which
+#: pair a cycle builds is scripts/release_cycle.py rotation_k_from_history.
 POOL_INDEX_REL = "backend/tests/repro_pool/pool.json"
 POOL_INDEX = ROOT / POOL_INDEX_REL
 INDEX_SCHEMA = "repro_pool.v1"

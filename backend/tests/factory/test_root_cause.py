@@ -52,9 +52,12 @@ def test_lane_authority_map_cites_authority_contracts():
         lanes = [glob for _root, glob in ROLE_CONTRACTS[role].write_lanes]
         assert mapped["roles"][role.value]["write_lanes"] == lanes
     assert mapped["roles"]["COLLECTOR"]["read_only"] is True
-    assert mapped["roles"]["TESTER"]["write_lanes"] == ["tests/**"]
+    # #705: the Factory test bootstrap is the ROOT conftest.py (TESTER's), so
+    # the product's tests/conftest.py is never overwritten.
+    assert mapped["roles"]["TESTER"]["write_lanes"] == ["tests/**", "conftest.py"]
     assert "vendor/**" in mapped["roles"]["CLONER"]["write_lanes"]
     assert "tests/**" not in mapped["roles"]["WRITER"]["write_lanes"]
+    assert "conftest.py" not in mapped["roles"]["WRITER"]["write_lanes"]
 
 
 def test_lotdesk_class_symptoms_map_to_named_owner_module():
