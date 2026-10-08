@@ -317,6 +317,24 @@ async def smoke_login(request: Request):
     return _json_with_login_cookie(request, payload)
 
 
+@router.get("/smoke-process-isolation")
+async def smoke_process_isolation(request: Request):
+    """Post-deploy guard: no live coding agent shares the server's session.
+
+    Same gate as smoke-login (404 when unconfigured, 401 without the token):
+    the answer is counts and booleans only -- never a pid or session id.
+    """
+    expected = _smoke_gate_token()
+    if not expected:
+        raise HTTPException(status_code=404, detail="Not Found")
+    provided = (request.headers.get("X-Smoke-Gate") or "").strip()
+    if not _smoke_gate_matches(provided, expected):
+        raise HTTPException(status_code=401, detail="Invalid or missing smoke gate token")
+    from ..factory.build.agent_process import process_isolation_report
+
+    return {"ok": True, **process_isolation_report()}
+
+
 @router.post("/verify-email")
 async def verify_email(body: VerifyBody, request: Request):
     _rate_limit(request, "verify-email")

@@ -363,7 +363,68 @@ BUILD_WAIT_S = int(os.environ.get("SMOKE_BUILD_WAIT_S", "5400"))
 SMOKE_BUILD_LEVEL = "production"
 
 
-def wait_for_export(sid, tok, *, wait_s, sleep=time.sleep, clock=time.time):
+class ProcessIsolationWatch:
+    """Samples the server's process-isolation answer while the build runs.
+
+    The 2026-10-07/08 restarts: a coding agent's shell shared the server's
+    session, so its group-wide kill took the server down mid-build. The
+    server reports (counts only, smoke-gated) whether any live agent shares
+    its session and whether the spawn path still asks for a new one; the
+    smoke samples it while its own writer runs, so a regression reads DEAD
+    here instead of killing a customer's build.
+    """
+
+    PATH = "/v1/auth/smoke-process-isolation"
+    #: One sample a minute is enough to catch a writer mid-pass.
+    INTERVAL_S = 60
+
+    def __init__(self, gate, clock=time.time):
+        self.gate = (gate or "").strip()
+        self.clock = clock
+        self.samples = []
+        self.errors = []
+        self._last = None
+
+    def sample(self):
+        if not self.gate:
+            return
+        now = self.clock()
+        if self._last is not None and now - self._last < self.INTERVAL_S:
+            return
+        self._last = now
+        s, body = req(
+            "GET", self.PATH, extra_headers={"X-Smoke-Gate": self.gate}, retries=1
+        )
+        if s == 200 and isinstance(body, dict):
+            self.samples.append(body)
+        elif s not in TRANSIENT:
+            self.errors.append(s)
+
+    def record(self):
+        name = "agent shell isolated from the server"
+        if not self.gate:
+            print(f"[SKIP] {name} — needs SMOKE_GATE_TOKEN (the deploy path sets it)")
+            return
+        if not self.samples:
+            self._last = None
+            self.sample()
+        if not self.samples:
+            check(name, False, f"no answer (http={self.errors[-1] if self.errors else 'transient'})")
+            return
+        broken = [b for b in self.samples if not b.get("isolated")]
+        seen = max(int(b.get("live_agents") or 0) for b in self.samples)
+        shared = max(int(b.get("agents_in_server_session") or 0) for b in self.samples)
+        spawn = all(bool(b.get("spawn_isolated")) for b in self.samples)
+        check(
+            name,
+            not broken and not self.errors,
+            f"samples={len(self.samples)} max_live_agents={seen} "
+            f"agents_in_server_session={shared} spawn_isolated={spawn}"
+            + (f" errors={self.errors}" if self.errors else ""),
+        )
+
+
+def wait_for_export(sid, tok, *, wait_s, sleep=time.sleep, clock=time.time, observe=None):
     """Poll the export until the build's own terminal state.
 
     A real build runs COLLECTOR -> STORE gate in 30-45 min (the writer alone
@@ -395,6 +456,8 @@ def wait_for_export(sid, tok, *, wait_s, sleep=time.sleep, clock=time.time):
             break
         if s != 409 and s not in TRANSIENT:
             break
+        if observe is not None:
+            observe()
         now = clock()
         if now - last_print >= 30:
             print(
@@ -681,7 +744,11 @@ def main():
     # The coding-agent runner builds in the background. A 409 here means
     # "still writing", not a dead kernel — poll until the ledger is terminal.
     # build-status nests the ledger under "build".
-    s, blob, build = wait_for_export(sid, tok, wait_s=BUILD_WAIT_S)
+    isolation = ProcessIsolationWatch(os.environ.get("SMOKE_GATE_TOKEN", ""))
+    s, blob, build = wait_for_export(
+        sid, tok, wait_s=BUILD_WAIT_S, observe=isolation.sample
+    )
+    isolation.record()
     ok = s == 200 and isinstance(blob, (bytes, bytearray)) and blob[:2] == b"PK"
     names = zipfile.ZipFile(io.BytesIO(blob)).namelist() if ok else []
     evidence = f"http={s} files={len(names)}"

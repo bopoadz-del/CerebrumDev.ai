@@ -48,7 +48,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
-from app.factory.build.agent_process import agent_popen_kwargs, kill_agent_tree
+from app.factory.build.agent_process import agent_popen_kwargs, kill_agent_tree, track_agent
 
 logger = logging.getLogger("cerebrumdev.factory.codewhale_worker")
 
@@ -1084,6 +1084,7 @@ def run_worker_job(
             raise WorkerError(
                 f"{WORKER_EXEC_FAILED}: could not start {cli}: {exc}"
             ) from exc
+        track_agent(proc)
 
         stdout_reader = threading.Thread(target=_stdout_reader, daemon=True)
         stderr_reader = threading.Thread(target=_stderr_reader, daemon=True)
