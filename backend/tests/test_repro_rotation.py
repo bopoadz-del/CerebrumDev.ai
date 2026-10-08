@@ -297,6 +297,9 @@ class _IntakeSmoke:
     """Records every Floor chat turn the cycle sends."""
 
     TRANSIENT = {502, 503, 504}
+    BuildDeadline = _load(
+        "post_deploy_smoke_for_intake", REPO_ROOT / "scripts" / "post_deploy_smoke.py"
+    ).BuildDeadline
 
     def __init__(self):
         self.turns = []

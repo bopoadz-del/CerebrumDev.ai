@@ -89,9 +89,10 @@ jobs:
     name: Live factory smoke
     needs: [resolve]
     runs-on: ubuntu-latest
-    # A real build takes 30-50 min; the export check waits up to the phase-wall
-    # ceiling (SMOKE_BUILD_WAIT_S, default 90 min) after the 20 min ready wait.
-    timeout-minutes: 130
+    # The export check waits on the build's OWN declared deadline
+    # (build-status deadline: run ceiling 120 min + Store-gate wall 30 min),
+    # after the 20 min ready wait: 170 min, plus margin.
+    timeout-minutes: 200
     steps:
       - uses: actions/checkout@v7
         with:
@@ -187,7 +188,8 @@ jobs:
     needs: [resolve, live-smoke, release-repros]
     if: always() && needs.resolve.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 130
+    # Same bound as live-smoke: ready wait + the build's declared deadline.
+    timeout-minutes: 200
     steps:
       - uses: actions/checkout@v7
         with:

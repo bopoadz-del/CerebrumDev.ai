@@ -424,6 +424,36 @@ class ProcessIsolationWatch:
         )
 
 
+class BuildDeadline:
+    """When a poller stops waiting: the build's OWN declared deadline.
+
+    build-status carries ``build.deadline.deadline_in_s`` -- the remaining
+    time to the latest wall the build itself recorded (run ceiling, a rework
+    round, the Store-gate handoff), on the server's clock. Each read re-bases
+    it on this client's clock, so a lifted wall extends the wait and clock
+    skew never matters. An outage keeps the last declared end. ``fallback_s``
+    applies ONLY to a server that declares nothing (older than the field);
+    once a deadline is declared it is ignored. Owner rule: timeouts live at
+    the phase-wall ceiling only -- live 2026-10-08, smoke A's fixed ~58 min
+    wait read DEAD on a healthy build at "2/5 writer working".
+    """
+
+    def __init__(self, fallback_s, clock):
+        self.clock = clock
+        self.end = clock() + float(fallback_s)
+        self.declared = False
+
+    def read(self, build):
+        decl = build.get("deadline") if isinstance(build, dict) else None
+        remaining = decl.get("deadline_in_s") if isinstance(decl, dict) else None
+        if isinstance(remaining, (int, float)) and not isinstance(remaining, bool):
+            self.end = self.clock() + float(remaining)
+            self.declared = True
+
+    def passed(self):
+        return self.clock() >= self.end
+
+
 def wait_for_export(sid, tok, *, wait_s, sleep=time.sleep, clock=time.time, observe=None):
     """Poll the export until the build's own terminal state.
 
@@ -439,16 +469,17 @@ def wait_for_export(sid, tok, *, wait_s, sleep=time.sleep, clock=time.time, obse
     """
     s, blob = 0, b""
     build = {}
-    deadline = clock() + wait_s
+    deadline = BuildDeadline(wait_s, clock)
     last_print = 0.0
-    while clock() < deadline:
+    while not deadline.passed():
         s, blob = req("GET", f"/v1/sessions/{sid}/product/package", token=tok, raw=True)
-        st, status_body = req(
+        _st, status_body = req(
             "GET", f"/v1/sessions/{sid}/product/build-status", token=tok
         )
         payload = status_body if isinstance(status_body, dict) else {}
         nested = payload.get("build")
         build = nested if isinstance(nested, dict) else payload
+        deadline.read(build)
         state = build.get("state")
         if s == 200:
             break
