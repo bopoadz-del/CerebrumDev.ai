@@ -52,6 +52,7 @@ on:
       - "backend/app/factory/build/product_gate.py"
       - "backend/app/factory/build/product_suites.py"
       - "backend/app/factory/build/rejection_contract.py"
+      - "backend/app/factory/build/roles_constants.py"
       - "backend/app/factory/build/roles_handlers.py"
       - "backend/app/factory/build/stamp_registry.py"
       - "backend/app/factory/build/store_acceptance.py"

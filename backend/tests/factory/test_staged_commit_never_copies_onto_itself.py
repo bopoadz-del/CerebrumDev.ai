@@ -52,7 +52,7 @@ def test_a_symlink_to_the_destination_commits_as_a_no_op(tmp_path):
     try:
         os.symlink(dest / LOCK, ws.workspace / LOCK)
     except (OSError, NotImplementedError):
-        pytest.skip("this host cannot create symlinks")
+        pytest.skip(reason="this host cannot create symlinks")
 
     _commit_keeps_the_destination(ws, dest)
 
