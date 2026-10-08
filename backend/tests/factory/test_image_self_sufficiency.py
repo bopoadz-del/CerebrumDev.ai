@@ -186,3 +186,69 @@ def test_the_probe_env_carries_os_startup_plumbing_and_nothing_else(monkeypatch,
     assert env["PYTHONPATH"] == str(tmp_path)
     assert "FACTORY_SECRET_THING" not in env
     assert set(env) <= set(image_sufficiency._OS_STARTUP_VARS) | {"PYTHONPATH", "PYTHONDONTWRITEBYTECODE"}
+
+
+FALLBACK_DISPATCH = DISPATCH + '''
+
+import importlib as _importlib
+
+
+def load_block(block_id):  # noqa: F811 -- the writer's silent fallback shape
+    path = _VENDOR / block_id / "block.py"
+    if path.is_file():
+        return path.read_text()
+    return _importlib.import_module(f"app.fallback_blocks.{block_id}")
+'''
+
+
+def test_a_locked_block_loaded_from_anywhere_but_its_locked_path_is_refused(tmp_path):
+    """Live (revoked smoke B): the loader fell back to a local copy when the
+    vendored block was absent, so one block "loaded" and the image looked
+    sound. Every locked block must come from its locked path, whoever wrote
+    the loader."""
+    root = _product(tmp_path, APP_ONLY)
+    (root / "app" / "dispatch.py").write_text(FALLBACK_DISPATCH, encoding="utf-8")
+    (root / "app" / "fallback_blocks").mkdir()
+    (root / "app" / "fallback_blocks" / "__init__.py").write_text("", encoding="utf-8")
+    for block in ("ledger", "storage"):
+        (root / "app" / "fallback_blocks" / f"{block}.py").write_text("X = 2\n", encoding="utf-8")
+    verdict = image_sufficiency.check(root)
+    assert not verdict.ok and verdict.judged, verdict.detail
+    assert any("ledger" in m and "vendor/blocks/ledger" in m for m in verdict.misloaded), verdict.misloaded
+    assert "/tmp" not in verdict.detail
+
+
+def test_blocks_loaded_from_their_locked_paths_pass_the_origin_check(tmp_path):
+    root = _product(tmp_path, FULL)
+    (root / "app" / "dispatch.py").write_text(FALLBACK_DISPATCH, encoding="utf-8")
+    verdict = image_sufficiency.check(root)
+    assert verdict.ok and verdict.judged and not verdict.misloaded, verdict.detail
+
+
+def test_the_writer_gate_names_a_block_loaded_outside_its_lock(tmp_path, monkeypatch):
+    from app.factory.build import gates
+    from app.factory.build.authority import BuildRole
+
+    root = _product(tmp_path, APP_ONLY)
+    (root / "app" / "dispatch.py").write_text(FALLBACK_DISPATCH, encoding="utf-8")
+    (root / "app" / "fallback_blocks").mkdir()
+    (root / "app" / "fallback_blocks" / "__init__.py").write_text("", encoding="utf-8")
+    for block in ("ledger", "storage"):
+        (root / "app" / "fallback_blocks" / f"{block}.py").write_text("X = 2\n", encoding="utf-8")
+    ok = gates.GateResult(ok=True, gate="x", detail="ok")
+    monkeypatch.setattr(
+        "app.factory.build.authorship.agent_written_handler_ids_in_workspace", lambda _ws: {"cap"}
+    )
+    monkeypatch.setattr(gates, "gate_workspace_compiles", lambda _ctx: ok)
+    monkeypatch.setattr(gates, "gate_writer_behaviour", lambda _ctx: ok)
+    monkeypatch.setattr(gates, "gate_ui_surface", lambda _ctx: ok)
+    monkeypatch.setattr("app.factory.build.ui_e2e.gate_ui_end_to_end", lambda _ctx: ok)
+
+    class _Money:
+        status, reason, findings = "PASS", "", []
+
+    monkeypatch.setattr("app.factory.build.money_contract.money_verdict", lambda _ws: _Money())
+    result = gates.gate_writer_contract(gates.GateContext(workspace=root, role=BuildRole.WRITER))
+    assert result.ok is False
+    assert result.reason == "locked_block_loaded_elsewhere"
+    assert any("vendor/blocks/storage" in f for f in result.findings), result.findings

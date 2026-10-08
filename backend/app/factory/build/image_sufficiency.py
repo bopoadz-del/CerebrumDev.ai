@@ -41,7 +41,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 DOCKERFILE = "Dockerfile"
 DOCKERIGNORE = ".dockerignore"
@@ -62,7 +62,12 @@ _OS_STARTUP_VARS = ("PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP"
 PROBE_RESULT = "IMAGE_PROBE "
 _PROBE = f"""
 import importlib, json, sys, traceback
-result = {{"modules": [], "traces": [], "loaded": 0}}
+result = {{"modules": [], "traces": [], "loaded": 0, "opened": {{}}}}
+_opened = []
+def _audit(event, args):
+    if event == "open" and args and isinstance(args[0], str):
+        _opened.append(args[0])
+sys.addaudithook(_audit)
 def note(exc):
     if isinstance(exc, ModuleNotFoundError) and exc.name:
         result["modules"].append(exc.name)
@@ -76,9 +81,12 @@ else:
     for block_id in json.loads(sys.argv[1]):
         try:
             load(block_id)
-            result["loaded"] += 1
         except Exception as exc:
             note(exc)
+        else:
+            result["loaded"] += 1
+            result["opened"][block_id] = True
+result["files"] = sorted(set(_opened))
 print({PROBE_RESULT!r} + json.dumps(result))
 """
 
@@ -89,6 +97,9 @@ class Verdict:
     judged: bool
     detail: str
     missing: List[str] = field(default_factory=list)
+    #: Locked blocks the loader took from somewhere other than their locked
+    #: path (a silent local fallback), one finding each.
+    misloaded: List[str] = field(default_factory=list)
 
 
 # -- .dockerignore -------------------------------------------------------------------
@@ -278,6 +289,47 @@ def locked_blocks(root: Path) -> List[str]:
     return [i for i in ids if i]
 
 
+def locked_paths(root: Path) -> Dict[str, str]:
+    """``{block id: its locked path}`` for every lock entry that declares one."""
+    try:
+        data = json.loads((root / LOCKFILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    blocks = data.get("blocks") if isinstance(data, dict) else None
+    if isinstance(blocks, dict):
+        entries = [(k, v) for k, v in blocks.items() if isinstance(v, dict)]
+    elif isinstance(blocks, list):
+        entries = [(str(b.get("id") or ""), b) for b in blocks if isinstance(b, dict)]
+    else:
+        entries = []
+    return {
+        bid: str(entry["path"]).replace("\\", "/").strip("/")
+        for bid, entry in entries
+        if bid and isinstance(entry.get("path"), str) and entry["path"].strip("/")
+    }
+
+
+def _misloaded(result: dict, image: Path, root: Path) -> List[str]:
+    """A locked block that LOADED counts as loaded from its lock only when the
+    run opened a file under its locked path (at start-up or on the call --
+    a loader may load every block when it is imported); otherwise it came
+    from somewhere else, a silent fallback. A block that failed to load is a
+    missing path, judged apart."""
+    paths = locked_paths(root)
+    loaded = result.get("opened") or {}
+    files = [_in_image(f, image).replace("\\", "/") for f in result.get("files") or []]
+    out: List[str] = []
+    for bid, rel in paths.items():
+        if bid not in loaded:
+            continue
+        if any(f"/{rel}/" in f or f.endswith(f"/{rel}") for f in files):
+            continue
+        tail = f"/{bid}.py"
+        source = next((f for f in files if f.endswith(tail) or f"/{bid}/" in f), "a path outside the lock")
+        out.append(f"block {bid} loaded from {source}, not its locked path {rel}")
+    return out
+
+
 def _probe_result(out: str) -> Optional[dict]:
     for line in reversed(out.splitlines()):
         if line.startswith(PROBE_RESULT):
@@ -360,10 +412,15 @@ def check(root: Path | str, *, python: str = sys.executable, timeout_s: int = PR
         if result is None:
             last = next((ln for ln in reversed(out.strip().splitlines()) if ln.strip()), "")
             return Verdict(ok=False, judged=True, detail=f"image cannot run the app: {_in_image(last, image)[:300]}")
+        misloaded = _misloaded(result, image, root)
+        if misloaded:
+            return Verdict(
+                ok=False, judged=True, misloaded=misloaded, detail="; ".join(misloaded),
+            )
         if not result.get("traces"):
             return Verdict(
                 ok=True, judged=True,
-                detail=f"image imports the app and loads all {len(blocks)} locked blocks",
+                detail=f"image imports the app and loads all {len(blocks)} locked blocks from their locked paths",
             )
         missing, judgeable = _missing_paths(result, image, root)
         if not judgeable:
