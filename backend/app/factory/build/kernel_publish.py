@@ -205,11 +205,7 @@ def _current_text(workspace: Any, rel: Path) -> str:
         path = Path(resolve(rel))
     else:
         path = Path(getattr(workspace, "workspace", workspace)) / rel
-    # newline="": the product's own line endings are part of its bytes.
-    if not path.is_file():
-        return ""
-    with open(path, encoding="utf-8", newline="") as handle:
-        return handle.read()
+    return path.read_text(encoding="utf-8") if path.is_file() else ""
 
 
 def stamp_roster(ctx: Any) -> bool:
