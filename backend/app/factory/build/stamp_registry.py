@@ -147,6 +147,7 @@ def stamps() -> Tuple[Stamp, ...]:
     from app.factory.build.kernel_publish import JOBS_REL
     from app.factory.build.placeholder_connectors import CONTRACT_TEST
     from app.factory.build.product_suites import PRODUCT_SUITES
+    from app.factory.build.roles_constants import CONFTEST_REL
     from app.factory.build.store_acceptance import ACCEPTANCE_SCRIPT_REL, GITHUB_CI_REL
     from app.factory.build.writer_behaviour import SELF_CHECK_REL
 
@@ -167,6 +168,9 @@ def stamps() -> Tuple[Stamp, ...]:
             _refresh,
         ),
         Stamp("re-entry refresh (requirements)", SHARED, ("requirements.txt",), _refresh),
+        # TESTER's test bootstrap: its own rootdir file, never the product's
+        # tests/conftest.py (the names the product's tests import live there).
+        Stamp("TESTER test bootstrap", OWNED, (CONFTEST_REL,)),
         Stamp(
             "TESTER product suites",
             OWNED,

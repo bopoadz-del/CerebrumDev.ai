@@ -16,6 +16,7 @@ store root, when one is supplied) so a role cannot exfiltrate the factory.
 from __future__ import annotations
 
 import inspect
+import os
 import shutil
 from pathlib import Path
 from typing import Any, List, Optional, Sequence
@@ -25,6 +26,24 @@ from app.factory.build.authority import (
     BuildRole,
     assert_write_allowed,
 )
+
+
+def _copy_unless_same(src: Path, dest: Path) -> None:
+    """Copy ``src`` over ``dest`` -- unless they are already one file.
+
+    A staged tree can hold a link (symlink or hard link) to the destination's
+    own file: the coding agent works there and may link what it did not
+    change. Copying a file onto itself is shutil.SameFileError, which killed a
+    build thread at WRITER commit (live 2026-10-08, blocks.lock.json). When
+    both names are the same file the destination already holds those bytes,
+    so the copy has nothing to do.
+    """
+    try:
+        if dest.exists() and os.path.samefile(src, dest):
+            return
+    except OSError:
+        pass
+    shutil.copy2(src, dest)
 
 
 def _required_positionals(fn: Any) -> Optional[int]:
@@ -173,7 +192,7 @@ class RoleWorkspace:
                 continue
             dest = self.destination / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dest)
+            _copy_unless_same(src, dest)
         return list(self.written)
 
     def record_existing(self, root: Optional[Path | str] = None) -> List[str]:
@@ -250,7 +269,7 @@ class RoleWorkspace:
         workspace."""
         resolved = self._authorise(relpath)
         resolved.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(Path(source), resolved)
+        _copy_unless_same(Path(source), resolved)
         self._record(resolved)
         return resolved
 
@@ -274,7 +293,7 @@ class RoleWorkspace:
                 continue
             target = dest_root / item.relative_to(src)
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(item, target)
+            _copy_unless_same(item, target)
             self._record(target)
         return dest_root
 

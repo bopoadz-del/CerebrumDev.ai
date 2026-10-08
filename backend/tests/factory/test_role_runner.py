@@ -278,7 +278,7 @@ def test_the_artifact_is_a_platform_not_a_parts_list(blueprint, tmp_path, stub_c
         "app/work_queue.py",
         "README.md",
         "requirements.txt",
-        "tests/conftest.py",
+        "conftest.py",
         "tests/test_models.py",
         "tests/test_data_lifecycle.py",
         "tests/test_deploy.py",

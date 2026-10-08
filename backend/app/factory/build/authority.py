@@ -268,7 +268,13 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
         ),
         agent=AgentSeat.NONE,
         http_routes=("GET /v1/gates",),
-        write_lanes=((LaneRoot.WORKSPACE, "tests/**"),),
+        write_lanes=(
+            (LaneRoot.WORKSPACE, "tests/**"),
+            # The Factory's test bootstrap (roles_constants.CONFTEST_REL): the
+            # rootdir conftest, so it never lands on the product's
+            # tests/conftest.py. One named file, not a root wildcard.
+            (LaneRoot.WORKSPACE, "conftest.py"),
+        ),
         gate="code-phase suite green (pytest -m 'not pilot')",
     ),
     BuildRole.STORE_MANAGER: RoleContract(

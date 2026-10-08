@@ -821,3 +821,12 @@ def _with_refusal_log(text: str) -> str:
 
 
 _CONFTEST = _with_refusal_log(_CONFTEST)
+
+#: Where TESTER writes the Factory's test bootstrap: the rootdir conftest,
+#: which pytest loads BEFORE ``tests/conftest.py``. Never ``tests/conftest.py``
+#: -- that is the product's own file (the names its tests import live there),
+#: and writing over it failed every writer test that imports from it at
+#: collection, round after round (live 2026-10-08, rotation cycle 1). Both
+#: conftests load; both hook sets run; the product's explicit settings win
+#: over this bootstrap's ``setdefault`` values.
+CONFTEST_REL = "conftest.py"

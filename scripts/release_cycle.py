@@ -31,15 +31,19 @@ regression -- plus ROTATION picks from the pool in ``backend/tests/repro_pool``
 currency and build level). Cycle ``k`` builds ``pool[(p*k + i) mod n]`` for the
 pool's ``p`` picks, so with eight blueprints and two picks each comes round
 every four cycles. Nothing here knows any blueprint; nothing is random. ``k``
-is git history: the number of first-parent commits from the one that added the
-pool index to the cycle's commit -- every master push deploys and starts a
-cycle, a re-run on the same commit picks the same pair, and no counter is
-stored anywhere. Release = every anchor AND every pick exports certified, and
-smoke A and smoke B pass, on one commit.
+advances only past a cycle that PASSED: the newest completed cycle's own
+uploaded report decides -- passed, ``k+1``; failed, the same ``k``, so the
+"one more cycle" after a fix re-runs the picks that failed; no report with a
+rotation yet, ``0``. The record is GitHub's (the previous runs of this
+workflow and their report artifacts), read with the run's own token; nothing
+is stored anywhere, and an unreadable report fails closed. Release = every
+anchor AND every pick exports certified, and smoke A and smoke B pass, on one
+commit.
 
     # the commit this cycle is about (prints sha=...; exit 1 unless it is live)
     python scripts/release_cycle.py live-sha [--expect <sha>]
-    # what a cycle on this commit builds (anchors + rotation picks), offline
+    # what a cycle on this commit builds (anchors + rotation picks); reads the
+    # previous cycle's report (GITHUB_TOKEN/GH_TOKEN + GITHUB_REPOSITORY)
     python scripts/release_cycle.py plan
     # the repros (anchors + this cycle's picks), beside the live-smoke job
     python scripts/release_cycle.py repros --out cycle/
@@ -87,6 +91,12 @@ PROGRESS_S = 300
 #: The report file inside --out.
 REPORT_NAME = "cycle_report.json"
 REPROS_NAME = "repros.json"
+#: The workflow that runs a cycle, and the artifact its report job uploads:
+#: the rotation counter reads the previous cycle's verdict from there.
+CYCLE_WORKFLOW = "post-deploy-smoke.yml"
+REPORT_ARTIFACT = "release-cycle-report"
+#: How many completed cycle runs back the counter looks for a report.
+HISTORY_RUNS = 30
 #: The fields of an export's MANIFEST.json the report carries.
 MANIFEST_FIELDS = ("certified", "build_level", "advisory_checks")
 
@@ -160,34 +170,132 @@ def select_rotation(pool: list, *, k: int, picks: int) -> list:
     return [pool[(picks * k + i) % n] for i in range(picks)]
 
 
-def _git(repo_root: Path, *args: str) -> str:
-    done = subprocess.run(
-        ["git", "-C", str(repo_root), *args], capture_output=True, text=True,
-    )
-    if done.returncode != 0:
-        raise CycleError(f"git {' '.join(args)}: {(done.stderr or done.stdout).strip()[:300]}")
-    return done.stdout.strip()
+def rotation_k_from_history(reports: Iterable[Any]) -> "tuple[int, str]":
+    """The cycle counter ``k`` and what decided it.
 
-
-def rotation_index(sha: str, *, repo_root: Path | str = ROOT, index_rel: str) -> int:
-    """The cycle counter ``k`` for ``sha``: how many first-parent commits lie
-    between the commit that ADDED the pool index and ``sha`` (0 on that commit).
-
-    Git history is the record -- auditable, identical on every runner, nothing
-    stored. Fails closed on a shallow checkout (the history is not there to
-    count) and on a commit from before the pool existed; it never guesses.
+    ``reports`` are the cycle reports of COMPLETED cycle runs, newest first
+    (``None`` for a run that never wrote one -- its commit never went live, so
+    it ran no cycle). The newest report decides: it passed, ``k+1``; it failed,
+    the same ``k`` -- the cycle after a fix re-runs the picks that failed. A
+    report from before the rotation existed, or no report at all, is the first
+    cycle: ``0``. A report that is there but unreadable fails closed; so does
+    a history that cannot be read (the iterator raises).
     """
-    repo = Path(repo_root)
-    if _git(repo, "rev-parse", "--is-shallow-repository") == "true":
+    for report in reports:
+        if report is None:
+            continue
+        if not isinstance(report, Mapping):
+            raise CycleError(f"the previous cycle report is not a record: {str(report)[:80]!r}")
+        verdict = report.get("verdict")
+        rotation = report.get("rotation")
+        if rotation is None:
+            if verdict not in ("pass", "fail"):
+                raise CycleError(f"the previous cycle report has no verdict: {verdict!r}")
+            return 0, "first rotation cycle (the previous cycle ran no rotation)"
+        k = rotation.get("k") if isinstance(rotation, Mapping) else None
+        if not isinstance(k, int) or isinstance(k, bool) or k < 0:
+            raise CycleError(f"the previous cycle report carries no counter: {rotation!r}")
+        if verdict == "pass":
+            return k + 1, f"the previous cycle (k={k}) passed: the next pair"
+        if verdict == "fail":
+            return k, f"the previous cycle (k={k}) failed: the same pair again"
+        raise CycleError(f"the previous cycle report has no verdict: {verdict!r}")
+    return 0, "first rotation cycle (no earlier cycle report)"
+
+
+def _github_json(url: str, token: str) -> Any:
+    import urllib.request
+
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    })
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _github_report(url: str, token: str) -> Any:
+    """Download one report artifact (a zip) and return its cycle_report.json.
+
+    GitHub answers the download with a redirect to a signed storage URL that
+    REFUSES a bearer token, and urllib would carry the Authorization header
+    across the redirect. So the redirect is read, not followed, and the signed
+    URL is fetched with no credentials at all."""
+    import urllib.error
+    import urllib.request
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            return None
+
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    })
+    try:
+        with urllib.request.build_opener(_NoRedirect).open(req, timeout=60) as resp:
+            blob = resp.read()
+    except urllib.error.HTTPError as exc:
+        location = exc.headers.get("Location") if exc.code in (301, 302, 303, 307, 308) else None
+        if not location:
+            raise
+        with urllib.request.urlopen(location, timeout=60) as resp:
+            blob = resp.read()
+    with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+        names = [n for n in zf.namelist() if n.rsplit("/", 1)[-1] == REPORT_NAME]
+        if not names:
+            raise CycleError(f"the {REPORT_ARTIFACT} artifact holds no {REPORT_NAME}")
+        return json.loads(zf.read(names[0]).decode("utf-8"))
+
+
+def cycle_reports_from_github(
+    *, repo: str, token: str, exclude_run_id: str = "", api: str = "https://api.github.com",
+) -> Iterable[Any]:
+    """The reports of this workflow's completed runs, newest first (``None``
+    for a run that uploaded no report). Lazy: the counter stops at the first
+    report. Any failure to read raises CycleError -- the counter never
+    guesses."""
+    try:
+        runs = _github_json(
+            f"{api}/repos/{repo}/actions/workflows/{CYCLE_WORKFLOW}/runs"
+            f"?status=completed&per_page={HISTORY_RUNS}",
+            token,
+        ).get("workflow_runs") or []
+    except Exception as exc:  # noqa: BLE001 -- any read failure fails closed
+        raise CycleError(f"the previous cycle runs could not be read: {exc}") from exc
+    for run in runs:
+        run_id = str(run.get("id") or "")
+        if not run_id or run_id == str(exclude_run_id):
+            continue
+        try:
+            arts = _github_json(
+                f"{api}/repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100", token,
+            ).get("artifacts") or []
+            report = next((a for a in arts if a.get("name") == REPORT_ARTIFACT), None)
+            if report is None:
+                yield None
+                continue
+            if report.get("expired"):
+                raise CycleError(f"run {run_id}'s {REPORT_ARTIFACT} artifact has expired")
+            yield _github_report(str(report["archive_download_url"]), token)
+        except CycleError:
+            raise
+        except Exception as exc:  # noqa: BLE001 -- any read failure fails closed
+            raise CycleError(f"run {run_id}'s cycle report could not be read: {exc}") from exc
+
+
+def _reports_from_environment() -> Iterable[Any]:
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
+    repo = os.environ.get("GITHUB_REPOSITORY") or ""
+    if not token or not repo:
         raise CycleError(
-            "the rotation counter needs full git history; this checkout is shallow "
-            "(actions/checkout fetch-depth: 0)"
+            "the rotation counter reads the previous cycle's report: set GITHUB_TOKEN "
+            "(or GH_TOKEN) and GITHUB_REPOSITORY"
         )
-    added = _git(repo, "log", "--diff-filter=A", "--format=%H", sha, "--", index_rel).splitlines()
-    if not added:
-        raise CycleError(f"{index_rel} does not exist at {sha}: there is no rotation to count")
-    landed = added[-1]
-    return int(_git(repo, "rev-list", "--count", "--first-parent", f"{landed}..{sha}"))
+    return cycle_reports_from_github(
+        repo=repo, token=token, exclude_run_id=os.environ.get("GITHUB_RUN_ID") or "",
+    )
 
 
 def plan_runs(config: Mapping[str, Any], pool: list, *, k: int, picks: int) -> list:
@@ -518,17 +626,22 @@ def _load_smoke(base: str):
     return mod
 
 
-def plan_cycle(config: Mapping[str, Any], commit: str) -> Dict[str, Any]:
-    """This cycle's builds and the rotation record the report carries."""
+def plan_cycle(
+    config: Mapping[str, Any], commit: str, *, reports: Optional[Iterable[Any]] = None,
+) -> Dict[str, Any]:
+    """This cycle's builds and the rotation record the report carries.
+
+    ``reports``: the previous cycles' reports, newest first; read from GitHub
+    (this workflow's completed runs) when not given."""
     rot = load_rotation(config)
-    sha = commit or _git(ROOT, "rev-parse", "HEAD")
-    k = rotation_index(sha, repo_root=ROOT, index_rel=str(config["rotation"]["pool"]))
+    k, basis = rotation_k_from_history(_reports_from_environment() if reports is None else reports)
     runs = plan_runs(config, rot["pool"], k=k, picks=rot["picks"])
     rotation = {
         "k": k,
         "picks": [r["name"] for r in runs if r["role"] == ROTATION],
         "pool_size": len(rot["pool"]),
-        "counter": f"first-parent commits since {config['rotation']['pool']} was added, at {sha[:12]}",
+        "counter": basis,
+        "commit": commit,
     }
     return {"runs": runs, "rotation": rotation}
 

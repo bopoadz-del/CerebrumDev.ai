@@ -9,8 +9,9 @@ certified + smoke A and smoke B pass, one commit.
 The pool is DATA: nothing in the Factory may branch on which blueprint runs
 (the hardwiring gate's ``blueprint_name`` form, tested in
 tests/factory/test_hardwiring_gate.py). Selection is deterministic -- pool
-order is the index's declared order, the cycle counter is git history, and
-nothing is random.
+order is the index's declared order, the cycle counter advances only past a
+passed cycle (read from the previous cycle's own report), and nothing is
+random.
 """
 
 from __future__ import annotations
@@ -18,8 +19,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import math
-import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -199,62 +198,95 @@ def test_a_negative_or_missing_counter_is_refused(cycle, pool):
         cycle.select_rotation(pool, k=0, picks=len(pool) + 1)
 
 
-# -- the cycle counter: git history, nothing stored ---------------------------
+# -- the cycle counter: the previous cycle's verdict, nothing stored ---------
+#
+# Owner rule (2026-10-08): a failure is classified, fixed, and "one more
+# cycle" runs -- and that cycle must re-run the picks that failed. So ``k``
+# advances only past a cycle whose release verdict PASSED. The record is the
+# newest completed cycle's own uploaded report (cycle_report.json): passed ->
+# k+1, failed -> the same k, no report with a rotation ever -> 0. Reports are
+# read newest first; a run that never wrote a report (its commit never went
+# live) is skipped; a report that cannot be read fails closed.
 
 
-def _git(repo: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True,
-    ).stdout.strip()
+def _cycle_report(k, verdict):
+    return {"verdict": verdict, "rotation": {"k": k, "picks": ["a", "b"]}}
 
 
-def _commit(repo: Path, rel: str, text: str, msg: str) -> str:
-    path = repo / rel
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    _git(repo, "add", rel)
-    _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", msg)
-    return _git(repo, "rev-parse", "HEAD")
+def test_the_first_cycle_ever_is_k_zero(cycle):
+    assert cycle.rotation_k_from_history([])[0] == 0
+    # Cycles from before the rotation existed carry no rotation record.
+    assert cycle.rotation_k_from_history([{"verdict": "pass"}])[0] == 0
 
 
-@pytest.mark.skipif(shutil.which("git") is None, reason="git is not on PATH")
-def test_the_counter_is_the_number_of_master_commits_since_the_pool_landed(cycle, tmp_path):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-q")
-    before = _commit(repo, "README", "x", "before the pool")
-    landed = _commit(repo, "backend/tests/repro_pool/pool.json", "{}", "the pool lands")
-    one = _commit(repo, "a.txt", "1", "next merge")
-    two = _commit(repo, "b.txt", "2", "the merge after")
-    rel = "backend/tests/repro_pool/pool.json"
-    assert cycle.rotation_index(landed, repo_root=repo, index_rel=rel) == 0
-    assert cycle.rotation_index(one, repo_root=repo, index_rel=rel) == 1
-    assert cycle.rotation_index(two, repo_root=repo, index_rel=rel) == 2
-    # A re-run on the same commit picks the same pair.
-    assert cycle.rotation_index(two, repo_root=repo, index_rel=rel) == 2
-    # Editing the index later does not reset the rotation.
-    three = _commit(repo, rel, '{"edited": true}', "edit the pool")
-    assert cycle.rotation_index(three, repo_root=repo, index_rel=rel) == 3
-    # A commit from before the pool existed has no rotation: fail closed.
+def test_a_failed_cycle_re_runs_the_same_pair(cycle, pool):
+    k, basis = cycle.rotation_k_from_history([_cycle_report(0, "fail")])
+    assert k == 0
+    assert "fail" in basis
+    picks = [bp["id"] for bp in cycle.select_rotation(pool, k=k, picks=2)]
+    assert picks == [pool[0]["id"], pool[1]["id"]]
+
+
+def test_a_passed_cycle_moves_to_the_next_pair(cycle):
+    assert cycle.rotation_k_from_history([_cycle_report(0, "pass")])[0] == 1
+    assert cycle.rotation_k_from_history([_cycle_report(3, "pass")])[0] == 4
+
+
+def test_only_the_newest_report_decides(cycle):
+    history = [_cycle_report(2, "fail"), _cycle_report(1, "pass"), _cycle_report(0, "pass")]
+    assert cycle.rotation_k_from_history(history)[0] == 2
+
+
+def test_a_run_that_never_wrote_a_report_is_skipped(cycle):
+    # None: a completed cycle run whose commit never went live, so it never
+    # reached its report job -- it ran no cycle and says nothing about k.
+    assert cycle.rotation_k_from_history([None, _cycle_report(1, "pass")])[0] == 2
+
+
+@pytest.mark.parametrize("bad", [
+    {"verdict": "pass", "rotation": {"k": -1}},
+    {"verdict": "pass", "rotation": {"k": "1"}},
+    {"verdict": "maybe", "rotation": {"k": 1}},
+    {"rotation": {"k": 1}},
+    "not a report",
+])
+def test_an_unreadable_report_fails_closed(cycle, bad):
     with pytest.raises(cycle.CycleError):
-        cycle.rotation_index(before, repo_root=repo, index_rel=rel)
+        cycle.rotation_k_from_history([bad])
 
 
-@pytest.mark.skipif(shutil.which("git") is None, reason="git is not on PATH")
-def test_a_shallow_checkout_fails_closed_instead_of_guessing(cycle, tmp_path):
-    src = tmp_path / "src"
-    src.mkdir()
-    _git(src, "init", "-q")
-    _commit(src, "backend/tests/repro_pool/pool.json", "{}", "the pool lands")
-    _commit(src, "a.txt", "1", "next")
-    head = _commit(src, "b.txt", "2", "after")
-    shallow = tmp_path / "shallow"
-    subprocess.run(
-        ["git", "clone", "-q", "--depth", "1", src.as_uri(), str(shallow)],
-        check=True, capture_output=True,
-    )
+def test_a_history_that_cannot_be_read_fails_closed(cycle):
+    def broken():
+        raise cycle.CycleError("the previous report could not be downloaded")
+        yield  # pragma: no cover
+
     with pytest.raises(cycle.CycleError):
-        cycle.rotation_index(head, repo_root=shallow, index_rel="backend/tests/repro_pool/pool.json")
+        cycle.rotation_k_from_history(broken())
+
+
+def test_the_counter_reads_no_clock_no_random_source_and_no_local_state(cycle):
+    import inspect
+
+    src = inspect.getsource(cycle.rotation_k_from_history)
+    for forbidden in ("random", "time.", "datetime", "open(", "Path("):
+        assert forbidden not in src, forbidden
+
+
+def test_planning_without_a_readable_history_fails_closed(cycle, monkeypatch):
+    for var in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_REPOSITORY"):
+        monkeypatch.delenv(var, raising=False)
+    config = cycle.load_config(CONFIG_PATH)
+    with pytest.raises(cycle.CycleError):
+        cycle.plan_cycle(config, "0" * 40)
+
+
+def test_a_plan_records_the_counter_and_what_decided_it(cycle):
+    config = cycle.load_config(CONFIG_PATH)
+    plan = cycle.plan_cycle(config, "0" * 40, reports=[_cycle_report(0, "fail")])
+    assert plan["rotation"]["k"] == 0
+    assert "fail" in plan["rotation"]["counter"]
+    plan = cycle.plan_cycle(config, "0" * 40, reports=[_cycle_report(0, "pass")])
+    assert plan["rotation"]["k"] == 1
 
 
 # -- planning one cycle -------------------------------------------------------
@@ -441,10 +473,22 @@ def _jobs():
     return yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]
 
 
-def test_the_repro_job_checks_out_full_history_for_the_counter():
-    steps = _jobs()["release-repros"]["steps"]
-    checkout = [s for s in steps if s.get("uses", "").startswith("actions/checkout")]
-    assert checkout and checkout[0]["with"].get("fetch-depth") == 0
+def test_the_repro_job_can_read_the_previous_cycle_report():
+    job = _jobs()["release-repros"]
+    assert job.get("permissions", {}).get("actions") == "read"
+    assert job.get("permissions", {}).get("contents") == "read"
+    step = next(s for s in job["steps"] if "release_cycle.py repros" in str(s.get("run", "")))
+    assert "GITHUB_TOKEN" in step.get("env", {})
+
+
+def test_the_report_artifact_the_counter_reads_is_the_one_the_cycle_uploads(cycle):
+    uploads = [
+        s["with"]["name"]
+        for s in _jobs()["smoke-b"]["steps"]
+        if str(s.get("uses", "")).startswith("actions/upload-artifact")
+    ]
+    assert cycle.REPORT_ARTIFACT in uploads
+    assert cycle.CYCLE_WORKFLOW == WORKFLOW_PATH.name
 
 
 def test_the_repro_job_outlasts_every_wave_of_builds(cycle):

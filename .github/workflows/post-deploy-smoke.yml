@@ -146,13 +146,16 @@ jobs:
     # runs two user builds at once queue into two waves (release_cycle.py
     # repro_wait_s). 2 x 90 + 20 = 200 min, plus margin; GitHub's cap is 360.
     timeout-minutes: 240
+    # The rotation counter reads the previous cycle's verdict from this
+    # workflow's own earlier runs and their release-cycle-report artifacts:
+    # read-only, with the run's own token.
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.resolve.outputs.sha }}
-          # The rotation counter is git history (commits since the pool
-          # landed); a shallow clone has none and the cycle refuses to guess.
-          fetch-depth: 0
 
       - uses: actions/setup-python@v7
         with:
@@ -160,6 +163,7 @@ jobs:
 
       - name: Repro builds, in parallel, one account each
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           SMOKE_GATE_TOKEN: ${{ secrets.SMOKE_GATE_TOKEN }}
           SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL }}
           SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}

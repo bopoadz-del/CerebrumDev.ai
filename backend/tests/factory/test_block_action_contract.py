@@ -694,7 +694,9 @@ def test_the_tester_smoke_speaks_the_contract(tmp_path):
     assert "'crew'" in smoke, "handler payload is not built from the spec"
     assert "'reference': 'probe'" not in smoke, "canned junk payload is back"
     assert "def test_every_capability_handle_returns_mapping():" in smoke
-    conftest = (tmp_path / "build" / "tests" / "conftest.py").read_text(encoding="utf-8")
+    from app.factory.build.roles_constants import CONFTEST_REL
+
+    conftest = (tmp_path / "build" / CONFTEST_REL).read_text(encoding="utf-8")
     assert "pilot:" in conftest
     assert "pytest_configure" in conftest
 
