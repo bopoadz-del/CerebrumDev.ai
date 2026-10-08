@@ -470,7 +470,9 @@ def drive_build(
     smoke.chat(sid, token, "", action="approve", **extra)
 
     transient = getattr(smoke, "TRANSIENT", {502, 503, 504})
-    deadline = time.monotonic() + wait_s
+    # The build's own declared deadline (build-status ``deadline``); wait_s
+    # only for a server that declares none.
+    deadline = smoke.BuildDeadline(wait_s, time.monotonic)
     last_print = 0.0
     http, blob, build = 0, b"", {}
     while True:
@@ -478,6 +480,7 @@ def drive_build(
         _st, status = smoke.req("GET", f"/v1/sessions/{sid}/product/build-status", token=token)
         status = status if isinstance(status, dict) else {}
         build = status.get("build") if isinstance(status.get("build"), dict) else status
+        deadline.read(build)
         state = build.get("state")
         if http == 200:
             break
@@ -485,7 +488,7 @@ def drive_build(
             break
         if http == 409 and state in {"failed", "stalled"}:
             break
-        if time.monotonic() >= deadline:
+        if deadline.passed():
             break
         now = time.monotonic()
         if label and now - last_print >= PROGRESS_S:

@@ -22,7 +22,8 @@ from __future__ import annotations
 
 import os
 import signal
-from typing import Any, Dict
+import threading
+from typing import Any, Dict, List, Optional
 
 #: Popen keyword that puts the child in a new session (POSIX setsid): its own
 #: process group, no controlling terminal shared with the server.
@@ -76,3 +77,82 @@ def terminate_agent_tree(proc: Any) -> None:
     """Ask the agent and everything it started to stop."""
     if not _signal_group(proc, signal.SIGTERM):
         proc.terminate()
+
+
+# --- the live roster, for the post-deploy isolation check -------------------
+#
+# The smoke cannot see the container's process table, so the Factory answers
+# for it: which session the server runs in, which sessions the live coding
+# agents run in. A regression that puts an agent back in the server's session
+# then fails the smoke instead of killing a build (the 2026-10-07/08 restarts).
+
+_LIVE_LOCK = threading.Lock()
+_LIVE: Dict[int, Any] = {}
+
+
+def track_agent(proc: Any) -> Any:
+    """Record a just-started coding-agent process; returns it unchanged.
+
+    Exited processes drop out on their own (pruned on every read), so no
+    call site needs a matching untrack on each of its exit paths.
+    """
+    with _LIVE_LOCK:
+        _prune_locked()
+        _LIVE[id(proc)] = proc
+    return proc
+
+
+def _prune_locked() -> None:
+    for key, proc in list(_LIVE.items()):
+        try:
+            done = proc.poll() is not None
+        except Exception:  # noqa: BLE001 -- an unreadable handle is not live
+            done = True
+        if done:
+            _LIVE.pop(key, None)
+
+
+def _session_of(pid: Any) -> Optional[int]:
+    getsid = getattr(os, "getsid", None)
+    if getsid is None or not isinstance(pid, int) or pid < 0:
+        return None
+    try:
+        return int(getsid(pid))
+    except OSError:
+        return None
+
+
+def live_agent_sessions() -> List[int]:
+    """Session ids of the coding agents running now (POSIX; [] elsewhere)."""
+    with _LIVE_LOCK:
+        _prune_locked()
+        procs = list(_LIVE.values())
+    sessions = []
+    for proc in procs:
+        sid = _session_of(getattr(proc, "pid", None))
+        if sid is not None:
+            sessions.append(sid)
+    return sessions
+
+
+def process_isolation_report() -> Dict[str, Any]:
+    """Is every live coding agent outside the server's session?
+
+    ``isolated`` needs both halves: no live agent shares the server's session
+    now, and (POSIX) the spawn path still asks for a new session -- so the
+    check proves something even when no agent happens to be running. Counts
+    only: no pid or session id leaves the process.
+    """
+    posix = _posix()
+    server_sid = _session_of(0)
+    agents = live_agent_sessions()
+    spawn_isolated = agent_popen_kwargs() == ({_NEW_SESSION: True} if posix else {})
+    shared = sum(1 for s in agents if server_sid is not None and s == server_sid)
+    isolated = spawn_isolated and shared == 0 and (server_sid is not None or not posix)
+    return {
+        "posix": posix,
+        "spawn_isolated": spawn_isolated,
+        "live_agents": len(agents),
+        "agents_in_server_session": shared,
+        "isolated": isolated,
+    }

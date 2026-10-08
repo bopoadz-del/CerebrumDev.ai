@@ -46,6 +46,7 @@ from app.factory.build.agent_process import (
     agent_popen_kwargs,
     kill_agent_tree,
     terminate_agent_tree,
+    track_agent,
 )
 from app.factory.build.failure_kinds import TIMEOUT, record_failure_kind
 from app.factory.build.workflow_accept import (
@@ -3045,7 +3046,7 @@ def _run_cli_session(
     if stdin_payload is not None:
         popen_kw["stdin"] = subprocess.PIPE
     try:
-        proc = subprocess.Popen(cmd, **popen_kw)
+        proc = track_agent(subprocess.Popen(cmd, **popen_kw))
     except FileNotFoundError:
         return DispatchResult(
             via="unavailable",
