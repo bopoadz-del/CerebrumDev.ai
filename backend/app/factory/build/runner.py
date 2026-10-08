@@ -2529,10 +2529,12 @@ class RoleRunner:
 
                         record_receipt(self.workspace)
                         attached = self._branch_of_record()
+                        gate_sha = ""
                         if attached:
                             # R3: a platform's Docker gate runs on its OWN
                             # branch of record, never a new sibling.
-                            self._push_branch_of_record("factory: hand off to store-gate")
+                            pushed = self._push_branch_of_record("factory: hand off to store-gate")
+                            gate_sha = pushed.strip() if isinstance(pushed, str) else ""
                             gate_branch = attached
                         else:
                             gate_branch = push_workspace(
@@ -2551,10 +2553,16 @@ class RoleRunner:
                                 "docker unavailable — workspace handed off to "
                                 "cerebrum-builds; N3 store-gate is next"
                             ),
-                            # The gate's branch, recorded where every
-                            # reader looks first (builds_fields_from_ledger):
-                            # the N3 collect never has to guess it.
-                            payload={"handoff": HANDOFF_TO_N3, "builds_branch": gate_branch},
+                            # The gate's branch -- and the commit pushed to
+                            # it, when the push named one -- recorded where
+                            # every reader looks first
+                            # (builds_fields_from_ledger): N3 reads THIS
+                            # round's gate run, never an earlier round's.
+                            payload={
+                                "handoff": HANDOFF_TO_N3,
+                                "builds_branch": gate_branch,
+                                **({"builds_sha": gate_sha} if gate_sha else {}),
+                            },
                         )
                         delivery_format = str(
                             getattr(self.blueprint, "delivery_format", "zip")

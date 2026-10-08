@@ -234,6 +234,8 @@ def inspect_build(
         "cli_finished": flight["cli_finished"],
         "model_call_deadline_s": flight["model_call_deadline_s"],
         "cli_blocker": flight["cli_blocker"],
+        "cli_steps_since_inspect": flight["cli_steps_since_inspect"],
+        "cli_files_grown_since_inspect": flight["cli_files_grown_since_inspect"],
         # Capability counts (ledger). File counts come from provenance
         # authorship — sess_d10dfc28 inspect said templated=0 while the
         # Floor later showed 29 templated *files*. Different counters.
@@ -319,6 +321,14 @@ def _cli_progressing_for_ceiling_bump(snapshot: Mapping[str, Any]) -> bool:
     if int(snapshot.get("agent_written") or 0) > 0:
         return True
     if int(snapshot.get("cli_or_llm_written") or 0) > 0:
+        return True
+    # A CodeWhale writer authors in one session and harvests at its end, so
+    # caps_written stays 0 until it exits. Its own progress this stage --
+    # steps it reported, files it put on disk -- is the visible work (live
+    # 2026-10-08: STEP 7/8 three minutes before a 2700s kill, 238 files).
+    if int(snapshot.get("cli_steps_since_inspect") or 0) > 0:
+        return True
+    if int(snapshot.get("cli_files_grown_since_inspect") or 0) > 0:
         return True
     return False
 
@@ -657,7 +667,55 @@ def _cli_flight(
         "cli_finished": bool(dispatched and finished),
         "model_call_deadline_s": deadline_s,
         "cli_blocker": blocker,
+        **_cli_progress_since_inspect(events),
     }
+
+
+def _cli_progress_since_inspect(events: Sequence[Any]) -> Dict[str, int]:
+    """What the coding agent has visibly done since the previous inspect.
+
+    Read from the worker's typed progress fields (steps the agent reported,
+    files on disk) -- never from the narration text. Counting from the last
+    inspect NOTE means "work in THIS stage": a writer that reported steps an
+    hour ago and has been silent since does not qualify.
+    """
+    from app.factory.build.authorship import is_coding_agent_source
+    from app.factory.build.codewhale_worker import FILES_ON_DISK, STEPS_REPORTED
+
+    start = 0
+    for index, event in enumerate(events):
+        payload = getattr(event, "payload", None) or {}
+        if payload.get("budget_inspect") or payload.get("kind") == INSPECT_NOTE_KIND:
+            start = index + 1
+
+    def _int(value: Any) -> Optional[int]:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    files_before: Optional[int] = None
+    for event in events[:start]:
+        payload = getattr(event, "payload", None) or {}
+        if is_coding_agent_source(payload.get("source")):
+            seen = _int(payload.get(FILES_ON_DISK))
+            if seen is not None:
+                files_before = seen
+    steps = 0
+    files_after: Optional[int] = None
+    for event in events[start:]:
+        payload = getattr(event, "payload", None) or {}
+        if not is_coding_agent_source(payload.get("source")):
+            continue
+        if _int(payload.get(STEPS_REPORTED)) is not None and _int(payload.get(FILES_ON_DISK)) is None:
+            steps += 1  # a STEP line (heartbeats carry the file count too)
+        seen = _int(payload.get(FILES_ON_DISK))
+        if seen is not None:
+            files_after = seen
+    grown = 0
+    if files_after is not None:
+        grown = max(0, files_after - (files_before or 0))
+    return {"cli_steps_since_inspect": steps, "cli_files_grown_since_inspect": grown}
 
 
 def _provenance(workspace: Any) -> Dict[str, Any]:
