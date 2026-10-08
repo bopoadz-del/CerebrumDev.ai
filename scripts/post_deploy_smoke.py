@@ -419,6 +419,35 @@ def verified_tokens():
     return None, None
 
 
+def verified_token_roster(count):
+    """``count`` distinct verified principals, index 0 first (the smoke's own).
+
+    The release cycle runs repro builds beside the smoke, one account each.
+    With SMOKE_GATE_TOKEN the server issues the roster (smoke-login
+    ``principals``); with the email pair there are at most two. Returns what
+    could be had -- possibly fewer than asked -- and the CALLER fails closed
+    on a short roster: two builds on one account share its tenant slot and
+    would run serially while reporting a parallel cycle.
+    """
+    gate = os.environ.get("SMOKE_GATE_TOKEN", "").strip()
+    if gate:
+        s, body = req(
+            "POST", "/v1/auth/smoke-login", {"principals": int(count)},
+            extra_headers={"X-Smoke-Gate": gate},
+        )
+        body = body if isinstance(body, dict) else {}
+        if s != 200:
+            print(f"smoke-login (principals={count}) http={s} detail={body.get('detail')}")
+            return []
+        tokens = body.get("login_tokens")
+        if not isinstance(tokens, list):
+            # A server older than the roster answers with the fixed pair.
+            tokens = [body.get("login_token"), body.get("login_token_b")]
+        return [t for t in tokens if t][: int(count)]
+    tok, tok_b = verified_tokens()
+    return [t for t in (tok, tok_b) if t][: int(count)]
+
+
 #: Headers a browser must receive from the API origin, and from the
 #: frontend. Checked against the LIVE response, not against a file.
 #:
