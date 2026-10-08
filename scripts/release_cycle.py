@@ -220,28 +220,23 @@ def _github_report(url: str, token: str) -> Any:
 
     GitHub answers the download with a redirect to a signed storage URL that
     REFUSES a bearer token, and urllib would carry the Authorization header
-    across the redirect. So the redirect is read, not followed, and the signed
-    URL is fetched with no credentials at all."""
-    import urllib.error
+    across the redirect. So the redirect is followed WITHOUT credentials: the
+    signed URL is fetched with the Authorization header stripped."""
     import urllib.request
 
-    class _NoRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, *args, **kwargs):  # noqa: ANN002, ANN003
-            return None
+    class _DropAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+            follow = super().redirect_request(req, fp, code, msg, headers, newurl)
+            if follow is not None:
+                follow.remove_header("Authorization")
+            return follow
 
     req = urllib.request.Request(url, headers={
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
     })
-    try:
-        with urllib.request.build_opener(_NoRedirect).open(req, timeout=60) as resp:
-            blob = resp.read()
-    except urllib.error.HTTPError as exc:
-        location = exc.headers.get("Location") if exc.code in (301, 302, 303, 307, 308) else None
-        if not location:
-            raise
-        with urllib.request.urlopen(location, timeout=60) as resp:
-            blob = resp.read()
+    with urllib.request.build_opener(_DropAuthOnRedirect).open(req, timeout=60) as resp:
+        blob = resp.read()
     with zipfile.ZipFile(io.BytesIO(blob)) as zf:
         names = [n for n in zf.namelist() if n.rsplit("/", 1)[-1] == REPORT_NAME]
         if not names:

@@ -523,3 +523,51 @@ def test_the_workflow_runs_the_cycle_script_for_the_repros_and_the_report():
     text = WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "scripts/release_cycle.py repros" in text
     assert "scripts/release_cycle.py report" in text
+
+
+def test_report_download_follows_the_redirect_without_the_token(cycle):
+    """The artifact API redirects to a signed URL that refuses a bearer token:
+    the redirect is followed, and the token never reaches the second host."""
+    import http.server
+
+    seen = {}
+    blob = io.BytesIO()
+    with zipfile.ZipFile(blob, "w") as zf:
+        zf.writestr(cycle.REPORT_NAME, json.dumps({"verdict": "pass"}))
+    payload = blob.getvalue()
+
+    class Signed(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            seen["auth"] = self.headers.get("Authorization")
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *a):  # noqa: ANN002
+            pass
+
+    signed = http.server.HTTPServer(("127.0.0.1", 0), Signed)
+
+    class Api(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            seen["api_auth"] = self.headers.get("Authorization")
+            self.send_response(302)
+            self.send_header("Location", f"http://127.0.0.1:{signed.server_port}/blob")
+            self.end_headers()
+
+        def log_message(self, *a):  # noqa: ANN002
+            pass
+
+    api = http.server.HTTPServer(("127.0.0.1", 0), Api)
+    threads = [threading.Thread(target=s.handle_request, daemon=True) for s in (api, signed)]
+    for t in threads:
+        t.start()
+    try:
+        report = cycle._github_report(f"http://127.0.0.1:{api.server_port}/zip", "tok-123")
+    finally:
+        api.server_close()
+        signed.server_close()
+    assert seen["api_auth"] == "Bearer tok-123"
+    assert seen["auth"] is None
+    assert report == {"verdict": "pass"}
