@@ -19,8 +19,15 @@ from app.factory.build.budget_inspect import (
     inspect_build,
     inspect_decision,
 )
-from app.factory.build.codewhale_worker import FILES_ON_DISK, STEPS_REPORTED
+from app.factory.build import codewhale_worker
 from app.factory.build.ledger import BuildLedger, EventKind
+
+# The worker's typed progress fields, by their wire keys. Resolved through
+# getattr so this file imports on code that predates the constants: the test
+# must FAIL ON ASSERTION there (the inspector ignores the fields), never on
+# import -- an ImportError proves nothing about the defect.
+STEPS_REPORTED = getattr(codewhale_worker, "STEPS_REPORTED", "steps_reported")
+FILES_ON_DISK = getattr(codewhale_worker, "FILES_ON_DISK", "files_on_disk")
 
 SOURCE = "codewhale_worker"
 
@@ -63,7 +70,7 @@ def test_a_writer_reporting_steps_this_stage_gets_the_ceiling(tmp_path):
 
     assert decided["decision"] == "continue_ceiling", decided["reason"]
     assert decided["next_wall_s"] == CEILING_S
-    assert decided["cli_steps_since_inspect"] == 2
+    assert decided.get("cli_steps_since_inspect") == 2
 
 
 def test_files_growing_this_stage_is_visible_work(tmp_path):
@@ -77,7 +84,7 @@ def test_files_growing_this_stage_is_visible_work(tmp_path):
     decided = _decide(ledger)
 
     assert decided["decision"] == "continue_ceiling", decided["reason"]
-    assert decided["cli_files_grown_since_inspect"] == 118
+    assert decided.get("cli_files_grown_since_inspect") == 118
 
 
 def test_a_writer_silent_since_the_last_inspect_does_not_get_the_ceiling(tmp_path):
@@ -106,7 +113,5 @@ def test_the_writer_relay_carries_the_progress_fields_to_the_ledger():
 
 
 def test_the_timeout_names_the_wall_that_fired():
-    from app.factory.build import codewhale_worker
-
     source = inspect.getsource(codewhale_worker)
     assert "deadline - wait_started" in source
