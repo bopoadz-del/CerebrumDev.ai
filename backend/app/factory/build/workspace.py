@@ -226,7 +226,9 @@ class RoleWorkspace:
     def write_text(self, relpath: str | Path, content: str) -> Path:
         resolved = self._authorise(relpath)
         resolved.parent.mkdir(parents=True, exist_ok=True)
-        resolved.write_text(content, encoding="utf-8")
+        # newline="": the bytes written are the text given, on every OS (a
+        # shared-file stamp promises byte-exact product lines).
+        resolved.write_text(content, encoding="utf-8", newline="")
         self._record(resolved)
         return resolved
 
@@ -280,6 +282,11 @@ class RoleWorkspace:
 
     def read_text(self, relpath: str | Path) -> str:
         return self._resolve_read(relpath).read_text(encoding="utf-8")
+
+    def read_path(self, relpath: str | Path) -> Path:
+        """Where a read of ``relpath`` resolves: staging first, then the
+        destination (then the Store root) -- the same order as read_text."""
+        return self._resolve_read(relpath)
 
     def exists(self, relpath: str | Path) -> bool:
         try:

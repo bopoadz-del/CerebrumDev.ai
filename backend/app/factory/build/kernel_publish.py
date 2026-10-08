@@ -189,6 +189,29 @@ def roster_block(rendered: str, *, include_capabilities: bool) -> str:
     return "\n\n\n".join(parts) + "\n"
 
 
+def _current_text(workspace: Any, rel: Path) -> str:
+    """The file as the product currently has it, read THROUGH the workspace.
+
+    A staged WRITER pass writes into an empty staging tree while the product's
+    bytes stay in the destination (the CodeWhale agent edits the destination
+    directly), so a raw staging path reads "no file" -- and a stamp that edits
+    "no file" commits its block over the product's own (live 5dd46d47: the
+    roster block bound ``CAPABILITIES = []`` over the product's manifest and
+    every declared route 404'd). The workspace's own read resolves staging
+    first, then the destination.
+    """
+    resolve = getattr(workspace, "read_path", None)
+    if callable(resolve):
+        path = Path(resolve(rel))
+    else:
+        path = Path(getattr(workspace, "workspace", workspace)) / rel
+    # newline="": the product's own line endings are part of its bytes.
+    if not path.is_file():
+        return ""
+    with open(path, encoding="utf-8", newline="") as handle:
+        return handle.read()
+
+
 def stamp_roster(ctx: Any) -> bool:
     """Stamp the kernel roster into ``app/jobs.py``; True when it changed.
 
@@ -203,9 +226,7 @@ def stamp_roster(ctx: Any) -> bool:
     """
     from app.factory.build.factory_block import apply_block, outside, split_block
 
-    root = Path(getattr(ctx.workspace, "workspace", ctx.workspace))
-    path = root / JOBS_REL
-    existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+    existing = _current_text(ctx.workspace, JOBS_REL)
     product = outside(existing)
     product_declares = _product_declares_capabilities(product)
     # Keep a manifest the Factory itself carried in its block (template path).
