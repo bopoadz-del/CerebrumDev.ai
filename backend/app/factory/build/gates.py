@@ -922,8 +922,24 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
     written entirely by the deterministic template is the hollow pass the
     gate exists to stop.
     """
+    from app.factory.build import factory_owned
     from app.factory.build.authorship import agent_written_handler_ids_in_workspace
     WRITER_NO_OUTPUT = "writer_no_output"
+
+    touched = factory_owned.recorded(ctx.workspace)
+    if touched:
+        return GateResult(
+            ok=False,
+            gate=WRITER_CONTRACT_CHECK,
+            reason="writer_authored_factory_file",
+            detail=(
+                "writer_authored_factory_file: the writer touched "
+                + ", ".join(row["path"] for row in touched)
+                + " -- Factory-owned, restored to the Factory's version"
+            ),
+            findings=factory_owned.rework_findings(touched),
+            payload={"touched": touched},
+        )
 
     agent_written = agent_written_handler_ids_in_workspace(ctx.workspace)
     if not agent_written:

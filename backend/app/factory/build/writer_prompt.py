@@ -84,7 +84,7 @@ from app.factory.build.acceptance_floor import (
 #:   contract from red tests, one rework round per file. v3 names what the
 #:   factory backfills (data_lifecycle.platform_substrate) and what the agent
 #:   owns (store.py, 0001_baseline), with the exact surface the suite calls.
-PROMPT_VERSION = "writer_worker_prompt.v11"
+PROMPT_VERSION = "writer_worker_prompt.v12"
 
 _TEMPLATE = """You are the WRITER role of the CerebrumDev factory, manufacturing a
 governed platform. Work headless in this checkout. Produce real, runnable
@@ -126,9 +126,14 @@ missing file is a missing gate, so write it all under this checkout root:
   app/retrieval.py, app/formulas.py, app/llm.py
 - app/block_inputs.py
 - app/store.py and alembic/versions/0001_baseline.py (see PERSISTENCE)
-- tests/ — pytest suite, runnable from the checkout root
+- tests/ — your own pytest files, runnable from the checkout root (never
+  one of the Factory's files listed under FACTORY-OWNED FILES)
 - frontend/src/App.tsx, Dockerfile, README.md, requirements.txt
-- scripts/release_gate.py
+
+FACTORY-OWNED FILES -- the Factory renders these into the product before or
+after your pass. Never create, edit or delete one: a pass that touches one
+is sent back to rework naming the file, and the Factory's version is kept.
+{factory_owned}
 
 PERSISTENCE (the factory's data-lifecycle suite grades this contract):
 The factory writes the schema-independent substrate itself, after your
@@ -307,6 +312,13 @@ Everything below is the original brief, unchanged.
 """
 
 
+def _factory_owned_lines() -> str:
+    """The declared list (factory_owned.factory_owned_paths), one per line."""
+    from app.factory.build.factory_owned import factory_owned_paths
+
+    return "\n".join(f"- {rel}" for rel in factory_owned_paths())
+
+
 def render_writer_prompt(
     blueprint: Any,
     *,
@@ -338,6 +350,7 @@ def render_writer_prompt(
         summary=summary,
         brief=(brief or "").strip(),
         specialist_workers=max(1, int(specialist_workers or 1)),
+        factory_owned=_factory_owned_lines(),
         # The Store gate's own checklist, rendered from the file the gate
         # grades against. The agent used to be judged on thirteen checks it
         # was never shown, and discovered them one rework round at a time.
