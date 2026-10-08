@@ -995,6 +995,26 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
             findings=list(money.findings),
             payload={"money_contract": "FAIL", "money_findings": len(money.findings)},
         )
+    # The image the product's Dockerfile builds must carry what the app loads
+    # at runtime (live: cycle 2 smoke B shipped an image with no vendor/ and
+    # a gate that judged the checkout certified it). Emulated -- the live
+    # Factory has no Docker -- from the Dockerfile's COPY lines and
+    # .dockerignore; the writer hears it here, before any gate dispatch.
+    from app.factory.build.image_sufficiency import check as image_check
+
+    image = image_check(ctx.workspace)
+    if not image.ok:
+        return GateResult(
+            ok=False,
+            gate=WRITER_CONTRACT_CHECK,
+            reason="image_missing_runtime_path",
+            detail=f"image_missing_runtime_path: {image.detail}",
+            findings=[
+                f"image missing {path}: the Dockerfile does not put it in the image, but the app loads it at runtime"
+                for path in image.missing
+            ] or [image.detail],
+            payload={"image_missing": list(image.missing)},
+        )
     money_line = (
         f"money_contract WITHHELD({money.reason})"
         if money.status == "WITHHELD"
@@ -1003,13 +1023,14 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
     return GateResult(
         ok=True,
         gate=WRITER_CONTRACT_CHECK,
-        detail=f"{compiled.detail}; {behaviour.detail}; {surface.detail}; {money_line}",
+        detail=f"{compiled.detail}; {behaviour.detail}; {surface.detail}; {money_line}; {image.detail}",
         findings=list(behaviour.findings),
         payload={
             **dict(behaviour.payload),
             "agent_written": len(agent_written),
             "money_contract": money.status,
             "money_reason": money.reason,
+            "image_judged": image.judged,
         },
     )
 
