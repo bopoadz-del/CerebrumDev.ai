@@ -53,8 +53,21 @@ jobs:
         run: |
           count=$(aws ecs describe-services --cluster "$ECS_CLUSTER"             --services "$ECS_SERVICE"             --query 'length(services[?status==`ACTIVE`])' --output text 2>/dev/null || echo 0)
           if [ "$count" = "1" ]; then
-            aws ecs update-service --cluster "$ECS_CLUSTER"               --service "$ECS_SERVICE" --force-new-deployment >/dev/null
-            echo "deployment triggered"
+            # The task's size is declared in the repo (infra/backend_task.json).
+            # When the live revision differs in cpu, memory or a declared env
+            # value, register a new revision = live with ONLY those fields
+            # replaced (scripts/declared_task_def.py) and roll onto it;
+            # otherwise roll the live revision as before.
+            live_td=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"               --query 'services[0].taskDefinition' --output text)
+            aws ecs describe-task-definition --task-definition "$live_td" --include TAGS > live_task_def.json
+            python3 scripts/declared_task_def.py --live live_task_def.json               --declared infra/backend_task.json --out declared_task_def.json
+            target="$live_td"
+            if [ -f declared_task_def.json ]; then
+              target=$(aws ecs register-task-definition --cli-input-json file://declared_task_def.json                 --query 'taskDefinition.taskDefinitionArn' --output text)
+              echo "registered $target (declared size; was $live_td)"
+            fi
+            aws ecs update-service --cluster "$ECS_CLUSTER"               --service "$ECS_SERVICE" --task-definition "$target" --force-new-deployment >/dev/null
+            echo "deployment triggered on $target"
             # The deploy is not done when it is triggered. Wait for ECS to
             # report the rollout COMPLETED (new tasks healthy in the target
             # group, old drained). FAILED or 20 minutes is a failed deploy.
