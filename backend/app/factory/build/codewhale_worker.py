@@ -134,17 +134,27 @@ NO_AUTHENTICATED_TENANT = "no_authenticated_tenant"
 #                      MEASURE IT before raising any cap.
 #
 #   process_cap = min( floor((RAM_MB - BASE_MB - HEADROOM_MB) / PER_JOB_MB),
-#                      vCPU * 8 )
+#                      USER_BUILDS_PER_VCPU * vCPU + reserved_slots )
 #
-# The CPU bound is 8 jobs/vCPU because these children are almost entirely
-# blocked on DeepSeek HTTP -- the local CPU cost is JSON parsing and file
-# writes. Memory is the binding constraint on every row but the largest.
+# The CPU bound is MEASURED, not assumed. It used to be 8 jobs/vCPU on the
+# theory that the children only wait on DeepSeek HTTP; live 2026-10-08 (1c-2g,
+# release cycle on 0e50fcc1) a smoke build plus two repro builds -- three jobs
+# -- held the single vCPU at 85-99 % for 40 minutes and the writers slowed
+# into their walls: the writer runs pytest, ruff and its own probe servers,
+# not just HTTP. Two user builds per vCPU, plus the smoke's reserved slot, is
+# what one vCPU carried at the edge of saturation (1 vCPU -> 2 + 1 = 3, the
+# live number), so it is the rule for every row (derive_profile_caps).
 BASE_MB = 500
 HEADROOM_MB = 150
 PER_JOB_MB = 400
+USER_BUILDS_PER_VCPU = 2
+#: Above this many process slots a tenant may hold more than one: no account
+#: takes more than ~6% of a large box (per-tenant = process // 16, 1..4).
+TENANT_SHARE_DIVISOR = 16
+MAX_TENANT_CAP = 4
 
-#: 2048 MB - 500 - 150 = 1398; 1398 / 400 = 3. The CPU bound (1 x 8) is
-#: slack. THREE is what a 1c-2g box can honestly carry, and it is the CODE
+#: 2048 MB - 500 - 150 = 1398; 1398 / 400 = 3, and the CPU rule gives the
+#: same 2 + 1. THREE is what a 1c-2g box can honestly carry, and it is the CODE
 #: default because render.yaml is not an applied blueprint (see its header)
 #: -- the default is what production actually receives on the next deploy,
 #: with zero dashboard action.
@@ -163,54 +173,53 @@ TENANT_CAP_ENV = "FACTORY_CODEWHALE_TENANT_CAP"
 #: this one env var plus a Render resize. No code edit.
 PROFILE_ENV = "FACTORY_WORKER_PROFILE"
 
-#: Render plan -> (process cap, per-tenant cap). DATA, not code: the
-#: upgrade path is config-only.
+#: Plan -> (vCPU, RAM MB). DATA: the caps are DERIVED from it by one rule
+#: (derive_profile_caps), so a new plan is one line here and no cap is typed.
 #:
-#:   plan      RAM      vCPU  memory bound              CPU bound  PROCESS  TENANT
-#:   ------------------------------------------------------------------------------
-#:   starter    512 MB  0.5   (512-650)/400   -> < 0    4          UNSUPPORTED
-#:   1c-2g     2048 MB  1     (2048-650)/400  = 3       8          3        1  <- LIVE
-#:   2c-4g     4096 MB  2     (4096-650)/400  = 8      16          8        1
-#:   4c-8g     8192 MB  4     (8192-650)/400  = 18     32         18        1
-#:   4c-16g   16384 MB  4     (16384-650)/400 = 39     32         32        2
-#:   8c-32g   32768 MB  8     (32768-650)/400 = 80     64         64        4  <- 50-TENANT
+#:   plan      vCPU  RAM      memory bound      CPU bound (2/vCPU + 1)  PROCESS  TENANT
+#:   ----------------------------------------------------------------------------------
+#:   starter   0.5     512 MB  < 0               --                      UNSUPPORTED
+#:   1c-2g     1      2048 MB  3                 3                       3        1  <- LIVE
+#:   2c-4g     2      4096 MB  8                 5                       5        1
+#:   4c-8g     4      8192 MB  18                9                       9        1
+#:   4c-16g    4     16384 MB  39                9                       9        1
+#:   8c-32g    8     32768 MB  80               17                      17        1
 #:
-#: Per-tenant rule: max(1, min(4, process_cap // 16)) -- no account may hold
-#: more than ~6% of a large box, and on small boxes the floor of 1 governs.
-#: Fairness is the point: at 8c-32g, 64 slots with per-tenant 4 still lets
-#: 50 distinct tenants build at once, and no single tenant can take the box.
+#: CPU binds on every row but 1c-2g. 50 concurrent tenants on ONE instance
+#: needs ~25 vCPU under the measured rule -- beyond any single Fargate task --
+#: so 50 is reached by more instances (the MULTI-INSTANCE SEAM below), or by
+#: an operator who sets the explicit caps after measuring a lighter writer.
+#: The slot machinery itself still serves 50 distinct tenant keys (the stub
+#: tests drive 50 bind_tenant_store digests through acquire/release).
 #:
-#: THE 50-TENANT ROW, explicitly: 50 concurrent tenants at per-tenant 1 needs
-#: process_cap >= 50, i.e. 50*400 + 650 = 20,650 MB. 4c-16g gives 39 -- NOT
-#: ENOUGH. 8c-32g is the first plan that clears it (64 feasible vs 50 needed).
-#: If PER_JOB_MB is MEASURED at 250 instead of 400, 50*250+650 = 13,150 MB and
-#: 4c-16g becomes sufficient -- which is exactly why PER_JOB_MB is the number
-#: called out for recomputation.
-#:
-#: DESIGN capacity vs OPERATING capacity: the machinery genuinely serves 50
-#: distinct tenant keys (proved by the stub tests, which drive 50 real
-#: bind_tenant_store digests through acquire/release). The OPERATING cap on
-#: today's box stays 3/1. The code never claims capacity the box cannot
-#: serve -- 50 is reachable only by naming a plan that has the RAM for it.
-#:
-#: ``starter`` maps to None deliberately: 512 MB does not fit BASE_MB, let
+#: ``starter`` derives None deliberately: 512 MB does not fit BASE_MB, let
 #: alone a Node child. It resolves to a NAMED REFUSAL rather than quietly
-#: emitting a cap the box cannot serve. It is listed so nobody infers a
-#: value for it from the pattern -- and because render.yaml declared exactly
-#: this plan until this change.
-WORKER_PROFILES: Dict[str, Optional[Tuple[int, int]]] = {
-    "starter": None,
-    "1c-2g": (3, 1),
-    "2c-4g": (8, 1),
-    "4c-8g": (18, 1),
-    "4c-16g": (32, 2),
-    "8c-32g": (64, 4),
+#: emitting a cap the box cannot serve.
+WORKER_PLANS: Dict[str, Tuple[float, int]] = {
+    "starter": (0.5, 512),
+    "1c-2g": (1, 2048),
+    "2c-4g": (2, 4096),
+    "4c-8g": (4, 8192),
+    "4c-16g": (4, 16384),
+    "8c-32g": (8, 32768),
 }
+
+
+def derive_profile_caps(vcpu: float, ram_mb: int) -> Optional[Tuple[int, int]]:
+    """(process cap, per-tenant cap) for a box, by the ONE rule; None when the
+    box cannot host a single writer child."""
+    memory_bound = (int(ram_mb) - BASE_MB - HEADROOM_MB) // PER_JOB_MB
+    if memory_bound < 1 or vcpu < 1:
+        return None
+    user = int(USER_BUILDS_PER_VCPU * vcpu)
+    cpu_bound = user + reserved_slots(user + 1)
+    process = min(memory_bound, cpu_bound)
+    tenant = max(1, min(MAX_TENANT_CAP, process // TENANT_SHARE_DIVISOR))
+    return process, tenant
+
 
 #: The profile the live box runs, and the value render.yaml declares.
 DEPLOYED_PROFILE = "1c-2g"
-#: The smallest profile that can serve 50 concurrent tenants.
-FIFTY_TENANT_PROFILE = "8c-32g"
 
 
 class WorkerError(RuntimeError):
@@ -684,6 +693,13 @@ def reserved_slots(process_cap: int) -> int:
     first in the queue (never behind a user waiter), not given a held slot.
     """
     return 1 if int(process_cap) >= 2 else 0
+
+
+#: Plan -> (process cap, per-tenant cap), derived from WORKER_PLANS by the one
+#: rule. Selected at run time by FACTORY_WORKER_PROFILE.
+WORKER_PROFILES: Dict[str, Optional[Tuple[int, int]]] = {
+    name: derive_profile_caps(vcpu, ram_mb) for name, (vcpu, ram_mb) in WORKER_PLANS.items()
+}
 
 
 _COUNTER: Any = InProcessSlotCounter()

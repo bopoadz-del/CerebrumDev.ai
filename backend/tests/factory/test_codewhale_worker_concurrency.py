@@ -31,7 +31,6 @@ from app.factory.build import codewhale_worker as worker_mod
 from app.factory.build.codewhale_worker import (
     DEFAULT_PROCESS_CAP,
     DEFAULT_TENANT_CAP,
-    FIFTY_TENANT_PROFILE,
     DEPLOYED_PROFILE,
     NO_AUTHENTICATED_TENANT,
     PROCESS_CAP_ENV,
@@ -241,12 +240,14 @@ def test_process_exhaustion_does_not_read_as_a_tenant_limit(monkeypatch):
 def test_fifty_distinct_tenants_are_all_served(monkeypatch):
     """The owner's requirement, exercised: 50 concurrent tenants.
 
-    Under the 50-tenant profile every one of 50 distinct accounts holds a
-    slot at the same time. The 51st job is the FIRST tenant's SECOND job,
-    which is refused for FAIRNESS while process slots remain free — the
-    machinery is serving 50 tenants, not 50 jobs for whoever asks first.
+    With 64 process slots every one of 50 distinct accounts holds a slot at
+    the same time. The 51st job is the FIRST tenant's SECOND job, which is
+    refused for FAIRNESS while process slots remain free — the machinery is
+    serving 50 tenants, not 50 jobs for whoever asks first. (No single plan
+    carries 64 under the measured CPU rule; the explicit cap is the operator
+    knob that sizes the slot counter.)
     """
-    monkeypatch.setenv(PROFILE_ENV, FIFTY_TENANT_PROFILE)
+    monkeypatch.setenv(PROCESS_CAP_ENV, "64")
     monkeypatch.setenv(TENANT_CAP_ENV, "1")
     assert worker_process_cap() >= 50
 
@@ -439,17 +440,40 @@ def test_live_1c2g_profile_caps_at_three_process_one_per_tenant():
     assert WORKER_PROFILES[DEPLOYED_PROFILE] == (3, 1)
 
 
-def test_the_upgrade_from_three_to_fifty_is_config_only(monkeypatch):
-    """ONE env var moves the box from 3 slots to 50-tenant capacity. No
-    code edit may be required."""
+def test_the_upgrade_is_config_only(monkeypatch):
+    """ONE env var moves the box to a bigger plan's slots. No code edit."""
     assert worker_process_cap() == DEFAULT_PROCESS_CAP
 
-    monkeypatch.setenv(PROFILE_ENV, FIFTY_TENANT_PROFILE)
-    assert worker_process_cap() >= 50, (
-        "the documented 50-tenant plan must resolve to at least 50 process "
-        "slots or the profile is a promise the box cannot keep"
-    )
+    monkeypatch.setenv(PROFILE_ENV, "2c-4g")
+    assert worker_process_cap() > DEFAULT_PROCESS_CAP
     assert worker_tenant_cap() >= 1
+
+
+def test_every_plan_cap_is_derived_by_the_one_rule():
+    """No cap is typed: each plan's numbers come from its vCPU and RAM."""
+    for plan, (vcpu, ram_mb) in worker_mod.WORKER_PLANS.items():
+        assert WORKER_PROFILES[plan] == worker_mod.derive_profile_caps(vcpu, ram_mb), plan
+
+
+def test_two_vcpu_gives_four_user_builds_plus_the_reserved_smoke():
+    process, tenant = WORKER_PROFILES["2c-4g"]
+    assert process == 5
+    assert process - worker_mod.reserved_slots(process) == 4
+    assert tenant == 1
+
+
+def test_one_vcpu_keeps_todays_numbers():
+    process, tenant = WORKER_PROFILES[DEPLOYED_PROFILE]
+    assert (process, tenant) == (DEFAULT_PROCESS_CAP, DEFAULT_TENANT_CAP) == (3, 1)
+    assert process - worker_mod.reserved_slots(process) == 2
+
+
+def test_cpu_binds_once_memory_outgrows_it():
+    # Live 2026-10-08: three jobs held one vCPU at 85-99 %. A plan with RAM
+    # for many writers but few cores must not claim the RAM's number.
+    process, _ = WORKER_PROFILES["4c-16g"]
+    assert process == worker_mod.USER_BUILDS_PER_VCPU * 4 + 1
+    assert process < (16384 - worker_mod.BASE_MB - worker_mod.HEADROOM_MB) // worker_mod.PER_JOB_MB
 
 
 def test_every_documented_profile_is_selectable_by_env_alone(monkeypatch):
@@ -468,11 +492,11 @@ def test_every_documented_profile_is_selectable_by_env_alone(monkeypatch):
 
 
 def test_an_explicit_cap_overrides_the_profile(monkeypatch):
-    monkeypatch.setenv(PROFILE_ENV, FIFTY_TENANT_PROFILE)
+    monkeypatch.setenv(PROFILE_ENV, "8c-32g")
     monkeypatch.setenv(PROCESS_CAP_ENV, "5")
     assert worker_process_cap() == 5
     # The unset knob still follows the profile.
-    assert worker_tenant_cap() == WORKER_PROFILES[FIFTY_TENANT_PROFILE][1]
+    assert worker_tenant_cap() == WORKER_PROFILES["8c-32g"][1]
 
 
 def test_the_starter_plan_is_refused_not_silently_capped(monkeypatch):
