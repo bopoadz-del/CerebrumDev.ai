@@ -51,6 +51,10 @@ LOADER_MODULE = "app.dispatch"
 LOADER_FUNCTION = "load_block"
 APP_MODULE = "app.main"
 PROBE_TIMEOUT_S = 120
+#: What an interpreter needs from the OS just to start (Windows: without
+#: SYSTEMROOT the socket layer cannot initialise, WinError 10106). Platform
+#: plumbing only -- the probe never sees the Factory's own configuration.
+_OS_STARTUP_VARS = ("PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP")
 
 #: The probe reports structurally (one JSON line): which modules could not be
 #: imported (``ModuleNotFoundError.name``), and each failure's traceback, whose
@@ -310,6 +314,12 @@ def _missing_paths(result: dict, image: Path, root: Path) -> Tuple[List[str], bo
     return missing, judgeable or bool(missing)
 
 
+def _probe_env(cwd: Path) -> dict:
+    env = {k: os.environ[k] for k in _OS_STARTUP_VARS if os.environ.get(k)}
+    env.update({"PYTHONPATH": str(cwd), "PYTHONDONTWRITEBYTECODE": "1"})
+    return env
+
+
 def _in_image(text: str, image: Path) -> str:
     """``text`` with the scratch directory mapped back to image paths: a
     verdict lands in the build ledger, which must read the same every run."""
@@ -337,7 +347,7 @@ def check(root: Path | str, *, python: str = sys.executable, timeout_s: int = PR
                 detail="COPY the emulation cannot follow: " + "; ".join(unfollowable[:3]),
             )
         cwd = image / workdir.lstrip("/")
-        env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(cwd), "PYTHONDONTWRITEBYTECODE": "1"}
+        env = _probe_env(cwd)
         try:
             proc = subprocess.run(
                 [python, "-c", _PROBE, json.dumps(blocks)],

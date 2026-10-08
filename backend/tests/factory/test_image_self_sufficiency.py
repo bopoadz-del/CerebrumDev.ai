@@ -173,3 +173,16 @@ def test_the_verdict_never_names_the_scratch_directory(tmp_path, monkeypatch):
     assert not verdict.judged and verdict.ok
     assert "image-emulation" not in verdict.detail and "/tmp" not in verdict.detail
     assert "Is a directory: '/app'" in verdict.detail  # the image path, not the scratch one
+
+
+def test_the_probe_env_carries_os_startup_plumbing_and_nothing_else(monkeypatch, tmp_path):
+    """Live CI (Windows) 2026-10-08: a probe without SYSTEMROOT cannot start
+    the socket layer (WinError 10106) and every app read as broken. The probe
+    gets what an interpreter needs to start -- never the Factory's config."""
+    monkeypatch.setenv("SYSTEMROOT", r"C:\Windows")
+    monkeypatch.setenv("FACTORY_SECRET_THING", "do-not-pass")
+    env = image_sufficiency._probe_env(tmp_path)
+    assert env["SYSTEMROOT"] == r"C:\Windows"
+    assert env["PYTHONPATH"] == str(tmp_path)
+    assert "FACTORY_SECRET_THING" not in env
+    assert set(env) <= set(image_sufficiency._OS_STARTUP_VARS) | {"PYTHONPATH", "PYTHONDONTWRITEBYTECODE"}
