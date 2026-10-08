@@ -36,11 +36,12 @@ def test_worker_argv_puts_provider_and_api_key_before_exec(tmp_path):
     prompt = "write the platform"
     captured: dict = {}
 
-    def fake_popen(argv, *, cwd, stdout, stderr, text, bufsize, env, stdin):
+    def fake_popen(argv, *, cwd, stdout, stderr, text, bufsize, env, stdin, **agent_kwargs):
         captured["argv"] = argv
         captured["cwd"] = cwd
         captured["env"] = env
         captured["stdin"] = stdin
+        captured["agent_kwargs"] = agent_kwargs
         return _FakeProc(
             argv,
             json.dumps({"status": "completed", "termination_reason": "resolved"}),
@@ -78,6 +79,12 @@ def test_worker_argv_puts_provider_and_api_key_before_exec(tmp_path):
     # banner must never be able to block the writer on unanswerable stdin
     # (live-factory silent hang, sess_e4bcf26ec19c4d04).
     assert captured["stdin"] is subprocess.DEVNULL
+    # The writer runs in its own session: its shell can never signal the
+    # Factory server's process group (exactly the agent_process keywords,
+    # nothing more).
+    from app.factory.build.agent_process import agent_popen_kwargs
+
+    assert captured["agent_kwargs"] == agent_popen_kwargs()
     # The slot was really taken and really given back.
     assert codewhale_worker.worker_slots_snapshot() == {"total": 0, "by_tenant": {}}
     # The child runs under an explicit per-job environment, never the live
