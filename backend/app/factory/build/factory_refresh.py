@@ -154,21 +154,22 @@ def refresh_factory_files(
 
     root = Path(root)
     changed: List[str] = []
-    if (root / "scripts" / "release_gate.py").is_file():
-        _write_if_changed(root, "scripts/release_gate.py", _render_release_gate(product_name), changed)
-    if (root / "scripts" / "acceptance.py").is_file():
-        _write_if_changed(
-            root,
-            "scripts/acceptance.py",
-            render_acceptance_script(blueprint),
-            changed,
-        )
+    # Factory-owned outright: rendered whether or not a copy is present. A
+    # missing one is not a reason to skip -- live cycle 3 (5410237b): the
+    # writer-owned-files guard removed a ci.yml the writer had created, the
+    # refresh rendered ci.yml only "if present", and every build shipped the
+    # base branch's pytest-only workflow (Store gate 20/22).
+    _write_if_changed(root, "scripts/release_gate.py", _render_release_gate(product_name), changed)
+    _write_if_changed(
+        root,
+        "scripts/acceptance.py",
+        render_acceptance_script(blueprint),
+        changed,
+    )
     from app.factory.build.writer_behaviour import SELF_CHECK_REL, render_self_check
 
-    if (root / SELF_CHECK_REL).is_file():
-        _write_if_changed(root, SELF_CHECK_REL, render_self_check(), changed)
-    if (root / ".github" / "workflows" / "ci.yml").is_file():
-        _write_if_changed(root, ".github/workflows/ci.yml", render_github_ci(), changed)
+    _write_if_changed(root, SELF_CHECK_REL, render_self_check(), changed)
+    _write_if_changed(root, ".github/workflows/ci.yml", render_github_ci(), changed)
     if (root / "requirements.txt").is_file():
         _write_if_changed(root, "requirements.txt", merged_requirements(root), changed, shared=True)
         from app.factory.build.dependency_pins import CONSTRAINTS_REL, constraints_for_tree
