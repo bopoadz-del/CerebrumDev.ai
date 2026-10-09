@@ -1,0 +1,750 @@
+From 9450ab2577bf66edb9f633c60fa3d52907716247 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Sat, 18 Jul 2026 23:16:12 +0000
+Subject: [PATCH] feat: add private_estate_operations kit and five estate
+ blocks
+
+Register estate_registry, estate_maintenance, evidence_verifier,
+readiness_engine, and portfolio_rollup for Cerebrum-Steward Factory
+generation. Update virgin_domains shelf.
+---
+ block_registry/estate_maintenance/Dockerfile  |   3 +
+ block_registry/estate_maintenance/block.json  |  40 +++++
+ block_registry/estate_maintenance/block.py    |  13 ++
+ block_registry/estate_registry/Dockerfile     |   3 +
+ block_registry/estate_registry/block.json     |  40 +++++
+ block_registry/estate_registry/block.py       |  13 ++
+ block_registry/evidence_verifier/Dockerfile   |   3 +
+ block_registry/evidence_verifier/block.json   |  40 +++++
+ block_registry/evidence_verifier/block.py     |  13 ++
+ block_registry/portfolio_rollup/Dockerfile    |   3 +
+ block_registry/portfolio_rollup/block.json    |  40 +++++
+ block_registry/portfolio_rollup/block.py      |  13 ++
+ block_registry/readiness_engine/Dockerfile    |   3 +
+ block_registry/readiness_engine/block.json    |  40 +++++
+ block_registry/readiness_engine/block.py      |  13 ++
+ .../kits/private_estate_operations/README.md  |   3 +
+ .../private_estate_operations/manifest.json   |  38 +++++
+ block_store/shelves/virgin_domains.json       | 152 ++++++++++++++++--
+ 18 files changed, 456 insertions(+), 17 deletions(-)
+ create mode 100644 block_registry/estate_maintenance/Dockerfile
+ create mode 100644 block_registry/estate_maintenance/block.json
+ create mode 100644 block_registry/estate_maintenance/block.py
+ create mode 100644 block_registry/estate_registry/Dockerfile
+ create mode 100644 block_registry/estate_registry/block.json
+ create mode 100644 block_registry/estate_registry/block.py
+ create mode 100644 block_registry/evidence_verifier/Dockerfile
+ create mode 100644 block_registry/evidence_verifier/block.json
+ create mode 100644 block_registry/evidence_verifier/block.py
+ create mode 100644 block_registry/portfolio_rollup/Dockerfile
+ create mode 100644 block_registry/portfolio_rollup/block.json
+ create mode 100644 block_registry/portfolio_rollup/block.py
+ create mode 100644 block_registry/readiness_engine/Dockerfile
+ create mode 100644 block_registry/readiness_engine/block.json
+ create mode 100644 block_registry/readiness_engine/block.py
+ create mode 100644 block_store/kits/private_estate_operations/README.md
+ create mode 100644 block_store/kits/private_estate_operations/manifest.json
+
+diff --git a/block_registry/estate_maintenance/Dockerfile b/block_registry/estate_maintenance/Dockerfile
+new file mode 100644
+index 0000000..b6924ce
+--- /dev/null
++++ b/block_registry/estate_maintenance/Dockerfile
+@@ -0,0 +1,3 @@
++FROM python:3.11-slim
++WORKDIR /app
++COPY block.py block.json .
+diff --git a/block_registry/estate_maintenance/block.json b/block_registry/estate_maintenance/block.json
+new file mode 100644
+index 0000000..49ed2c6
+--- /dev/null
++++ b/block_registry/estate_maintenance/block.json
+@@ -0,0 +1,40 @@
++{
++  "id": "estate_maintenance",
++  "name": "Estate Maintenance",
++  "version": "1.0.0",
++  "description": "Maintenance work orders and schedules",
++  "author": "Cerebrum Factory",
++  "layer": 3,
++  "tags": [
++    "estate",
++    "private_estate_operations",
++    "steward"
++  ],
++  "inputs": [
++    {
++      "name": "input",
++      "type": "json",
++      "required": false,
++      "description": "Capability input payload"
++    }
++  ],
++  "outputs": [
++    {
++      "name": "result",
++      "type": "json",
++      "description": "Capability result"
++    }
++  ],
++  "permissions": {
++    "blocks": [],
++    "filesystem": false,
++    "imports": [],
++    "network": false
++  },
++  "publisher_id": "cerebrum_platform",
++  "requires": [],
++  "execution": {
++    "type": "python",
++    "entrypoint": "block.py"
++  }
++}
+diff --git a/block_registry/estate_maintenance/block.py b/block_registry/estate_maintenance/block.py
+new file mode 100644
+index 0000000..689685c
+--- /dev/null
++++ b/block_registry/estate_maintenance/block.py
+@@ -0,0 +1,13 @@
++"""Factory-generated estate block: estate_maintenance."""
++
++from __future__ import annotations
++from typing import Any, Dict
++
++
++def run(**kwargs: Any) -> Dict[str, Any]:
++    payload = kwargs.get("input", kwargs)
++    return {
++        "block_id": "estate_maintenance",
++        "status": "ok",
++        "result": payload if isinstance(payload, dict) else {"value": payload},
++    }
+diff --git a/block_registry/estate_registry/Dockerfile b/block_registry/estate_registry/Dockerfile
+new file mode 100644
+index 0000000..b6924ce
+--- /dev/null
++++ b/block_registry/estate_registry/Dockerfile
+@@ -0,0 +1,3 @@
++FROM python:3.11-slim
++WORKDIR /app
++COPY block.py block.json .
+diff --git a/block_registry/estate_registry/block.json b/block_registry/estate_registry/block.json
+new file mode 100644
+index 0000000..5eb2585
+--- /dev/null
++++ b/block_registry/estate_registry/block.json
+@@ -0,0 +1,40 @@
++{
++  "id": "estate_registry",
++  "name": "Estate Registry",
++  "version": "1.0.0",
++  "description": "Property and asset registry for private estates",
++  "author": "Cerebrum Factory",
++  "layer": 3,
++  "tags": [
++    "estate",
++    "private_estate_operations",
++    "steward"
++  ],
++  "inputs": [
++    {
++      "name": "input",
++      "type": "json",
++      "required": false,
++      "description": "Capability input payload"
++    }
++  ],
++  "outputs": [
++    {
++      "name": "result",
++      "type": "json",
++      "description": "Capability result"
++    }
++  ],
++  "permissions": {
++    "blocks": [],
++    "filesystem": false,
++    "imports": [],
++    "network": false
++  },
++  "publisher_id": "cerebrum_platform",
++  "requires": [],
++  "execution": {
++    "type": "python",
++    "entrypoint": "block.py"
++  }
++}
+diff --git a/block_registry/estate_registry/block.py b/block_registry/estate_registry/block.py
+new file mode 100644
+index 0000000..6ddc241
+--- /dev/null
++++ b/block_registry/estate_registry/block.py
+@@ -0,0 +1,13 @@
++"""Factory-generated estate block: estate_registry."""
++
++from __future__ import annotations
++from typing import Any, Dict
++
++
++def run(**kwargs: Any) -> Dict[str, Any]:
++    payload = kwargs.get("input", kwargs)
++    return {
++        "block_id": "estate_registry",
++        "status": "ok",
++        "result": payload if isinstance(payload, dict) else {"value": payload},
++    }
+diff --git a/block_registry/evidence_verifier/Dockerfile b/block_registry/evidence_verifier/Dockerfile
+new file mode 100644
+index 0000000..b6924ce
+--- /dev/null
++++ b/block_registry/evidence_verifier/Dockerfile
+@@ -0,0 +1,3 @@
++FROM python:3.11-slim
++WORKDIR /app
++COPY block.py block.json .
+diff --git a/block_registry/evidence_verifier/block.json b/block_registry/evidence_verifier/block.json
+new file mode 100644
+index 0000000..13fd8a9
+--- /dev/null
++++ b/block_registry/evidence_verifier/block.json
+@@ -0,0 +1,40 @@
++{
++  "id": "evidence_verifier",
++  "name": "Evidence Verifier",
++  "version": "1.0.0",
++  "description": "Evidence capture and verification for estate ops",
++  "author": "Cerebrum Factory",
++  "layer": 3,
++  "tags": [
++    "estate",
++    "private_estate_operations",
++    "steward"
++  ],
++  "inputs": [
++    {
++      "name": "input",
++      "type": "json",
++      "required": false,
++      "description": "Capability input payload"
++    }
++  ],
++  "outputs": [
++    {
++      "name": "result",
++      "type": "json",
++      "description": "Capability result"
++    }
++  ],
++  "permissions": {
++    "blocks": [],
++    "filesystem": false,
++    "imports": [],
++    "network": false
++  },
++  "publisher_id": "cerebrum_platform",
++  "requires": [],
++  "execution": {
++    "type": "python",
++    "entrypoint": "block.py"
++  }
++}
+diff --git a/block_registry/evidence_verifier/block.py b/block_registry/evidence_verifier/block.py
+new file mode 100644
+index 0000000..1837433
+--- /dev/null
++++ b/block_registry/evidence_verifier/block.py
+@@ -0,0 +1,13 @@
++"""Factory-generated estate block: evidence_verifier."""
++
++from __future__ import annotations
++from typing import Any, Dict
++
++
++def run(**kwargs: Any) -> Dict[str, Any]:
++    payload = kwargs.get("input", kwargs)
++    return {
++        "block_id": "evidence_verifier",
++        "status": "ok",
++        "result": payload if isinstance(payload, dict) else {"value": payload},
++    }
+diff --git a/block_registry/portfolio_rollup/Dockerfile b/block_registry/portfolio_rollup/Dockerfile
+new file mode 100644
+index 0000000..b6924ce
+--- /dev/null
++++ b/block_registry/portfolio_rollup/Dockerfile
+@@ -0,0 +1,3 @@
++FROM python:3.11-slim
++WORKDIR /app
++COPY block.py block.json .
+diff --git a/block_registry/portfolio_rollup/block.json b/block_registry/portfolio_rollup/block.json
+new file mode 100644
+index 0000000..c2d2ba6
+--- /dev/null
++++ b/block_registry/portfolio_rollup/block.json
+@@ -0,0 +1,40 @@
++{
++  "id": "portfolio_rollup",
++  "name": "Portfolio Rollup",
++  "version": "1.0.0",
++  "description": "Multi-property portfolio rollup intelligence",
++  "author": "Cerebrum Factory",
++  "layer": 3,
++  "tags": [
++    "estate",
++    "private_estate_operations",
++    "steward"
++  ],
++  "inputs": [
++    {
++      "name": "input",
++      "type": "json",
++      "required": false,
++      "description": "Capability input payload"
++    }
++  ],
++  "outputs": [
++    {
++      "name": "result",
++      "type": "json",
++      "description": "Capability result"
++    }
++  ],
++  "permissions": {
++    "blocks": [],
++    "filesystem": false,
++    "imports": [],
++    "network": false
++  },
++  "publisher_id": "cerebrum_platform",
++  "requires": [],
++  "execution": {
++    "type": "python",
++    "entrypoint": "block.py"
++  }
++}
+diff --git a/block_registry/portfolio_rollup/block.py b/block_registry/portfolio_rollup/block.py
+new file mode 100644
+index 0000000..6d9bd0c
+--- /dev/null
++++ b/block_registry/portfolio_rollup/block.py
+@@ -0,0 +1,13 @@
++"""Factory-generated estate block: portfolio_rollup."""
++
++from __future__ import annotations
++from typing import Any, Dict
++
++
++def run(**kwargs: Any) -> Dict[str, Any]:
++    payload = kwargs.get("input", kwargs)
++    return {
++        "block_id": "portfolio_rollup",
++        "status": "ok",
++        "result": payload if isinstance(payload, dict) else {"value": payload},
++    }
+diff --git a/block_registry/readiness_engine/Dockerfile b/block_registry/readiness_engine/Dockerfile
+new file mode 100644
+index 0000000..b6924ce
+--- /dev/null
++++ b/block_registry/readiness_engine/Dockerfile
+@@ -0,0 +1,3 @@
++FROM python:3.11-slim
++WORKDIR /app
++COPY block.py block.json .
+diff --git a/block_registry/readiness_engine/block.json b/block_registry/readiness_engine/block.json
+new file mode 100644
+index 0000000..769d3e8
+--- /dev/null
++++ b/block_registry/readiness_engine/block.json
+@@ -0,0 +1,40 @@
++{
++  "id": "readiness_engine",
++  "name": "Readiness Engine",
++  "version": "1.0.0",
++  "description": "Property readiness scoring and gates",
++  "author": "Cerebrum Factory",
++  "layer": 3,
++  "tags": [
++    "estate",
++    "private_estate_operations",
++    "steward"
++  ],
++  "inputs": [
++    {
++      "name": "input",
++      "type": "json",
++      "required": false,
++      "description": "Capability input payload"
++    }
++  ],
++  "outputs": [
++    {
++      "name": "result",
++      "type": "json",
++      "description": "Capability result"
++    }
++  ],
++  "permissions": {
++    "blocks": [],
++    "filesystem": false,
++    "imports": [],
++    "network": false
++  },
++  "publisher_id": "cerebrum_platform",
++  "requires": [],
++  "execution": {
++    "type": "python",
++    "entrypoint": "block.py"
++  }
++}
+diff --git a/block_registry/readiness_engine/block.py b/block_registry/readiness_engine/block.py
+new file mode 100644
+index 0000000..f8920db
+--- /dev/null
++++ b/block_registry/readiness_engine/block.py
+@@ -0,0 +1,13 @@
++"""Factory-generated estate block: readiness_engine."""
++
++from __future__ import annotations
++from typing import Any, Dict
++
++
++def run(**kwargs: Any) -> Dict[str, Any]:
++    payload = kwargs.get("input", kwargs)
++    return {
++        "block_id": "readiness_engine",
++        "status": "ok",
++        "result": payload if isinstance(payload, dict) else {"value": payload},
++    }
+diff --git a/block_store/kits/private_estate_operations/README.md b/block_store/kits/private_estate_operations/README.md
+new file mode 100644
+index 0000000..99606d8
+--- /dev/null
++++ b/block_store/kits/private_estate_operations/README.md
+@@ -0,0 +1,3 @@
++# private_estate_operations
++
++Factory-generated kit for Cerebrum-Steward.
+diff --git a/block_store/kits/private_estate_operations/manifest.json b/block_store/kits/private_estate_operations/manifest.json
+new file mode 100644
+index 0000000..0abb4db
+--- /dev/null
++++ b/block_store/kits/private_estate_operations/manifest.json
+@@ -0,0 +1,38 @@
++{
++  "id": "private_estate_operations",
++  "name": "Private Estate Operations",
++  "version": "1.0.0",
++  "description": "Estate registry, maintenance, evidence, readiness, and portfolio rollup for The Steward.",
++  "status": "available",
++  "author": "bopoadz-del",
++  "tags": [
++    "domain",
++    "estate",
++    "steward"
++  ],
++  "source": {
++    "repo": "https://github.com/bopoadz-del/Cerebrum-Blocks",
++    "ref": "main",
++    "publish_script": "scripts/publish_kit.py"
++  },
++  "container": {
++    "class": "app.containers.private_estate_operations.PrivateEstateOperationsContainer",
++    "default_chat_prompt": null
++  },
++  "blocks": [
++    "estate_registry",
++    "estate_maintenance",
++    "evidence_verifier",
++    "readiness_engine",
++    "portfolio_rollup"
++  ],
++  "prompts": [],
++  "data": [],
++  "core_modules": [],
++  "artifacts": [],
++  "price_cents": 0,
++  "install_requires": {
++    "min_platform_version": "2.0.0",
++    "python": ">=3.10"
++  }
++}
+diff --git a/block_store/shelves/virgin_domains.json b/block_store/shelves/virgin_domains.json
+index 1dc65da..231f74f 100644
+--- a/block_store/shelves/virgin_domains.json
++++ b/block_store/shelves/virgin_domains.json
+@@ -10,7 +10,13 @@
+       "domain": "agriculture",
+       "version": "1.0.0",
+       "container_class": "app.containers.agriculture.AgricultureContainer",
+-      "blocks": ["pdf", "ocr", "chat", "image", "agriculture_v2"],
++      "blocks": [
++        "pdf",
++        "ocr",
++        "chat",
++        "image",
++        "agriculture_v2"
++      ],
+       "source_kit": "block_store/kits/agriculture/manifest.json",
+       "description": "Field reports, crop risk, and compliance analysis."
+     },
+@@ -20,7 +26,13 @@
+       "domain": "automotive",
+       "version": "1.0.0",
+       "container_class": "app.containers.automotive.AutomotiveContainer",
+-      "blocks": ["pdf", "ocr", "chat", "image", "automotive_v2"],
++      "blocks": [
++        "pdf",
++        "ocr",
++        "chat",
++        "image",
++        "automotive_v2"
++      ],
+       "source_kit": "block_store/kits/automotive/manifest.json",
+       "description": "Vehicle documentation, recall, and supply chain analysis."
+     },
+@@ -30,7 +42,13 @@
+       "domain": "aviation",
+       "version": "1.0.0",
+       "container_class": "app.containers.aviation.AviationContainer",
+-      "blocks": ["pdf", "ocr", "chat", "image", "aviation_v2"],
++      "blocks": [
++        "pdf",
++        "ocr",
++        "chat",
++        "image",
++        "aviation_v2"
++      ],
+       "source_kit": "block_store/kits/aviation/manifest.json",
+       "description": "Flight logs, maintenance records, and safety analysis."
+     },
+@@ -40,7 +58,13 @@
+       "domain": "construction",
+       "version": "3.1",
+       "container_class": "app.containers.construction.ConstructionContainer",
+-      "blocks": ["pdf", "ocr", "chat", "image", "construction_v2"],
++      "blocks": [
++        "pdf",
++        "ocr",
++        "chat",
++        "image",
++        "construction_v2"
++      ],
+       "source_kit": "block_store/kits/construction/manifest.json",
+       "description": "Contracts, specs, and baseline project document analysis."
+     },
+@@ -50,7 +74,13 @@
+       "domain": "education",
+       "version": "1.0.0",
+       "container_class": "app.containers.education.EducationContainer",
+-      "blocks": ["pdf", "ocr", "chat", "image", "education_v2"],
++      "blocks": [
++        "pdf",
++        "ocr",
++        "chat",
++        "image",
++        "education_v2"
++      ],
+       "source_kit": "block_store/kits/education/manifest.json",
+       "description": "Syllabus, accreditation, and learning material analysis."
+     },
+@@ -60,7 +90,13 @@
+       "domain": "finance",
+       "version": "1.0.0",
+       "container_class": "app.containers.finance.FinanceContainer",
+-      "blocks": ["pdf", "ocr", "chat", "image", "finance_v2"],
++      "blocks": [
++        "pdf",
++        "ocr",
++        "chat",
++        "image",
++        "finance_v2"
++      ],
+       "source_kit": "block_store/kits/finance/manifest.json",
+       "description": "Financial document analysis and risk flagging."
+     },
+@@ -70,7 +106,13 @@
+       "domain": "hotel_management",
+       "version": "1.0.0",
+       "container_class": "app.containers.hotel_management.HotelManagementContainer",
+-      "blocks": ["pdf", "ocr", "chat", "image", "hotel_management_v2"],
++      "blocks": [
++        "pdf",
++        "ocr",
++        "chat",
++        "image",
++        "hotel_management_v2"
++      ],
+       "source_kit": "block_store/kits/hotel_management/manifest.json",
+       "description": "Guest services, operations, and hospitality document analysis."
+     },
+@@ -80,7 +122,13 @@
+       "domain": "hr",
+       "version": "1.0.0",
+       "container_class": "app.containers.hr.HRContainer",
+-      "blocks": ["pdf", "ocr", "chat", "image", "hr_v2"],
++      "blocks": [
++        "pdf",
++        "ocr",
++        "chat",
++        "image",
++        "hr_v2"
++      ],
+       "source_kit": "block_store/kits/hr/manifest.json",
+       "description": "Resumes, policies, and workforce document analysis."
+     },
+@@ -90,7 +138,13 @@
+       "domain": "insurance",
+       "version": "1.0.0",
+       "container_class": "app.containers.insurance.InsuranceContainer",
+-      "blocks": ["pdf", "ocr", "chat", "image", "insurance_v2"],
++      "blocks": [
++        "pdf",
++        "ocr",
++        "chat",
++        "image",
++        "insurance_v2"
++      ],
+       "source_kit": "block_store/kits/insurance/manifest.json",
+       "description": "Policies, claims, and underwriting document analysis."
+     },
+@@ -100,7 +154,13 @@
+       "domain": "legal",
+       "version": "2.0.0",
+       "container_class": "app.containers.legal.LegalContainer",
+-      "blocks": ["pdf", "ocr", "chat", "image", "legal_v2"],
++      "blocks": [
++        "pdf",
++        "ocr",
++        "chat",
++        "image",
++        "legal_v2"
++      ],
+       "source_kit": "block_store/kits/legal/manifest.json",
+       "description": "Contract review, clauses, and legal risk analysis."
+     },
+@@ -110,7 +170,13 @@
+       "domain": "manufacturing",
+       "version": "1.0.0",
+       "container_class": "app.containers.manufacturing.ManufacturingContainer",
+-      "blocks": ["pdf", "ocr", "chat", "image", "manufacturing_v2"],
++      "blocks": [
++        "pdf",
++        "ocr",
++        "chat",
++        "image",
++        "manufacturing_v2"
++      ],
+       "source_kit": "block_store/kits/manufacturing/manifest.json",
+       "description": "Quality, BOM, and operations document analysis."
+     },
+@@ -120,7 +186,13 @@
+       "domain": "medical",
+       "version": "1.0.0",
+       "container_class": "app.containers.medical.MedicalContainer",
+-      "blocks": ["pdf", "ocr", "chat", "image", "medical_v2"],
++      "blocks": [
++        "pdf",
++        "ocr",
++        "chat",
++        "image",
++        "medical_v2"
++      ],
+       "source_kit": "block_store/kits/medical/manifest.json",
+       "description": "Clinical notes, entity extraction, and compliance checks."
+     },
+@@ -130,7 +202,13 @@
+       "domain": "oil_gas",
+       "version": "1.0.0",
+       "container_class": "app.containers.oil_gas.OilGasContainer",
+-      "blocks": ["pdf", "ocr", "chat", "image", "oil_gas_v2"],
++      "blocks": [
++        "pdf",
++        "ocr",
++        "chat",
++        "image",
++        "oil_gas_v2"
++      ],
+       "source_kit": "block_store/kits/oil_gas/manifest.json",
+       "description": "Well logs, permits, and energy operations analysis."
+     },
+@@ -140,7 +218,13 @@
+       "domain": "pharma",
+       "version": "1.0.0",
+       "container_class": "app.containers.pharma.PharmaContainer",
+-      "blocks": ["pdf", "ocr", "chat", "image", "pharma_v2"],
++      "blocks": [
++        "pdf",
++        "ocr",
++        "chat",
++        "image",
++        "pharma_v2"
++      ],
+       "source_kit": "block_store/kits/pharma/manifest.json",
+       "description": "Regulatory filings, trial docs, and pharmacovigilance analysis."
+     },
+@@ -150,7 +234,13 @@
+       "domain": "real_estate",
+       "version": "1.0.0",
+       "container_class": "app.containers.real_estate.RealEstateContainer",
+-      "blocks": ["pdf", "ocr", "chat", "image", "real_estate_v2"],
++      "blocks": [
++        "pdf",
++        "ocr",
++        "chat",
++        "image",
++        "real_estate_v2"
++      ],
+       "source_kit": "block_store/kits/real_estate/manifest.json",
+       "description": "Leases, listings, and property document analysis."
+     },
+@@ -160,7 +250,13 @@
+       "domain": "retail",
+       "version": "1.0.0",
+       "container_class": "app.containers.retail.RetailContainer",
+-      "blocks": ["pdf", "ocr", "chat", "image", "retail_v2"],
++      "blocks": [
++        "pdf",
++        "ocr",
++        "chat",
++        "image",
++        "retail_v2"
++      ],
+       "source_kit": "block_store/kits/retail/manifest.json",
+       "description": "Inventory, sales, and retail operations document analysis."
+     },
+@@ -170,9 +266,31 @@
+       "domain": "supply_chain",
+       "version": "1.0.0",
+       "container_class": "app.containers.supply_chain.SupplyChainContainer",
+-      "blocks": ["pdf", "ocr", "chat", "image", "supply_chain_v2"],
++      "blocks": [
++        "pdf",
++        "ocr",
++        "chat",
++        "image",
++        "supply_chain_v2"
++      ],
+       "source_kit": "block_store/kits/supply_chain/manifest.json",
+       "description": "POs, invoices, and logistics document analysis."
++    },
++    {
++      "id": "private_estate_operations",
++      "name": "Private Estate Operations Virgin Edition",
++      "domain": "private_estate_operations",
++      "version": "1.0.0",
++      "container_class": "app.containers.private_estate_operations.PrivateEstateOperationsContainer",
++      "blocks": [
++        "estate_registry",
++        "estate_maintenance",
++        "evidence_verifier",
++        "readiness_engine",
++        "portfolio_rollup"
++      ],
++      "source_kit": "block_store/kits/private_estate_operations/manifest.json",
++      "description": "Private estate operations intelligence blocks for The Steward."
+     }
+   ]
+ }
+-- 
+2.43.0
+
