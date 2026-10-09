@@ -193,3 +193,83 @@ def test_the_prompt_names_every_factory_owned_file_and_asks_for_none():
     output = head.partition("OUTPUT")[2]
     for rel in factory_owned.factory_owned_paths():
         assert f"- {rel}\n" not in output, rel
+
+
+# -- the Factory's files are there BEFORE the writer starts --------------------------
+#
+# Live (cycle 5, d024b231 -- co-op sess_47e920344d24453e, fintech
+# sess_61d2b2fc79184b4b): the Factory rendered its owned files only after
+# the WRITER (the deploy modules after the pass, the refresh set before
+# TESTER), so a writer pass found .github/workflows/ci.yml, app/health.py,
+# app/observe.py, app/revision.py and constraints.txt ABSENT, created them for
+# a complete product, and was stopped for authoring Factory files. Every
+# file the Factory can render without the writer's output is now stamped
+# before each pass; touching one is still a violation, sent to rework.
+
+PRESTAMPED = (
+    ".github/workflows/ci.yml",
+    "scripts/acceptance.py",
+    "scripts/factory_checks.py",
+    "scripts/release_gate.py",
+    "app/health.py",
+    "app/observe.py",
+    "app/revision.py",
+)
+
+
+def test_the_factorys_renderable_files_exist_when_the_writer_starts(tmp_path, monkeypatch):
+    seen = {}
+
+    def look(root):
+        from pathlib import Path
+
+        seen.update({rel: (Path(root) / rel).is_file() for rel in PRESTAMPED})
+
+    _ctx, dest, _result = _run_pass(tmp_path, monkeypatch, look)
+    assert seen and all(seen.values()), {k: v for k, v in seen.items() if not v}
+    # A writer that leaves them alone touched nothing.
+    assert factory_owned.recorded(dest) == []
+
+
+def test_every_prestamped_path_is_factory_owned():
+    owned = set(factory_owned.factory_owned_paths())
+    assert set(PRESTAMPED) <= owned
+
+
+def test_a_writer_that_edits_a_prestamped_file_is_still_sent_to_rework(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    def edit(root):
+        (Path(root) / "app/health.py").write_text("# the writer's health\n", encoding="utf-8")
+
+    _ctx, dest, _result = _run_pass(tmp_path, monkeypatch, edit)
+    assert {"path": "app/health.py", "change": "modified"} in factory_owned.recorded(dest)
+    assert (dest / "app/health.py").read_text(encoding="utf-8") != "# the writer's health\n"
+
+
+# -- the same failure twice is the same files touched the same way -------------------
+
+
+def _touched_verdict(tmp_path, rows):
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.gates import GateContext, gate_writer_contract
+
+    factory_owned.record(tmp_path, rows)
+    return gate_writer_contract(GateContext(workspace=tmp_path, role=BuildRole.WRITER))
+
+
+def test_different_files_touched_are_different_failures(tmp_path):
+    from app.factory.build.runner import _failure_keys
+
+    a = _touched_verdict(tmp_path / "a", [{"path": "scripts/factory_checks.py", "change": "modified"}])
+    b = _touched_verdict(tmp_path / "b", [{"path": ".github/workflows/ci.yml", "change": "created"}])
+    assert set(_failure_keys(a)).isdisjoint(_failure_keys(b))
+
+
+def test_the_same_files_touched_the_same_way_is_the_same_failure(tmp_path):
+    from app.factory.build.runner import _failure_keys
+
+    rows = [{"path": "app/health.py", "change": "modified"}, {"path": "conftest.py", "change": "created"}]
+    a = _touched_verdict(tmp_path / "a", rows)
+    b = _touched_verdict(tmp_path / "b", list(reversed(rows)))
+    assert _failure_keys(a) == _failure_keys(b)
