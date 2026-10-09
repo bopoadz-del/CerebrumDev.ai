@@ -1,0 +1,30 @@
+{
+  "live": {
+    "health": "ok",
+    "git_sha": "d024b231b23fc29e942c3c11408c7c5f2eca14b5"
+  },
+  "session_id": "sess_aecba8cced764e64",
+  "package_http": 200,
+  "strip": {
+    "files": 263,
+    "bytes": 523358,
+    "leaked": [],
+    "ok": true
+  },
+  "your_platforms": {
+    "listing_http": 200,
+    "listed": true,
+    "card": {
+      "session_id": "sess_aecba8cced764e64",
+      "user_id": "acct_e0371bfc958c4279",
+      "phase": 1,
+      "phase_status": "in_progress",
+      "title": "Claims Platform",
+      "stage": "build",
+      "updated_at": "2026-10-09T15:35:59.010360"
+    },
+    "product_http": 200,
+    "has_generation": true
+  },
+  "ok": true
+}
