@@ -148,33 +148,38 @@ jobs:
           path: ops-out/
           if-no-files-found: warn
 
+      # The branch holds runs/ and nothing else. The commit is built on a
+      # private index from the previous runs/ tree plus this run's answer, so
+      # the checkout's own files never reach it.
       - name: Commit the answer to ops-results
         if: always()
         env:
           RUN_DIR: runs/${{ github.run_id }}
+          GIT_INDEX_FILE: ${{ runner.temp }}/ops-results.index
         run: |
           [ -d ops-out ] || exit 0
-          git config user.name "ops-bot"
-          git config user.email "ops-bot@users.noreply.github.com"
-          git fetch -q origin ops-results || true
-          if git rev-parse -q --verify origin/ops-results >/dev/null; then
-            git worktree add -q results origin/ops-results
-            git -C results checkout -q -B ops-results
-          else
-            git worktree add -q --detach results
-            git -C results checkout -q --orphan ops-results
-            git -C results rm -rq . || true
-          fi
-          mkdir -p "results/$RUN_DIR"
-          cp -r ops-out/. "results/$RUN_DIR/"
+          mkdir -p "$RUN_DIR"
+          cp -r ops-out/. "$RUN_DIR/"
           printf '{"run": "%s", "event": "%s", "ref": "%s", "action": "%s", "target": "%s", "branch": "%s"}\n' \
             "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             "${{ github.event_name }}" "${{ github.ref_name }}" "${{ steps.req.outputs.action }}" \
-            "${{ steps.req.outputs.target }}" "${{ steps.req.outputs.branch }}" > "results/$RUN_DIR/request.json"
-          git -C results add -A
-          git -C results commit -qm "ops ${{ steps.req.outputs.action }} run ${{ github.run_id }}"
-          for i in 1 2 3; do
-            git -C results push -q origin ops-results && exit 0
-            git -C results pull -q --rebase origin ops-results || true
+            "${{ steps.req.outputs.target }}" "${{ steps.req.outputs.branch }}" > "$RUN_DIR/request.json"
+          export GIT_AUTHOR_NAME=ops-bot GIT_COMMITTER_NAME=ops-bot
+          export GIT_AUTHOR_EMAIL=ops-bot@users.noreply.github.com GIT_COMMITTER_EMAIL=ops-bot@users.noreply.github.com
+          for attempt in 1 2 3; do
+            rm -f "$GIT_INDEX_FILE"
+            git read-tree --empty
+            parent=""
+            if git fetch -q origin ops-results 2>/dev/null; then
+              parent="-p FETCH_HEAD"
+              if git rev-parse -q --verify FETCH_HEAD:runs >/dev/null; then
+                git read-tree --prefix=runs/ FETCH_HEAD:runs
+              fi
+            fi
+            git add -f "$RUN_DIR"
+            tree=$(git write-tree)
+            commit=$(git commit-tree "$tree" $parent -m "ops ${{ steps.req.outputs.action }} run ${{ github.run_id }}")
+            git push -q origin "$commit:refs/heads/ops-results" && exit 0
+            sleep $((attempt * 3))
           done
           exit 1

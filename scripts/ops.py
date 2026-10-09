@@ -609,7 +609,9 @@ def main(argv: Optional[Sequence[str]] = None, *, req: Req = http_req) -> int:
     try:
         target = args.target.strip()
         if args.repros and target:
-            runs = json.loads(Path(args.repros).read_text()).get("runs") or {}
+            recorded = json.loads(Path(args.repros).read_text())
+            # release_cycle.py writes {name: result} under "repros".
+            runs = recorded.get("repros") or recorded.get("runs") or {}
             run = runs.get(target) if isinstance(runs, Mapping) else None
             if isinstance(run, Mapping) and run.get("session_id"):
                 target = str(run["session_id"])

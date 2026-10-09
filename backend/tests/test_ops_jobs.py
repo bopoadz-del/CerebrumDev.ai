@@ -184,7 +184,7 @@ def test_a_platform_id_prefix_finds_its_session(ops, tmp_path):
 
 def test_a_run_name_resolves_through_the_cycles_repros(ops, tmp_path):
     repros = tmp_path / "repros.json"
-    repros.write_text(json.dumps({"runs": {"some_run": {"session_id": "sess_c"}}}))
+    repros.write_text(json.dumps({"repros": {"some_run": {"session_id": "sess_c"}}}))
     api = FakeApi({0: {}, 1: {}, 2: {"sess_c": _state("sess_c", "plt_c")}})
     out = tmp_path / "out"
     assert ops.main(["ledger-dump", "--target", "some_run", "--repros", str(repros), "--out", str(out)], req=api) == 0
