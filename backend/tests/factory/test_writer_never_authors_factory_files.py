@@ -14,6 +14,7 @@ naming the path -- never a silent overwrite, never silently kept.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from app.factory.build import factory_owned
 
@@ -146,7 +147,12 @@ def _writer_invents_provenance(root):
 def test_a_writer_that_invents_provenance_is_recorded_and_never_kept(tmp_path, monkeypatch):
     _ctx, dest, _result = _run_pass(tmp_path, monkeypatch, _writer_invents_provenance)
     touched = factory_owned.recorded(dest)
-    assert {"path": factory_owned.PROVENANCE_REL, "change": "created"} in touched
+    # The Factory's record is there before the pass (cycle 7), so writing it
+    # is a modification -- still recorded, still never kept.
+    assert any(
+        row["path"] == factory_owned.PROVENANCE_REL and row["change"] in ("created", "modified")
+        for row in touched
+    ), touched
     # The writer's invention is gone; whatever provenance the product carries
     # now is the Factory's own (converge writes it after the writer).
     prov = dest / factory_owned.PROVENANCE_REL
@@ -207,6 +213,10 @@ def test_the_prompt_names_every_factory_owned_file_and_asks_for_none():
 # before each pass; touching one is still a violation, sent to rework.
 
 PRESTAMPED = (
+    # Cycle 7 (a3e1fd7): TESTER's bootstrap and the provenance record were
+    # still rendered after the pass; writers created them for their own
+    # self-check and three builds (smoke A, fintech, vineyard) stopped on it.
+    "conftest.py",
     ".github/workflows/ci.yml",
     "scripts/acceptance.py",
     "scripts/factory_checks.py",
@@ -273,3 +283,46 @@ def test_the_same_files_touched_the_same_way_is_the_same_failure(tmp_path):
     a = _touched_verdict(tmp_path / "a", rows)
     b = _touched_verdict(tmp_path / "b", list(reversed(rows)))
     assert _failure_keys(a) == _failure_keys(b)
+
+
+def test_the_provenance_record_is_rendered_before_the_writer_from_the_build_inputs(tmp_path):
+    """The record comes from the blueprint, plan and resolved commits the
+    writer step already holds -- not from the writer's output."""
+    from tests.factory.test_provenance_is_the_factorys import _ctx as real_ctx
+
+    ctx = real_ctx(tmp_path)
+    root = Path(ctx.workspace.destination)
+    changed = factory_owned.prestamp_late_files(root, ctx)
+    assert factory_owned.PROVENANCE_REL in changed
+    prov = json.loads((root / factory_owned.PROVENANCE_REL).read_text(encoding="utf-8"))
+    assert prov["factory_commit"] == "f" * 40 and prov["blocks_commit"] == "b" * 40
+
+
+def test_the_writer_step_hands_its_context_to_the_prestamp():
+    import inspect
+
+    from app.factory.build import roles_handlers
+
+    src = inspect.getsource(roles_handlers._run_writer_via_codewhale_worker)
+    assert "factory_owned.prestamp(Path(dest), ctx.blueprint, ctx)" in src
+
+
+def test_the_prestamped_bootstrap_is_testers_own(tmp_path, monkeypatch):
+    from app.factory.build.roles_handlers import _CONFTEST
+
+    seen = {}
+
+    def look(root):
+        from pathlib import Path
+
+        seen["text"] = (Path(root) / "conftest.py").read_text(encoding="utf-8")
+
+    _run_pass(tmp_path, monkeypatch, look)
+    assert seen["text"] == _CONFTEST
+
+
+def test_prestamp_never_overwrites_a_bootstrap_or_record_already_there(tmp_path):
+    (tmp_path / "conftest.py").write_text("# already here\n", encoding="utf-8")
+    changed = factory_owned.prestamp_late_files(tmp_path, ctx=None)
+    assert "conftest.py" not in changed
+    assert (tmp_path / "conftest.py").read_text(encoding="utf-8") == "# already here\n"

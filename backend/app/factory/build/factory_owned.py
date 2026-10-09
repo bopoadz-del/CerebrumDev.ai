@@ -47,7 +47,7 @@ def factory_owned_paths() -> Tuple[str, ...]:
     return tuple(sorted({*owned_paths(), PROVENANCE_REL, STORE_GATE_PATH}))
 
 
-def prestamp(root: Path | str, blueprint: Any = None) -> List[str]:
+def prestamp(root: Path | str, blueprint: Any = None, ctx: Any = None) -> List[str]:
     """Render, before a writer pass, every Factory-owned file the Factory can
     render without the writer's output; returns what changed.
 
@@ -58,7 +58,10 @@ def prestamp(root: Path | str, blueprint: Any = None) -> List[str]:
     authoring Factory files. Present from the start, they are the Factory's
     to keep and the writer's to leave alone -- touching one is still a
     violation. What only TESTER can render (its bootstrap and suites) and
-    what is carried from cerebrum-builds stays as it is."""
+    what is carried from cerebrum-builds stays as it is.
+
+    Cycle 7: TESTER's bootstrap and the provenance record are rendered here
+    too (``prestamp_late_files``); their final versions still come later."""
     from app.factory.build.deploy import stamp_factory_deploy_modules
     from app.factory.build.factory_refresh import product_display_name, refresh_factory_files
     from app.factory.build.stamp_registry import _as_workspace
@@ -70,6 +73,41 @@ def prestamp(root: Path | str, blueprint: Any = None) -> List[str]:
     for rel in stamp_factory_deploy_modules(_as_workspace(base)):
         if rel not in changed:
             changed.append(rel)
+    for rel in prestamp_late_files(base, ctx):
+        if rel not in changed:
+            changed.append(rel)
+    return changed
+
+
+def prestamp_late_files(root: Path | str, ctx: Any = None) -> List[str]:
+    """The owned files the Factory otherwise renders only AFTER the writer:
+    TESTER's rootdir test bootstrap (a fixed template) and the provenance
+    record (converge; ``ctx`` gives its inputs). Written only when absent --
+    TESTER and converge still render their final versions later.
+
+    Live cycle 7 (a3e1fd7): smoke A, fintech and vineyard writers found
+    conftest.py and docs/provenance/provenance.json absent, created them for
+    their own self-check, were restored and sent back, created them again,
+    and stopped on the WRITER gate budget."""
+    from app.factory.build.roles_constants import CONFTEST_REL
+
+    base = Path(root)
+    changed: List[str] = []
+    bootstrap = base / CONFTEST_REL
+    if not bootstrap.exists():
+        from app.factory.build.roles_handlers import _CONFTEST
+
+        bootstrap.write_text(_CONFTEST, encoding="utf-8")
+        changed.append(CONFTEST_REL)
+    prov_path = base / PROVENANCE_REL
+    if ctx is not None and not prov_path.exists():
+        from app.factory.build.converge import factory_provenance_text, provenance_record
+
+        record = provenance_record(ctx)
+        if record:
+            prov_path.parent.mkdir(parents=True, exist_ok=True)
+            prov_path.write_text(factory_provenance_text(None, record), encoding="utf-8")
+            changed.append(PROVENANCE_REL)
     return changed
 
 

@@ -3974,7 +3974,7 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
         # them for a complete product (live cycle 5). Rendered, they are the
         # Factory's to keep and the writer's to leave alone.
         try:
-            prestamped = factory_owned.prestamp(Path(dest), ctx.blueprint)
+            prestamped = factory_owned.prestamp(Path(dest), ctx.blueprint, ctx)
         except Exception as exc:  # noqa: BLE001 -- recorded; the gates still judge
             ctx.note(
                 f"factory files not stamped before the writer: {type(exc).__name__}: {exc}",
