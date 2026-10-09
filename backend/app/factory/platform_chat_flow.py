@@ -1916,6 +1916,36 @@ def _adopt_green_build(
         return None
 
 
+def record_withdrawn_certification(
+    state: Any, output_root: Optional[Path] = None
+) -> Optional[str]:
+    """When the Store gate has withdrawn the certification of this session's
+    succeeded run, record it on the ledger (n3_store_gate.
+    record_certification_withdrawn) and return why; otherwise None.
+
+    Read from the same store-gate commit status the build was certified by;
+    no builds token or no answer from GitHub is no verdict, so nothing is
+    recorded. Never raises into the Floor."""
+    out = _generation_output_dir(state, output_root)
+    if not out:
+        return None
+    try:
+        if not _ledger_for(out).succeeded():
+            return None
+        from app.factory.build.n3_store_gate import (
+            certification_withdrawn,
+            record_certification_withdrawn,
+        )
+
+        reason = certification_withdrawn(out)
+        if reason and record_certification_withdrawn(out, reason):
+            logger.warning("certification withdrawn for %s: %s", out, reason)
+            return reason
+    except Exception:  # noqa: BLE001 -- an unreadable verdict changes nothing
+        logger.warning("withdrawn-certification check failed for %s", out, exc_info=True)
+    return None
+
+
 def start_or_resume_coder(
     state: Any,
     output_root: Optional[Path] = None,

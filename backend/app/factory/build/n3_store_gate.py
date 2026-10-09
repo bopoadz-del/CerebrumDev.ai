@@ -678,6 +678,51 @@ def certification_withdrawn(
     )
 
 
+#: The Store gate withdrew a certification it had given (a later run on the
+#: same branch, or cerebrum-builds revoked_certifications.json).
+N3_CERTIFICATION_WITHDRAWN = "N3_CERTIFICATION_WITHDRAWN"
+
+
+def record_certification_withdrawn(output_dir: Path | str, reason: str) -> bool:
+    """Put a withdrawn certification on the build's ledger as what it is: the
+    Store gate's verdict, now failed.
+
+    A succeeded run whose certification the gate later withdrew used to stay
+    "succeeded" -- the export refused it, while Continue answered "already
+    complete", so the platform could never be re-gated or reworked (live: the
+    cycle-2 smoke B build, revoked by builds#41). Recorded, the Store phase is
+    no longer passed and the run is a failed platform: Continue resumes it at
+    the Store gate with a fresh rework budget, and a product-owned failure
+    there sends the writer back by the runner's one rule.
+
+    Only a SUCCEEDED run is touched, once. Returns whether it recorded."""
+    from app.factory.build.authority import BuildRole
+
+    root = Path(output_dir)
+    ledger = _ledger(root)
+    if not ledger.exists() or not ledger.succeeded():
+        return False
+    detail = f"{N3_CERTIFICATION_WITHDRAWN}: {reason}"
+    ledger.append(
+        EventKind.GATE_FAILED,
+        role=BuildRole.STORE_MANAGER,
+        detail=detail,
+        payload={"honesty": N3_CERTIFICATION_WITHDRAWN, "check": STORE_GATE_CONTEXT},
+    )
+    ledger.append(
+        EventKind.RUN_FAILED,
+        role=BuildRole.STORE_MANAGER,
+        detail=detail,
+        payload={
+            "outcome": "FAILED_GATE",
+            "honesty": N3_CERTIFICATION_WITHDRAWN,
+            "pilot_ready": False,
+            "green": False,
+        },
+    )
+    return True
+
+
 def snapshot_from_status(
     target: BuildsTarget,
     state: str,

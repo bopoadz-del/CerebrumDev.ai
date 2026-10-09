@@ -43,6 +43,8 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from app.factory.build.deploy_time_settings import SNIPPET as _DEPLOY_TIME_SNIPPET
+
 DOCKERFILE = "Dockerfile"
 DOCKERIGNORE = ".dockerignore"
 LOCKFILE = "blocks.lock.json"
@@ -60,7 +62,20 @@ _OS_STARTUP_VARS = ("PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP"
 #: imported (``ModuleNotFoundError.name``), and each failure's traceback, whose
 #: file paths are compared with the emulated image -- never error wording.
 PROBE_RESULT = "IMAGE_PROBE "
-_PROBE = f"""
+
+#: The environment the Store gate runs the image with (cerebrum-builds
+#: store-gate.yml ``docker run -e``). The probe boots the image the way the
+#: gate does: a product that correctly refuses to start without its deploy
+#: token is not an image that cannot load the app (live cycle 4 fintech:
+#: "ConfigError: PLATFORM_TOKEN is required" judged as a missing image path).
+GATE_RUN_ENV = {"PLATFORM_TOKEN": "dev-local-token"}
+
+# Settings the operator supplies at deploy time are stood in for exactly as
+# the Factory's harness and acceptance script do (deploy_time_settings, one
+# source) -- BEFORE the audit hook, so the stand-in parsing app/*.py is never
+# mistaken for the loader opening a block.
+_PROBE = _DEPLOY_TIME_SNIPPET + f"""
+_stand_in_for_deploy_time_settings(".")
 import importlib, json, sys, traceback
 result = {{"modules": [], "traces": [], "loaded": 0, "opened": {{}}}}
 _opened = []
@@ -368,6 +383,7 @@ def _missing_paths(result: dict, image: Path, root: Path) -> Tuple[List[str], bo
 
 def _probe_env(cwd: Path) -> dict:
     env = {k: os.environ[k] for k in _OS_STARTUP_VARS if os.environ.get(k)}
+    env.update(GATE_RUN_ENV)
     env.update({"PYTHONPATH": str(cwd), "PYTHONDONTWRITEBYTECODE": "1"})
     return env
 

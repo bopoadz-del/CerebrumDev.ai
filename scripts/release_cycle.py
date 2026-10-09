@@ -170,6 +170,14 @@ def rotation_seed(config: Mapping[str, Any]) -> Dict[str, list]:
         if not isinstance(values, list) or not all(isinstance(v, str) and v for v in values):
             raise CycleError(f"rotation.seed.{field} must be a list of blueprint ids")
         out[field] = list(values)
+    void = seed.get("void") or []
+    if not isinstance(void, list) or not all(
+        isinstance(v, Mapping) and isinstance(v.get("commit"), str) and len(v["commit"]) == 40
+        and str(v.get("reason") or "").strip()
+        for v in void
+    ):
+        raise CycleError("rotation.seed.void must list {commit: <full sha>, reason: <why>} records")
+    out["void"] = [str(v["commit"]) for v in void]
     return out
 
 
@@ -189,6 +197,10 @@ def rotation_state(reports: Iterable[Any], seed: Mapping[str, Any]) -> Dict[str,
     A report that is there but unreadable fails closed; so does a history
     that cannot be read (the iterator raises)."""
     certified = set(seed.get("certified") or [])
+    # A cycle VOIDED by a Factory defect (rotation.seed.void, data) never
+    # judged its picks: they do not count as tried or failing. A pick it did
+    # certify still stands -- a certification is a fact about the export.
+    void = set(seed.get("void") or [])
     tried_newest_first: list = []
     failing: list = []
     cycles = 0
@@ -207,10 +219,13 @@ def rotation_state(reports: Iterable[Any], seed: Mapping[str, Any]) -> Dict[str,
             raise CycleError(f"a previous cycle report names no picks: {rotation!r}")
         cycles += 1
         runs = report.get("runs") if isinstance(report.get("runs"), Mapping) else {}
+        voided = str(report.get("commit") or "") in void
         for name in picks:
             run = runs.get(name)
             if isinstance(run, Mapping) and _repro_passed(run):
                 certified.add(name)
+            elif voided:
+                continue
             elif name not in failing:
                 failing.append(name)
             if name not in tried_newest_first:
