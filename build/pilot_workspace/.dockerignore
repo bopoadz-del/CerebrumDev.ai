@@ -1,6 +1,0 @@
-__pycache__/
-*.py[cod]
-.pytest_cache/
-data/
-.env
-build_ledger.jsonl
