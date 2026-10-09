@@ -253,6 +253,9 @@ def test_export_check_on_an_uncertified_platform_says_why(ops, tmp_path, monkeyp
         "password=hunter2hunter2",
         "postgres://user:pa55word@db.internal/x",
     ],
+    # Plain ids: pytest caches node ids (.pytest_cache), and an id that IS a
+    # secret shape would trip the repo's own secret scan on that cache.
+    ids=["bearer", "sk_key", "github_token", "aws_key_id", "password", "url_userinfo"],
 )
 def test_secret_shapes_are_redacted(ops, text):
     assert "[redacted]" in ops.redact(text)
