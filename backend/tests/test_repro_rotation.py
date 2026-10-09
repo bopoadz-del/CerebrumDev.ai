@@ -291,6 +291,33 @@ def test_cycle_five_is_fintech_repeat_and_motor_insurance_fresh(cycle, pool):
     assert _ids(cycle.select_rotation(pool, state, picks=2)) == [fintech, motor]
 
 
+
+def test_cycle_seven_reruns_the_voided_cycle_six_picks(cycle, pool):
+    """Cycle 6 (75a5a1ef) is voided by the committed seed: the server stopped
+    mid-cycle and orphaned every writer. Fintech is still failing from cycle
+    5 (repeat); clinic was never judged, so it re-enters fresh. Motor
+    insurance, certified in cycle 5, never comes back."""
+    config = cycle.load_config(CONFIG_PATH)
+    ids = {bp["id"]: bp["id"] for bp in pool}
+    fintech, motor, clinic, fleet = (
+        ids["repro_fintech_payments_ledger"],
+        ids["repro_motor_insurance_claims"],
+        ids["repro_clinic_appointment_scheduling"],
+        ids["repro_fleet_delivery_logistics"],
+    )
+    cycle6 = _report_on("75a5a1ef82d459be81283679723d9e6f8cd2e0e4", {fintech: False, clinic: False})
+    cycle5 = _report_on("d024b231b23fc29e942c3c11408c7c5f2eca14b5", {fintech: False, motor: True})
+    cycle4 = _report_on("55d91d62cdf424440e88343fa66dd10f8932830a", {fintech: False, fleet: False})
+    cycle3 = _report_on("5410237b7cc04ef994b13723a4626ecb97366ff7", {fintech: False, motor: False})
+    history = [cycle6, cycle5, cycle4, cycle3]
+    # What cycle 6 itself ran (the live record: fintech repeat, clinic fresh).
+    before = cycle.rotation_state(history[1:], cycle.rotation_seed(config))
+    assert _ids(cycle.select_rotation(pool, before, picks=2)) == [fintech, clinic]
+    state = cycle.rotation_state(history, cycle.rotation_seed(config))
+    assert motor in state["certified"]
+    assert clinic not in state["failing"]
+    assert _ids(cycle.select_rotation(pool, state, picks=2)) == [fintech, clinic]
+
 def test_a_pick_listed_without_a_run_counts_as_not_certified(cycle, pool):
     a, b, c = pool[0]["id"], pool[1]["id"], pool[2]["id"]
     report = {"verdict": "fail", "rotation": {"picks": [a, b]}, "runs": {b: _run(True)}}

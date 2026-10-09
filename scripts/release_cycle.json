@@ -26,6 +26,10 @@
         {
           "commit": "5410237b7cc04ef994b13723a4626ecb97366ff7",
           "reason": "Cycle 3 (run 37806645155) failed on a Factory defect, not on its builds: the build refresh skipped absent Factory-owned files, so ci.yml never rendered (fixed in #713). Its picks were never judged and re-enter the rotation."
+        },
+        {
+          "commit": "75a5a1ef82d459be81283679723d9e6f8cd2e0e4",
+          "reason": "Cycle 6 (run 37972176731) failed on a Factory defect, not on its builds: at 18:57:52Z the server obeyed an exit signal sent from inside the container while WRITERs ran, and every in-flight writer was orphaned mid-rework (service-events ops run 37985812586; fixed by the exit-signal guard). Its picks were never judged and re-enter the rotation."
         }
       ]
     }
