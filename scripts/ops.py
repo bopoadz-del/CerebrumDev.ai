@@ -589,13 +589,131 @@ def write_outputs(out_dir: Path, name: str, record: Any, summary: str) -> None:
     print(summary)
 
 
+# Log lines that mark a process starting, stopping or dying -- general to any
+# uvicorn/Python service, nothing about one product.
+LIFECYCLE_TERMS = (
+    "Started server process", "Shutting down", "Finished server process",
+    "Killed", "MemoryError", "Traceback", "SIGTERM", "orphan",
+)
+
+
+def _aws_runner():
+    import subprocess
+
+    return subprocess.run
+
+
+def service_events(*, since_s: float, run: Callable[..., Any] = None) -> Dict[str, Any]:
+    """Why the backend service restarted, from ECS and CloudWatch (deploy
+    credentials): the service's own events, its stopped tasks with their stop
+    reason and exit codes, the memory/CPU maxima, and the lifecycle log lines --
+    all inside the last ``since_s`` seconds. Raises OpsError with the reason
+    when it cannot read them; never answers with silence."""
+    import datetime as _dt
+
+    run = run or _aws_runner()
+    cluster = os.environ.get("ECS_CLUSTER", "")
+    service = os.environ.get("ECS_SERVICE", "")
+    if not (cluster and service and os.environ.get("AWS_ACCESS_KEY_ID")):
+        raise OpsError("no ECS_CLUSTER/ECS_SERVICE or AWS credentials in this job")
+
+    def aws(*argv: str) -> Any:
+        proc = run(["aws", *argv, "--output", "json"], capture_output=True, text=True, timeout=120)
+        if proc.returncode != 0:
+            raise OpsError(f"aws {argv[0]} {argv[1]}: {redact(proc.stderr.strip())[:300]}")
+        return json.loads(proc.stdout or "null") or {}
+
+    now = time.time()
+    start = now - float(since_s)
+
+    def _epoch(value: Any) -> float:
+        if isinstance(value, (int, float)):
+            return float(value)
+        try:
+            return _dt.datetime.fromisoformat(str(value)).timestamp()
+        except ValueError:
+            return 0.0
+
+    svc = (aws("ecs", "describe-services", "--cluster", cluster, "--services", service).get("services") or [{}])[0]
+    events = [
+        {"at": e.get("createdAt"), "message": redact(str(e.get("message", "")))}
+        for e in svc.get("events") or []
+        if _epoch(e.get("createdAt")) >= start
+    ]
+    arns = aws("ecs", "list-tasks", "--cluster", cluster, "--service-name", service,
+               "--desired-status", "STOPPED").get("taskArns") or []
+    stopped: List[Dict[str, Any]] = []
+    if arns:
+        for task in aws("ecs", "describe-tasks", "--cluster", cluster, "--tasks", *arns[:100]).get("tasks") or []:
+            stopped.append({
+                "task": task.get("taskArn"),
+                "startedAt": task.get("startedAt"),
+                "stoppedAt": task.get("stoppedAt"),
+                "stopCode": task.get("stopCode"),
+                "stoppedReason": redact(str(task.get("stoppedReason", ""))),
+                "containers": [
+                    {"name": c.get("name"), "exitCode": c.get("exitCode"), "reason": redact(str(c.get("reason", "")))}
+                    for c in task.get("containers") or []
+                ],
+            })
+    def iso(t: float) -> str:
+        return _dt.datetime.fromtimestamp(t, _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    metrics: Dict[str, Any] = {}
+    for name in ("MemoryUtilization", "CPUUtilization"):
+        points = aws(
+            "cloudwatch", "get-metric-statistics", "--namespace", "AWS/ECS", "--metric-name", name,
+            "--dimensions", f"Name=ClusterName,Value={cluster}", f"Name=ServiceName,Value={service}",
+            "--start-time", iso(start), "--end-time", iso(now), "--period", "60", "--statistics", "Maximum",
+        ).get("Datapoints") or []
+        top = max(points, key=lambda p: p.get("Maximum") or 0, default={})
+        metrics[name] = {"max": top.get("Maximum"), "at": top.get("Timestamp"), "points": len(points)}
+    td = aws("ecs", "describe-task-definition", "--task-definition", svc.get("taskDefinition", "")).get("taskDefinition") or {}
+    group = ""
+    for container in td.get("containerDefinitions") or []:
+        conf = container.get("logConfiguration") or {}
+        if conf.get("logDriver") == "awslogs":
+            group = (conf.get("options") or {}).get("awslogs-group", "")
+            break
+    lines: List[str] = []
+    if group:
+        for term in LIFECYCLE_TERMS:
+            got = aws("logs", "filter-log-events", "--log-group-name", group,
+                      "--filter-pattern", json.dumps(term), "--start-time", str(int(start * 1000)),
+                      "--max-items", "200")
+            for event in got.get("events") or []:
+                lines.append(redact(f"{event.get('timestamp')} {str(event.get('message', '')).rstrip()}"))
+    return {
+        "ok": True, "since_s": since_s, "task_definition": svc.get("taskDefinition"),
+        "events": events, "stopped_tasks": stopped, "metrics": metrics,
+        "log_group": group, "lifecycle_log": sorted(set(lines))[-400:],
+    }
+
+
+def service_events_summary(record: Mapping[str, Any]) -> str:
+    lines = [f"### Service events (last {int(record.get('since_s') or 0)} s)", "",
+             f"- task definition `{record.get('task_definition')}`"]
+    for name, m in (record.get("metrics") or {}).items():
+        lines.append(f"- {name} max **{m.get('max')}** at {m.get('at')} ({m.get('points')} points)")
+    lines += ["", "Stopped tasks:", ""]
+    for t in record.get("stopped_tasks") or []:
+        exits = ", ".join(f"{c.get('name')} exit {c.get('exitCode')} {c.get('reason')}" for c in t.get("containers") or [])
+        lines.append(f"- {t.get('stoppedAt')} `{t.get('stopCode')}` {t.get('stoppedReason')} ({exits})")
+    lines += ["", "ECS events:", ""]
+    lines += [f"- {e.get('at')} {e.get('message')}" for e in record.get("events") or []]
+    lines += ["", "Lifecycle log:", "", "```"]
+    lines += [str(line)[:300] for line in (record.get("lifecycle_log") or [])[-80:]]
+    lines += ["```"]
+    return "\n".join(lines) + "\n"
+
+
 def _safe_name(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", text)[:80] or "target"
 
 
 def main(argv: Optional[Sequence[str]] = None, *, req: Req = http_req) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("job", choices=["ledger-dump", "gate-dispatch", "export-check"])
+    ap.add_argument("job", choices=["ledger-dump", "gate-dispatch", "export-check", "service-events"])
     ap.add_argument("--target", default="", help="session id, or an identifier its record carries")
     ap.add_argument("--branch", default="", help="gate-dispatch: the cerebrum-builds branch to gate")
     ap.add_argument("--repros", default="", help="a cycle's repros.json; --target may then be a run name")
@@ -615,6 +733,12 @@ def main(argv: Optional[Sequence[str]] = None, *, req: Req = http_req) -> int:
             run = runs.get(target) if isinstance(runs, Mapping) else None
             if isinstance(run, Mapping) and run.get("session_id"):
                 target = str(run["session_id"])
+        if args.job == "service-events":
+            # Never touches the API: it may be the thing that is down.
+            record = service_events(since_s=float(os.environ.get("OPS_EVENTS_SINCE_S") or 6 * 3600),
+                                    run=_aws_runner())
+            write_outputs(out_dir, "service_events", record, service_events_summary(record))
+            return 0
         if args.job == "gate-dispatch" and not (args.branch or target):
             raise OpsError("gate-dispatch needs --branch, --target, or both")
         gate_record: Optional[Dict[str, Any]] = None
