@@ -51,9 +51,11 @@ on:
   push:
     branches: ["ops-run/**"]
 
-# One ops job at a time: two Continues on one session would race.
+# One ops job at a time PER TARGET: two Continues on one session would race.
+# A single shared group made GitHub drop every pending run but the newest
+# (three ledger-dumps dispatched together: one ran, one was cancelled).
 concurrency:
-  group: ops
+  group: ops-${{ inputs.target || inputs.branch || github.ref }}
   cancel-in-progress: false
 
 jobs:

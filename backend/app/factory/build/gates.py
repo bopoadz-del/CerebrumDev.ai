@@ -938,7 +938,7 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
                 + " -- Factory-owned, restored to the Factory's version"
             ),
             findings=factory_owned.rework_findings(touched),
-            payload={"touched": touched},
+            payload={"touched": touched, "finding_shape": factory_owned.finding_shape(touched)},
         )
 
     agent_written = agent_written_handler_ids_in_workspace(ctx.workspace)

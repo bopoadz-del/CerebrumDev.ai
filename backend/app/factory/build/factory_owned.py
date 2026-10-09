@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 #: The product's provenance record (cerebrum_product_kernel.provenance; written
 #: by converge.converge_writer_emitters). Factory-only by construction.
@@ -45,6 +45,40 @@ def factory_owned_paths() -> Tuple[str, ...]:
     from app.factory.build.stamp_registry import owned_paths
 
     return tuple(sorted({*owned_paths(), PROVENANCE_REL, STORE_GATE_PATH}))
+
+
+def prestamp(root: Path | str, blueprint: Any = None) -> List[str]:
+    """Render, before a writer pass, every Factory-owned file the Factory can
+    render without the writer's output; returns what changed.
+
+    Live (cycle 5, d024b231): the deploy modules were stamped after the pass
+    and the refresh set before TESTER, so a writer pass found ci.yml,
+    app/health.py, app/observe.py, app/revision.py and constraints.txt
+    absent, created them for a complete product, and was stopped for
+    authoring Factory files. Present from the start, they are the Factory's
+    to keep and the writer's to leave alone -- touching one is still a
+    violation. What only TESTER can render (its bootstrap and suites) and
+    what is carried from cerebrum-builds stays as it is."""
+    from app.factory.build.deploy import stamp_factory_deploy_modules
+    from app.factory.build.factory_refresh import product_display_name, refresh_factory_files
+    from app.factory.build.stamp_registry import _as_workspace
+
+    base = Path(root)
+    changed = list(
+        refresh_factory_files(base, product_display_name(blueprint), blueprint, render_absent=True)
+    )
+    for rel in stamp_factory_deploy_modules(_as_workspace(base)):
+        if rel not in changed:
+            changed.append(rel)
+    return changed
+
+
+def finding_shape(touched: Iterable[Mapping[str, str]]) -> str:
+    """The failure's shape for the same-failure-twice rule: WHICH files were
+    touched and HOW. Touching other files is a different failure, with its own
+    rework round; the same files touched the same way again is the same one."""
+    rows = sorted(f"{row['path']}:{row.get('change', MODIFIED)}" for row in touched)
+    return "writer_authored_factory_file:" + ",".join(rows)
 
 
 def snapshot(root: Path | str, paths: Optional[Iterable[str]] = None) -> Dict[str, Optional[bytes]]:
