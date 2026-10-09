@@ -198,6 +198,15 @@ async def _lifespan(app: FastAPI):
     # disks and a disk belongs to exactly one service, so this process is the
     # only one that can read /app/storage at all. See core/backup_scheduler.py.
     app.state.backup_task = backup_scheduler.start()
+    # uvicorn has installed its exit handlers by now (capture_signals wraps
+    # the whole serve); while a coding agent runs, an exit signal is refused
+    # (agent_process: the 2026-10-09 restart).
+    try:
+        from app.factory.build.agent_process import guard_exit_signals
+
+        guard_exit_signals()
+    except Exception:  # noqa: BLE001 -- boot must not die on the guard
+        logging.getLogger("cerebrumdev.factory.agent_process").exception("exit-signal guard not installed")
     try:
         from app.factory.build.orphan_recovery import recover_orphaned_model_calls
 

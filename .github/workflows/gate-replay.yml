@@ -16,6 +16,13 @@
 name: Gate replay
 
 on:
+  # On demand for a named commit: a PR that touches no gate module gets no
+  # automatic replay, and the merge rule still asks for one.
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "The commit whose gate is replayed on the newest certified builds"
+        required: true
   pull_request:
     paths:
       - ".github/workflows/gate-replay.yml"
@@ -80,4 +87,6 @@ jobs:
         env:
           CEREBRUM_BUILDS_GITHUB_TOKEN: ${{ secrets.CROSS_REPO_PAT }}
           PYTHONPATH: .
-        run: python -m app.factory.build.gate_replay dispatch "${{ github.event.pull_request.head.sha }}"
+          # Through the environment, never interpolated into the script.
+          REPLAY_SHA: ${{ inputs.sha || github.event.pull_request.head.sha }}
+        run: python -m app.factory.build.gate_replay dispatch "$REPLAY_SHA"

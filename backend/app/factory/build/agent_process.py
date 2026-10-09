@@ -25,7 +25,8 @@ import signal
 import subprocess
 import sys
 import threading
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Callable, Dict, List, Optional
 
 #: Popen keyword that puts the child in a new session (POSIX setsid): its own
 #: process group, no controlling terminal shared with the server.
@@ -90,6 +91,12 @@ def terminate_agent_tree(proc: Any) -> None:
 
 _LIVE_LOCK = threading.Lock()
 _LIVE: Dict[int, Any] = {}
+#: id(proc) -> monotonic time its exit was noticed (exit-signal guard grace).
+_RECENT_EXITS: Dict[int, float] = {}
+
+
+def _monotonic() -> float:
+    return time.monotonic()
 
 
 def track_agent(proc: Any) -> Any:
@@ -105,6 +112,7 @@ def track_agent(proc: Any) -> Any:
 
 
 def _prune_locked() -> None:
+    now = _monotonic()
     for key, proc in list(_LIVE.items()):
         try:
             done = proc.poll() is not None
@@ -112,6 +120,10 @@ def _prune_locked() -> None:
             done = True
         if done:
             _LIVE.pop(key, None)
+            _RECENT_EXITS[key] = now
+    for key, ended in list(_RECENT_EXITS.items()):
+        if now - ended > EXIT_SIGNAL_GRACE_S:
+            _RECENT_EXITS.pop(key, None)
 
 
 def _session_of(pid: Any) -> Optional[int]:
@@ -135,6 +147,82 @@ def live_agent_sessions() -> List[int]:
         if sid is not None:
             sessions.append(sid)
     return sessions
+
+
+# --- exit signals while an agent runs ----------------------------------------
+#
+# Live 2026-10-09 18:57:52 UTC (cycle 6): with every agent already in its own
+# session, the server still logged a clean ``Shutting down`` in the second a
+# WRITER CLI exited, and ECS stopped nothing (it deregistered the target 30 s
+# later). A signal aimed at the server by name or pid -- ``pkill -f "uvicorn
+# app.main"`` stopping a probe server matches the Factory server too -- does
+# not need a shared group. uvicorn runs as PID 1, so the kernel already drops
+# SIGKILL sent from inside the container; SIGTERM/SIGINT reach it only through
+# the handlers uvicorn installs. Those handlers are wrapped: while an agent is
+# live, or ended within EXIT_SIGNAL_GRACE_S (its last command can land after
+# its exit is noticed), the signal is refused and counted. An ECS stop is then
+# completed by ECS's SIGKILL after stopTimeout -- those builds were dying
+# either way -- and with no agent running the server stops exactly as before.
+
+GUARDED_SIGNALS = tuple(getattr(signal, n) for n in ("SIGTERM", "SIGINT") if hasattr(signal, n))
+EXIT_SIGNAL_GRACE_S = 30.0
+_EXIT_STATS: Dict[str, Any] = {"refused": 0, "last_refused_signal": None}
+
+
+def reset_exit_signal_stats() -> None:
+    _EXIT_STATS.update(refused=0, last_refused_signal=None)
+
+
+def _agents_hot() -> bool:
+    with _LIVE_LOCK:
+        _prune_locked()
+        return bool(_LIVE) or bool(_RECENT_EXITS)
+
+
+class _ExitSignalGuard:
+    """A signal handler that defers to the wrapped one unless an agent is hot."""
+
+    def __init__(self, inner: Callable[..., Any]):
+        self.inner = inner
+
+    def __call__(self, sig: int, frame: Any) -> Any:
+        if _agents_hot():
+            _EXIT_STATS["refused"] = int(_EXIT_STATS["refused"]) + 1
+            _EXIT_STATS["last_refused_signal"] = int(sig)
+            try:
+                os.write(2, (
+                    f"exit-signal guard: refused signal {int(sig)} while a coding agent runs "
+                    f"(refused so far: {_EXIT_STATS['refused']})\n"
+                ).encode())
+            except OSError:
+                pass
+            return None
+        return self.inner(sig, frame)
+
+
+def guard_exit_signals() -> bool:
+    """Wrap the installed SIGTERM/SIGINT handlers (main thread only). True when
+    every guarded signal with a Python handler now carries the guard."""
+    if threading.current_thread() is not threading.main_thread():
+        return False
+    guarded = False
+    for sig in GUARDED_SIGNALS:
+        current = signal.getsignal(sig)
+        if isinstance(current, _ExitSignalGuard):
+            guarded = True
+            continue
+        if not callable(current) or current in (signal.SIG_DFL, signal.SIG_IGN):
+            continue
+        signal.signal(sig, _ExitSignalGuard(current))
+        guarded = True
+    return guarded
+
+
+def exit_signal_stats() -> Dict[str, Any]:
+    """Is the guard installed on every handled exit signal; how often it refused."""
+    handlers = [signal.getsignal(sig) for sig in GUARDED_SIGNALS]
+    guarded = bool(handlers) and all(isinstance(h, _ExitSignalGuard) for h in handlers)
+    return {"guarded": guarded, **_EXIT_STATS}
 
 
 # --- the group-kill probe -----------------------------------------------------
@@ -209,6 +297,7 @@ def process_isolation_report() -> Dict[str, Any]:
         and (server_sid is not None or not posix)
         and (contained is True or not posix)
     )
+    stats = exit_signal_stats()
     return {
         "posix": posix,
         "spawn_isolated": spawn_isolated,
@@ -216,4 +305,8 @@ def process_isolation_report() -> Dict[str, Any]:
         "agents_in_server_session": shared,
         "group_kill_contained": contained,
         "isolated": isolated,
+        # Whether an exit signal sent while an agent runs is refused (the
+        # 2026-10-09 restart), and how many it refused since boot.
+        "exit_signals_guarded": stats["guarded"],
+        "exit_signals_refused": int(stats["refused"]),
     }

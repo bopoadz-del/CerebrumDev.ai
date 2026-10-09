@@ -434,6 +434,17 @@ class ProcessIsolationWatch:
             f"probes={len(contained)} contained={contained.count(True)} "
             f"not_contained={contained.count(False)} unjudged={contained.count(None)}",
         )
+        # 2026-10-09: with every agent in its own session the server still
+        # stopped on a signal aimed at it by name or pid while a WRITER ran.
+        # While an agent runs, the server refuses exit signals; a POSIX server
+        # without that guard reads DEAD here.
+        guarded = [b.get("exit_signals_guarded") for b in posix]
+        refused = max((int(b.get("exit_signals_refused") or 0) for b in posix), default=0)
+        check(
+            "server refuses exit signals while an agent runs",
+            all(g is True for g in guarded),
+            f"samples={len(guarded)} guarded={guarded.count(True)} refused_since_boot={refused}",
+        )
 
 
 class BuildDeadline:

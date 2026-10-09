@@ -149,12 +149,24 @@ def test_the_replay_is_one_named_check_that_dispatches_with_the_pr_head():
     assert job["name"] == "gate replay (certified builds)"
     runs = " ".join(str(step.get("run") or "") for step in job["steps"])
     assert "gate_replay dispatch" in runs
-    assert "github.event.pull_request.head.sha" in runs
     env = {k: v for step in job["steps"] for k, v in (step.get("env") or {}).items()}
+    assert "github.event.pull_request.head.sha" in str(env.get("REPLAY_SHA"))
+    assert "${{" not in runs  # inputs reach the script through env only
     from app.factory.build.builds_push import BUILDS_TOKEN_ENV
 
     assert BUILDS_TOKEN_ENV in env
 
+
+
+def test_the_replay_also_runs_on_demand_for_a_named_commit():
+    """A PR that touches no gate module gets no automatic replay; the merge
+    rule still asks for one. workflow_dispatch takes the commit as data."""
+    on = _workflow()["on"]
+    inputs = on["workflow_dispatch"]["inputs"]
+    assert inputs["sha"]["required"] is True
+    job = next(iter(_workflow()["jobs"].values()))
+    env = {k: v for step in job["steps"] for k, v in (step.get("env") or {}).items()}
+    assert "inputs.sha" in str(env.get("REPLAY_SHA"))
 
 # -- render ---------------------------------------------------------------------
 

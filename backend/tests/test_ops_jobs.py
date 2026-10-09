@@ -111,7 +111,7 @@ def test_unreachable_api_fails_closed_with_the_reason(ops, tmp_path):
 
 
 @pytest.mark.parametrize("job", ["ledger-dump", "gate-dispatch", "export-check"])
-def test_every_job_fails_closed_when_the_api_is_unreachable(ops, tmp_path, job):
+def test_every_api_job_fails_closed_when_the_api_is_unreachable(ops, tmp_path, job):
     rc = ops.main([job, "--target", "sess_x", "--out", str(tmp_path)], req=FakeApi({0: {}}, health=0))
     assert rc == 2
     assert "API unreachable" in _error(tmp_path, job)
@@ -266,10 +266,122 @@ def test_the_workflow_takes_its_targets_as_inputs():
     on = wf.get(True) or wf.get("on")
     inputs = on["workflow_dispatch"]["inputs"]
     assert set(inputs) == {"action", "target", "branch", "run_id", "sha"}
-    assert inputs["action"]["options"] == ["ledger-dump", "gate-dispatch", "export-check"]
+    assert inputs["action"]["options"] == ["ledger-dump", "gate-dispatch", "export-check", "service-events"]
     assert on["push"]["branches"] == ["ops-run/**"]
     steps = wf["jobs"]["ops"]["steps"]
     run = next(s for s in steps if s.get("name") == "Run")
     assert run["env"]["SMOKE_GATE_TOKEN"] == "${{ secrets.SMOKE_GATE_TOKEN }}"
     committed = next(s for s in steps if s.get("name") == "Commit the answer to ops-results")
     assert committed["if"] == "always()"
+
+
+# -- service-events: why the backend restarted --------------------------------
+#
+# Live (cycle 6, 75a5a1ef): the service restarted mid-cycle and orphaned every
+# writer; the ledgers say THAT it restarted ("Restored session ... from disk
+# snapshot"), never WHY. The why lives in ECS and CloudWatch, which only the
+# deploy credentials on Actions can read.
+
+
+class FakeAws:
+    """``subprocess.run`` stand-in answering the aws CLI from a table keyed by
+    service + verb. Every argv it saw is kept."""
+
+    def __init__(self, answers, fail=None):
+        self.answers = answers
+        self.fail = fail or {}
+        self.calls = []
+
+    def __call__(self, argv, **_kw):
+        self.calls.append(argv)
+        key = f"{argv[1]} {argv[2]}"
+
+        class Proc:
+            pass
+
+        proc = Proc()
+        if key in self.fail:
+            proc.returncode, proc.stdout, proc.stderr = 255, "", self.fail[key]
+        else:
+            proc.returncode, proc.stdout, proc.stderr = 0, json.dumps(self.answers.get(key, {})), ""
+        return proc
+
+
+def _aws_answers(now_s):
+    iso = lambda dt: __import__("datetime").datetime.fromtimestamp(now_s - dt, __import__("datetime").timezone.utc).isoformat()
+    return {
+        "ecs describe-services": {"services": [{
+            "taskDefinition": "arn:td/zorblat:7",
+            "events": [
+                {"createdAt": iso(600), "message": "(service zorblat) has started 1 tasks: (task t2)."},
+                {"createdAt": iso(660), "message": "(service zorblat) task t1 failed container health checks."},
+                {"createdAt": iso(99999), "message": "(service zorblat) has reached a steady state."},
+            ],
+        }]},
+        "ecs describe-task-definition": {"taskDefinition": {"containerDefinitions": [
+            {"logConfiguration": {"logDriver": "awslogs", "options": {"awslogs-group": "/ecs/zorblat"}}}
+        ]}},
+        "ecs list-tasks": {"taskArns": ["arn:task/t1"]},
+        "ecs describe-tasks": {"tasks": [{
+            "taskArn": "arn:task/t1", "stopCode": "TaskFailedToStart",
+            "stoppedReason": "OutOfMemoryError: Container killed due to memory usage",
+            "stoppedAt": iso(650), "startedAt": iso(5000),
+            "containers": [{"name": "backend", "exitCode": 137, "reason": "OutOfMemoryError"}],
+        }]},
+        "cloudwatch get-metric-statistics": {"Datapoints": [
+            {"Timestamp": iso(700), "Maximum": 99.5}, {"Timestamp": iso(900), "Maximum": 40.0},
+        ]},
+        "logs filter-log-events": {"events": [
+            {"timestamp": 1, "message": "INFO:     Started server process [7]"},
+            {"timestamp": 2, "message": "token=ghp_" + "a" * 36},
+        ]},
+    }
+
+
+def test_service_events_names_why_the_task_stopped(ops, monkeypatch):
+    monkeypatch.setenv("ECS_CLUSTER", "c")
+    monkeypatch.setenv("ECS_SERVICE", "s")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "x")
+    import time as _t
+    fake = FakeAws(_aws_answers(_t.time()))
+    got = ops.service_events(since_s=3600, run=fake)
+    assert got["ok"] is True
+    assert any(e["message"].endswith("failed container health checks.") for e in got["events"])
+    assert all("steady state" not in e["message"] for e in got["events"])  # outside the window
+    (task,) = got["stopped_tasks"]
+    assert task["stoppedReason"].startswith("OutOfMemoryError")
+    assert task["containers"][0]["exitCode"] == 137
+    assert got["metrics"]["MemoryUtilization"]["max"] == 99.5
+    assert any("Started server process" in line for line in got["lifecycle_log"])
+    assert not any("ghp_" in line for line in got["lifecycle_log"])  # redacted
+
+
+def test_service_events_without_credentials_fails_closed(ops, tmp_path):
+    rc = ops.main(["service-events", "--out", str(tmp_path)])
+    assert rc == 2
+    assert "AWS credentials" in _error(tmp_path, "service-events")
+
+
+def test_service_events_reports_the_aws_refusal(ops, tmp_path, monkeypatch):
+    monkeypatch.setenv("ECS_CLUSTER", "c")
+    monkeypatch.setenv("ECS_SERVICE", "s")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "x")
+    fake = FakeAws({}, fail={"ecs describe-services": "AccessDeniedException: not authorized"})
+    monkeypatch.setattr(ops, "_aws_runner", lambda: fake)
+    rc = ops.main(["service-events", "--out", str(tmp_path)])
+    assert rc == 2
+    assert "AccessDeniedException" in _error(tmp_path, "service-events")
+
+
+def test_service_events_needs_no_api(ops, tmp_path, monkeypatch):
+    """The API may be the thing that is down: this job never calls it."""
+    monkeypatch.setenv("ECS_CLUSTER", "c")
+    monkeypatch.setenv("ECS_SERVICE", "s")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "x")
+    import time as _t
+    fake = FakeAws(_aws_answers(_t.time()))
+    monkeypatch.setattr(ops, "_aws_runner", lambda: fake)
+    rc = ops.main(["service-events", "--out", str(tmp_path)], req=FakeApi({0: {}}, health=0))
+    assert rc == 0
+    md = (tmp_path / "service_events.md").read_text()
+    assert "OutOfMemoryError" in md and "137" in md

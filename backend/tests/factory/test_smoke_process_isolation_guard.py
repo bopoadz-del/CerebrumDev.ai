@@ -94,7 +94,7 @@ def test_the_report_carries_no_pid_or_session_id(posix_sessions):
     report = agent_process.process_isolation_report()
     assert set(report) == {
         "posix", "spawn_isolated", "live_agents", "agents_in_server_session",
-        "group_kill_contained", "isolated",
+        "group_kill_contained", "isolated", "exit_signals_guarded", "exit_signals_refused",
     }
     assert SERVER_SID not in report.values() and 104 not in report.values()
 
@@ -273,7 +273,7 @@ def test_the_smoke_without_a_gate_skips_without_failing(monkeypatch, capsys):
 def _posix_sample(contained):
     return (200, {"posix": True, "isolated": contained is True, "live_agents": 0,
                   "agents_in_server_session": 0, "spawn_isolated": True,
-                  "group_kill_contained": contained})
+                  "group_kill_contained": contained, "exit_signals_guarded": True})
 
 
 @pytest.mark.parametrize("contained", [False, None])
@@ -296,3 +296,29 @@ def test_the_smoke_reads_live_when_the_group_kill_is_contained(monkeypatch, caps
     watch.record()
     assert "[LIVE] server survives kill -TERM 0 from an agent shell" in capsys.readouterr().out
     assert smoke.FAILURES == []
+
+
+# --- the exit-signal guard (2026-10-09 restart) ------------------------------
+
+
+@pytest.mark.parametrize("guarded", [False, None])
+def test_the_smoke_reads_dead_when_the_exit_signal_guard_is_missing(monkeypatch, capsys, guarded):
+    smoke = _smoke()
+    sample = _posix_sample(True)
+    sample[1]["exit_signals_guarded"] = guarded
+    _answers(smoke, monkeypatch, [sample])
+    watch = smoke.ProcessIsolationWatch("gate", clock=iter([0]).__next__)
+    watch.sample()
+    watch.record()
+    out = capsys.readouterr().out
+    assert "[DEAD] server refuses exit signals while an agent runs" in out
+    assert smoke.FAILURES == ["server refuses exit signals while an agent runs"]
+
+
+def test_the_smoke_reads_live_when_the_exit_signal_guard_is_installed(monkeypatch, capsys):
+    smoke = _smoke()
+    _answers(smoke, monkeypatch, [_posix_sample(True)])
+    watch = smoke.ProcessIsolationWatch("gate", clock=iter([0]).__next__)
+    watch.sample()
+    watch.record()
+    assert "[LIVE] server refuses exit signals while an agent runs" in capsys.readouterr().out
