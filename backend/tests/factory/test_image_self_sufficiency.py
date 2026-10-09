@@ -178,14 +178,23 @@ def test_the_verdict_never_names_the_scratch_directory(tmp_path, monkeypatch):
 def test_the_probe_env_carries_os_startup_plumbing_and_nothing_else(monkeypatch, tmp_path):
     """Live CI (Windows) 2026-10-08: a probe without SYSTEMROOT cannot start
     the socket layer (WinError 10106) and every app read as broken. The probe
-    gets what an interpreter needs to start -- never the Factory's config."""
+    gets what an interpreter needs to start, plus the environment the Store
+    gate runs the image with -- never the Factory's own config."""
     monkeypatch.setenv("SYSTEMROOT", r"C:\Windows")
     monkeypatch.setenv("FACTORY_SECRET_THING", "do-not-pass")
+    for name in image_sufficiency.GATE_RUN_ENV:
+        monkeypatch.setenv(name, "the-factorys-own-value")
     env = image_sufficiency._probe_env(tmp_path)
     assert env["SYSTEMROOT"] == r"C:\Windows"
     assert env["PYTHONPATH"] == str(tmp_path)
     assert "FACTORY_SECRET_THING" not in env
-    assert set(env) <= set(image_sufficiency._OS_STARTUP_VARS) | {"PYTHONPATH", "PYTHONDONTWRITEBYTECODE"}
+    for name, value in image_sufficiency.GATE_RUN_ENV.items():
+        assert env[name] == value  # the gate's value, never the Factory's
+    assert set(env) <= (
+        set(image_sufficiency._OS_STARTUP_VARS)
+        | set(image_sufficiency.GATE_RUN_ENV)
+        | {"PYTHONPATH", "PYTHONDONTWRITEBYTECODE"}
+    )
 
 
 FALLBACK_DISPATCH = DISPATCH + '''
@@ -252,3 +261,48 @@ def test_the_writer_gate_names_a_block_loaded_outside_its_lock(tmp_path, monkeyp
     assert result.ok is False
     assert result.reason == "locked_block_loaded_elsewhere"
     assert any("vendor/blocks/storage" in f for f in result.findings), result.findings
+
+
+# -- the probe boots the image the way the Store gate runs it -------------------
+#
+# Live (cycle 4 fintech, sess_9d348d067ca84b17, 55d91d62): the writer's app
+# refuses to start without its deploy token -- correct, fail-closed -- and the
+# probe, which ran the image with an empty environment, reported "image cannot
+# load the app: ConfigError: PLATFORM_TOKEN is required". The Store gate runs
+# the same image WITH that token (store-gate.yml docker run), so the probe was
+# judging the build box, not the image.
+
+FAIL_CLOSED_MAIN = '''
+import os
+
+
+class ConfigError(RuntimeError):
+    pass
+
+
+if not os.getenv("PLATFORM_TOKEN"):
+    raise ConfigError("PLATFORM_TOKEN is required: set it in the deploy environment")
+'''
+
+REQUIRED_SETTING_MAIN = '''
+import os
+
+ZORBLAT_CLIENT_ID = os.environ["ZORBLAT_CLIENT_ID"]
+'''
+
+
+def test_the_probe_runs_the_image_with_the_gates_run_environment(tmp_path):
+    verdict = image_sufficiency.check(_product(tmp_path, FULL, main=FAIL_CLOSED_MAIN))
+    assert verdict.ok and verdict.judged, verdict.detail
+
+
+def test_a_setting_the_operator_supplies_at_deploy_time_is_stood_in_for(tmp_path):
+    verdict = image_sufficiency.check(_product(tmp_path, FULL, main=REQUIRED_SETTING_MAIN))
+    assert verdict.ok and verdict.judged, verdict.detail
+
+
+def test_the_stand_in_reading_app_sources_never_counts_as_loading_a_block(tmp_path):
+    # The stand-in parses app/*.py before the audit hook is installed, so a
+    # block is judged only by what the loader itself opened.
+    verdict = image_sufficiency.check(_product(tmp_path, FULL, main=REQUIRED_SETTING_MAIN))
+    assert verdict.misloaded == []

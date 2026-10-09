@@ -537,6 +537,9 @@ async def _typed_action(session_id, state, user_message, action, value, _record)
         return
 
     # CONTINUE / RUN_PILOT: a resume door, never a new draft.
+    # A certification the Store gate has since withdrawn is the gate's
+    # failure, recorded before anything reads the run as complete.
+    platform_chat_flow.record_withdrawn_certification(state)
     resumable = (
         platform_chat_flow.has_pending_blueprint(state)
         or platform_chat_flow.is_generation_resumable(state)

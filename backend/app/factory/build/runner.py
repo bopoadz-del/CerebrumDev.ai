@@ -117,7 +117,7 @@ def _failure_keys(verdict: Any, exclude: Sequence[str] = ()) -> List[str]:
     Failing test rows carry their own (``<nodeid> [failure|error]``). A gate
     verdict without rows gives one ``<check>:<shape>`` per brief check it
     failed; the shape is the typed ``finding_shape`` the gate declares, else
-    ``failed``. The gate is not in the key, so the same check failing the
+    the verdict's typed reason, else ``failed``. The gate is not in the key, so the same check failing the
     same way at two different gates is the same failure."""
     from app.factory.build import brief_gates, failure_owner
 
@@ -128,7 +128,12 @@ def _failure_keys(verdict: Any, exclude: Sequence[str] = ()) -> List[str]:
     if keys and keys != bare:
         # Typed failing-test rows (or a caller's own keys): already the shape.
         return keys
-    shape = str(payload.get("finding_shape") or "failed")
+    # A gate that declares no shape has typed its failure by its reason
+    # (GateResult types each finding the same way). Keying it "failed" made
+    # two different failures of one check "the same failure twice" -- live
+    # cycle 4 smoke B: writer_authored_factory_file in round 1, then
+    # locked_block_loaded_elsewhere stopped the build unheard.
+    shape = str(payload.get("finding_shape") or getattr(verdict, "reason", "") or "failed")
     checks = sorted({check for check, _ in brief_gates.failure_checks(verdict) if check})
     return [f"{check}:{shape}" for check in checks] or keys
 REWORK_TARGET = BuildRole.WRITER

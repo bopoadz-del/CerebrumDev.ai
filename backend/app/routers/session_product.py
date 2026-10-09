@@ -606,6 +606,11 @@ def download_product_package(
 
     withdrawn = certification_withdrawn(out)
     if withdrawn:
+        # The gate's verdict now: the run is a failed platform Continue can
+        # resume at the Store gate (n3_store_gate.record_certification_withdrawn).
+        from app.factory.build.n3_store_gate import record_certification_withdrawn
+
+        record_certification_withdrawn(out, withdrawn)
         raise HTTPException(status_code=409, detail=withdrawn)
 
     # Every gate held: this export is CERTIFIED. Tag the platform's head
@@ -659,6 +664,45 @@ def get_build_status(
             Path(gen["output_dir"]), blueprint=blueprint, plan=plan
         ),
     }
+
+
+@router.get("/{session_id}/product/ledger")
+def get_build_ledger(
+    session_id: str,
+    response: Response,
+    principal: Principal = Depends(require_api_key),
+) -> Dict[str, Any]:
+    """The build's whole ledger, event by event, for its owner.
+
+    build-status summarises the ledger; a failure is classified from the
+    events themselves (ops.yml ledger-dump). Owner-scoped like every session
+    read, and every string is sanitized as build-status sanitizes it: keys
+    and auth headers never leave.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    from app.factory.build.ledger import BuildLedger
+    from app.factory.build.sanitize import sanitize_for_status
+
+    state = _require_session(session_id, principal)
+    gen = state.product_design.generation
+    path = Path(gen["output_dir"]) / "build_ledger.jsonl" if gen and gen.get("output_dir") else None
+    if path is None or not path.is_file():
+        raise HTTPException(status_code=404, detail="no build ledger for this session")
+
+    def clean(value: Any) -> Any:
+        if isinstance(value, str):
+            return sanitize_for_status(value)
+        if isinstance(value, dict):
+            return {str(k): clean(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [clean(v) for v in value]
+        return value
+
+    try:
+        events = [clean(e.to_json()) for e in BuildLedger(path).events()]
+    except Exception as exc:  # noqa: BLE001 -- a torn ledger is reported, not a 500
+        raise HTTPException(status_code=409, detail=f"ledger unreadable: {type(exc).__name__}") from exc
+    return {"ok": True, "session_id": session_id, "events": events}
 
 
 @router.post("/{session_id}/product/coder-control")

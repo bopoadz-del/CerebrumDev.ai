@@ -242,6 +242,55 @@ def test_cycle_three_is_fintech_repeat_and_motor_insurance_fresh(cycle, pool):
     assert _ids(cycle.select_rotation(pool, state, picks=2)) == [fintech, motor]
 
 
+def _report_on(commit, picks, verdict="fail"):
+    report = _history_report(picks, verdict)
+    report["commit"] = commit
+    return report
+
+
+VOID = "0" * 40
+
+
+def test_a_voided_cycles_picks_are_neither_tried_nor_failing(cycle, pool):
+    a, b = pool[0]["id"], pool[1]["id"]
+    seed = {"certified": [], "tried": [], "void": [VOID]}
+    history = [_report_on(VOID, {a: False, b: False})]
+    state = cycle.rotation_state(history, seed)
+    assert state["tried"] == [] and state["failing"] == []
+    assert _ids(cycle.select_rotation(pool, state, picks=2)) == [a, b]
+
+
+def test_a_certification_in_a_voided_cycle_still_stands(cycle, pool):
+    a, b = pool[0]["id"], pool[1]["id"]
+    seed = {"certified": [], "tried": [], "void": [VOID]}
+    state = cycle.rotation_state([_report_on(VOID, {a: True, b: False})], seed)
+    assert a in state["certified"]
+    assert a not in _ids(cycle.select_rotation(pool, state, picks=2))
+
+
+def test_a_void_record_needs_a_full_commit_and_a_reason(cycle):
+    for bad in ([{"commit": "5410237b", "reason": "x"}], [{"commit": VOID}], ["5410237b"]):
+        with pytest.raises(cycle.CycleError):
+            cycle.rotation_seed({"rotation": {"seed": {"void": bad}}})
+
+
+def test_cycle_five_is_fintech_repeat_and_motor_insurance_fresh(cycle, pool):
+    """Cycle 3 (5410237b) is voided by the committed seed: motor insurance
+    was never judged, so it re-enters fresh. Cycle 4 failed fintech (repeat)
+    and fleet delivery (fresh): fintech leads slot 1."""
+    config = cycle.load_config(CONFIG_PATH)
+    ids = {bp["id"]: bp["id"] for bp in pool}
+    fintech, motor, fleet = (
+        ids["repro_fintech_payments_ledger"],
+        ids["repro_motor_insurance_claims"],
+        ids["repro_fleet_delivery_logistics"],
+    )
+    cycle4 = _report_on("55d91d62cdf424440e88343fa66dd10f8932830a", {fintech: False, fleet: False})
+    cycle3 = _report_on("5410237b7cc04ef994b13723a4626ecb97366ff7", {fintech: False, motor: False})
+    state = cycle.rotation_state([cycle4, cycle3], cycle.rotation_seed(config))
+    assert _ids(cycle.select_rotation(pool, state, picks=2)) == [fintech, motor]
+
+
 def test_a_pick_listed_without_a_run_counts_as_not_certified(cycle, pool):
     a, b, c = pool[0]["id"], pool[1]["id"], pool[2]["id"]
     report = {"verdict": "fail", "rotation": {"picks": [a, b]}, "runs": {b: _run(True)}}
