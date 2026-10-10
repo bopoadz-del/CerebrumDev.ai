@@ -10,14 +10,14 @@ docs/provenance/provenance.json from the blueprint and blocks.lock.json; the
 Factory's gap-filling converge then kept it, so the Factory's own provenance
 (factory_commit, blocks_commit) never landed and provenance_complete failed.
 
-One declared list, built from the sources that already own these paths --
-nothing here names a product, a blueprint or a branch:
+The owned set is DERIVED, never listed (owner spec, cycle 9) -- nothing here
+names a product, a blueprint, a branch, or a file the Factory owns:
 
-* every path a Factory stamp owns outright (``stamp_registry.owned_paths``):
-  the acceptance harness, the writer self-check, the deploy modules, the
-  release gate, CI, the TESTER bootstrap and suites, the pins;
-* the product's provenance record, which only the Factory writes (converge);
-* the Store gate workflow the checkpoint carries from cerebrum-builds main.
+* every path a Factory renderer registered when it wrote it
+  (``owned_registry.register`` -- the provenance record, the build record,
+  any new Factory file the moment it is written);
+* every path a Factory stamp owns outright (``stamp_registry.owned_paths``);
+* the Store gate's own files (``builds_push.STORE_GATE_PATHS``).
 """
 
 from __future__ import annotations
@@ -26,8 +26,9 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
-#: The product's provenance record (cerebrum_product_kernel.provenance; written
-#: by converge.converge_writer_emitters). Factory-only by construction.
+#: Where the provenance renderer (converge) writes the product's provenance
+#: record. A renderer's own output path, not an ownership list: it is owned
+#: because the renderer registers it when it writes it.
 PROVENANCE_REL = "docs/provenance/provenance.json"
 #: Where one writer pass records the Factory-owned paths it touched. Factory
 #: internal (builds_push.FACTORY_INTERNAL_PATHS): read by the WRITER gate,
@@ -43,12 +44,28 @@ MODIFIED = "modified"
 DELETED = "deleted"
 
 
-def factory_owned_paths() -> Tuple[str, ...]:
-    """Every product path the Factory owns, sorted. The one list."""
-    from app.factory.build.builds_push import STORE_GATE_PATH
+def factory_owned_paths(*roots: Any) -> Tuple[str, ...]:
+    """Every product path the Factory owns in the trees at ``roots``, sorted:
+    what its renderers registered there, what its stamps own, and the Store
+    gate's files (a gate directory present in a tree contributes its files).
+    Derived -- never a hand list."""
+    from app.factory.build.builds_push import STORE_GATE_PATHS
+    from app.factory.build.owned_registry import registered
     from app.factory.build.stamp_registry import owned_paths
 
-    return tuple(sorted({*owned_paths(), PROVENANCE_REL, STORE_GATE_PATH}))
+    owned = {*owned_paths(), *registered(*roots)}
+    for rel in STORE_GATE_PATHS:
+        found = False
+        for target in roots:
+            if target is None:
+                continue
+            tree = Path(getattr(target, "workspace", target))
+            if (tree / rel).is_dir():
+                owned.update(p.relative_to(tree).as_posix() for p in (tree / rel).rglob("*") if p.is_file())
+                found = True
+        if not found:
+            owned.add(rel)
+    return tuple(sorted(owned))
 
 
 def prestamp(root: Path | str, blueprint: Any = None, ctx: Any = None) -> List[str]:
@@ -111,9 +128,9 @@ def prestamp(root: Path | str, blueprint: Any = None, ctx: Any = None) -> List[s
 #: Owned paths a build carries in rather than renders: the Store gate workflow
 #: comes with the checkpoint from cerebrum-builds ``main``.
 def carried_paths() -> Tuple[str, ...]:
-    from app.factory.build.builds_push import STORE_GATE_PATH
+    from app.factory.build.builds_push import STORE_GATE_PATHS
 
-    return (STORE_GATE_PATH,)
+    return tuple(STORE_GATE_PATHS)
 
 
 def prestamp_absent_owned(root: Path | str, ctx: Any = None) -> List[str]:
@@ -133,7 +150,14 @@ def prestamp_absent_owned(root: Path | str, ctx: Any = None) -> List[str]:
     import tempfile
 
     base = Path(root)
-    absent = [rel for rel in factory_owned_paths() if rel not in carried_paths() and not (base / rel).exists()]
+    destination = getattr(getattr(ctx, "workspace", None), "destination", None)
+    carried = carried_paths()
+    absent = [
+        rel for rel in factory_owned_paths(base, destination)
+        if rel not in carried
+        and not any(rel.startswith(c.rstrip("/") + "/") for c in carried)
+        and not (base / rel).exists()
+    ]
     if not absent:
         return []
     changed: List[str] = []
@@ -152,10 +176,17 @@ def prestamp_absent_owned(root: Path | str, ctx: Any = None) -> List[str]:
     from app.factory.build.roles_handlers import run_tester
     from app.factory.build.workspace import RoleWorkspace
 
+    # TESTER reads the declared specs off the PRODUCT tree the pass is merged
+    # into (its app/models.py), not the writer's staging checkout, which starts
+    # empty. Live cycle 9 smoke B: the suite was stamped with no entity, the
+    # parallel-write test skipped in every writer run, and TESTER's real stamp
+    # then failed on the writer's store.
+    product = getattr(getattr(ctx, "workspace", None), "destination", None)
+    product = Path(product) if product is not None and Path(product).is_dir() else base
     with tempfile.TemporaryDirectory(prefix="tester-prestamp-") as scratch:
         tester = RoleContext(
             role=BuildRole.TESTER,
-            workspace=RoleWorkspace(BuildRole.TESTER, base, staging=scratch),
+            workspace=RoleWorkspace(BuildRole.TESTER, product, staging=scratch),
             blueprint=getattr(ctx, "blueprint", None),
             plan=getattr(ctx, "plan", None) or SimpleNamespace(capabilities=()),
             state=dict(getattr(ctx, "state", None) or {}),
@@ -177,14 +208,15 @@ def prestamp_absent_owned(root: Path | str, ctx: Any = None) -> List[str]:
 
 def prestamp_late_files(root: Path | str, ctx: Any = None) -> List[str]:
     """The owned files the Factory otherwise renders only AFTER the writer:
-    TESTER's rootdir test bootstrap (a fixed template) and the provenance
-    record (converge; ``ctx`` gives its inputs). Written only when absent --
+    TESTER's rootdir test bootstrap (a fixed template), the WRITER's build
+    record and the provenance record (converge; ``ctx`` gives their inputs). Written only when absent --
     TESTER and converge still render their final versions later.
 
     Live cycle 7 (a3e1fd7): smoke A, fintech and vineyard writers found
     conftest.py and docs/provenance/provenance.json absent, created them for
     their own self-check, were restored and sent back, created them again,
     and stopped on the WRITER gate budget."""
+    from app.factory.build.owned_registry import register, write_owned
     from app.factory.build.roles_constants import CONFTEST_REL
 
     base = Path(root)
@@ -195,6 +227,27 @@ def prestamp_late_files(root: Path | str, ctx: Any = None) -> List[str]:
 
         bootstrap.write_text(_CONFTEST, encoding="utf-8")
         changed.append(CONFTEST_REL)
+        register(base, CONFTEST_REL)
+    from app.factory.build.build_provenance import (
+        BUILD_RECORD_REL,
+        build_record_text,
+        carried_record_fields,
+        stamped_handler_ids,
+    )
+
+    record_path = base / BUILD_RECORD_REL
+    if ctx is not None and not record_path.exists():
+        destination = getattr(getattr(ctx, "workspace", None), "destination", None)
+        write_owned(
+            base,
+            BUILD_RECORD_REL,
+            build_record_text(
+                getattr(ctx, "blueprint", None),
+                stamped_handler_ids(base),
+                carried=carried_record_fields(Path(destination) / BUILD_RECORD_REL) if destination else None,
+            ),
+        )
+        changed.append(BUILD_RECORD_REL)
     prov_path = base / PROVENANCE_REL
     if ctx is not None and not prov_path.exists():
         from app.factory.build.converge import factory_provenance_text, provenance_record
@@ -204,6 +257,11 @@ def prestamp_late_files(root: Path | str, ctx: Any = None) -> List[str]:
             prov_path.parent.mkdir(parents=True, exist_ok=True)
             prov_path.write_text(factory_provenance_text(None, record), encoding="utf-8")
             changed.append(PROVENANCE_REL)
+    if ctx is not None:
+        # Its renderer (converge) writes it after every pass even when the
+        # inputs to pre-render it are not in yet: the path is the Factory's
+        # from this pass on, so a writer that creates it is caught.
+        register(base, PROVENANCE_REL)
     return changed
 
 
@@ -215,11 +273,14 @@ def finding_shape(touched: Iterable[Mapping[str, str]]) -> str:
     return "writer_authored_factory_file:" + ",".join(rows)
 
 
-def snapshot(root: Path | str, paths: Optional[Iterable[str]] = None) -> Dict[str, Optional[bytes]]:
-    """``{path: bytes or None}`` for every Factory-owned path under ``root``."""
+def snapshot(
+    root: Path | str, paths: Optional[Iterable[str]] = None, also: Iterable[Any] = ()
+) -> Dict[str, Optional[bytes]]:
+    """``{path: bytes or None}`` for every Factory-owned path under ``root``
+    (the derived set of ``root`` and of the trees in ``also``)."""
     base = Path(root)
     out: Dict[str, Optional[bytes]] = {}
-    for rel in paths if paths is not None else factory_owned_paths():
+    for rel in paths if paths is not None else factory_owned_paths(base, *also):
         target = base / rel
         try:
             out[rel] = target.read_bytes() if target.is_file() else None

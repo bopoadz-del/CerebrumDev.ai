@@ -67,9 +67,22 @@ def test_ids_are_deduplicated_across_spellings():
 
 
 def _write_manifest(root: Path, manifest: dict) -> Path:
+    """The build as the FACTORY leaves it: each handler on disk carrying the
+    AUTHORED_BY marker its source names (authorship is counted from the
+    markers, never from a json -- owner spec, cycle 9), and the record,
+    registered as the Factory's."""
+    from app.factory.build.owned_registry import register
+
     docs = root / "docs"
     docs.mkdir(parents=True, exist_ok=True)
     (docs / "build_provenance.json").write_text(json.dumps(manifest), encoding="utf-8")
+    register(root, "docs/build_provenance.json")
+    actions = root / "app" / "actions"
+    for key, source in (manifest.get("artifact_sources") or {}).items():
+        cid = action_artifact_id(key)
+        if cid:
+            actions.mkdir(parents=True, exist_ok=True)
+            (actions / f"{cid}.py").write_text(f"AUTHORED_BY = {source!r}\n", encoding="utf-8")
     return root
 
 

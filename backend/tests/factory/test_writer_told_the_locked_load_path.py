@@ -270,7 +270,9 @@ def test_a_second_reprompt_does_not_repeat_the_first_ones_touched_files(tmp_path
     )
     assert second.kind == "REPROMPT"
     assert any("constraints.txt" in item for item in second.work_list)
-    assert not any("conftest.py" in item for item in second.work_list), second.work_list
+    # The first re-prompt's touched-file line is not repeated (the owned-set
+    # line still names every owned path, conftest.py among them).
+    assert not any(item.startswith("conftest.py:") for item in second.work_list), second.work_list
     assert sum("the real finding" in item for item in second.work_list) == 1, second.work_list
 
 

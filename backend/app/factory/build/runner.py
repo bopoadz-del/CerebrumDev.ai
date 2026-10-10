@@ -1481,6 +1481,11 @@ class RoleRunner:
             "[factory_owned] those files were put back as the Factory renders them; this pass is "
             "re-prompted at no rework cost. Leave every path under FACTORY-OWNED FILES in the brief "
             "alone -- create, edit or delete none of them -- and finish the product.",
+            # The owned set itself, derived for this product's tree
+            # (factory_owned.factory_owned_paths): the writer is re-prompted
+            # with what it may not touch, not only with what it did touch.
+            "[factory_owned] owned set (create, edit or delete none of these): "
+            + ", ".join(factory_owned.factory_owned_paths(self.workspace)),
         )
         # What the rejected pass was handed and still owes: the gate refused it
         # on the Factory-owned files before judging anything else, so a rework

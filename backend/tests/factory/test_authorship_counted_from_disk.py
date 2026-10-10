@@ -91,3 +91,33 @@ def test_a_handler_the_manifest_claims_but_the_file_does_not_is_not_counted(tmp_
 def test_an_unstamped_handler_the_manifest_does_not_claim_is_not_the_agents(tmp_path):
     out = _product(tmp_path, {"n_required": 1, "artifact_sources": {}}, {CAPS[0]: ""})
     assert _authorship(out)["authorship"]["action_py"] == 0
+
+
+def test_vineyard_status_reads_authored_8_from_the_handlers_not_the_writers_record(tmp_path):
+    """The live shape of build/plt_7232365d00e34f53: eight agent-stamped
+    handlers, and a docs/build_provenance.json the WRITER wrote (keys no Factory
+    emitter writes) whose own authorship block says nothing was authored."""
+    manifest = dict(_writer_manifest())
+    manifest["authorship"] = {"action_py": 0, "agent_artifacts": [], "cli_authored_ids": []}
+    manifest["roster_source"] = "writer"
+    out = _product(tmp_path, manifest, {c: AGENT for c in CAPS})
+
+    record = _authorship(out)["authorship"]
+
+    assert record["action_py"] == 8, record
+    assert record["agent_written"] == 8, record
+
+
+def test_a_writers_record_claiming_handlers_that_are_not_on_disk_counts_nothing(tmp_path):
+    manifest = {
+        "n_required": 5,
+        "artifact_sources": {f"app/actions/{c}.py": f"coder CLI ({AGENT})" for c in CAPS},
+        "authorship": {"action_py": 8, "agent_artifacts": CAPS, "cli_authored_ids": CAPS},
+        "brief_dispatch": {"cli_authored_ids": CAPS},
+    }
+    out = _product(tmp_path, manifest, {})
+
+    record = _authorship(out).get("authorship") or {}
+
+    assert record.get("action_py", 0) == 0, record
+    assert not record.get("cli_authored_ids"), record

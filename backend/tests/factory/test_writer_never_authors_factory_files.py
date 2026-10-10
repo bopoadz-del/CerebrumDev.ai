@@ -22,18 +22,24 @@ from app.factory.build import factory_owned
 # -- the one list -------------------------------------------------------------------
 
 
-def test_the_list_is_derived_from_the_stamps_plus_provenance_and_the_store_gate():
-    from app.factory.build.builds_push import STORE_GATE_PATH
+def test_the_set_is_derived_from_the_stamps_the_gate_files_and_what_the_factory_wrote(tmp_path):
+    from app.factory.build.builds_push import STORE_GATE_PATHS
     from app.factory.build.stamp_registry import owned_paths
 
-    paths = set(factory_owned.factory_owned_paths())
-    assert set(owned_paths()) <= paths
-    assert {factory_owned.PROVENANCE_REL, STORE_GATE_PATH} <= paths
-    assert len(paths) == len(set(owned_paths()) | {factory_owned.PROVENANCE_REL, STORE_GATE_PATH})
+    bare = set(factory_owned.factory_owned_paths(tmp_path))
+    assert bare == set(owned_paths()) | set(STORE_GATE_PATHS)
+    ctx = type("C", (), {"blueprint": None, "state": {}})()
+    factory_owned.prestamp_late_files(tmp_path, ctx)
+    # The renderers registered their records when they ran.
+    assert {factory_owned.PROVENANCE_REL, "docs/build_provenance.json"} <= set(
+        factory_owned.factory_owned_paths(tmp_path)
+    )
 
 
-def test_the_list_carries_the_handovers_named_paths():
-    paths = set(factory_owned.factory_owned_paths())
+def test_the_set_carries_the_handovers_named_paths(tmp_path):
+    ctx = type("C", (), {"blueprint": None, "state": {}})()
+    factory_owned.prestamp_late_files(tmp_path, ctx)
+    paths = set(factory_owned.factory_owned_paths(tmp_path))
     for rel in (
         "docs/provenance/provenance.json",
         "scripts/acceptance.py",

@@ -127,3 +127,70 @@ def missing_provenance(payload: Optional[Mapping[str, Any]]) -> list:
     if not isinstance(payload, Mapping):
         return list(PROVENANCE_FIELDS)
     return [f for f in PROVENANCE_FIELDS if not _clean(payload.get(f))]
+
+
+#: The WRITER's build record -- which run wrote which handler. The Factory's
+#: own (factory_owned.BUILD_RECORD_REL): rendered before the writer pass and
+#: again after it from the handlers on disk; never the writer's.
+BUILD_RECORD_REL = "docs/build_provenance.json"
+#: The source the record names for an agent-stamped handler.
+BUILD_RECORD_AGENT_SOURCE = "coder CLI (codewhale exec)"
+
+
+#: Fields other Factory steps add to the record after the writer (the N3
+#: handoff's brief_dispatch, the coder's failures): carried across a re-render.
+BUILD_RECORD_CARRIED_FIELDS = ("brief_dispatch", "coder_failures")
+
+
+def carried_record_fields(path: Any) -> Dict[str, Any]:
+    """The carried fields of the Factory's record at ``path``, if it has one."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: data[k] for k in BUILD_RECORD_CARRIED_FIELDS if k in data}
+
+
+def build_record_text(
+    blueprint: Any,
+    handler_ids: Any = (),
+    worker: Optional[Mapping[str, Any]] = None,
+    carried: Optional[Mapping[str, Any]] = None,
+) -> str:
+    """The record, attributed from the handler ids handed in (read off the
+    disk by the caller). Deterministic: the same inputs render the same bytes.
+    ``carried``: fields the Factory's previous record held
+    (:data:`BUILD_RECORD_CARRIED_FIELDS` only)."""
+    ids = sorted({str(h) for h in handler_ids or () if str(h or "").strip()})
+    n_required = len(list(getattr(blueprint, "capabilities", None) or [])) or len(ids)
+    record: Dict[str, Any] = {
+        "schema_version": "build_provenance.v1",
+        "product_id": getattr(blueprint, "product_id", "unknown"),
+        "product_name": getattr(blueprint, "product_name", ""),
+        "engine": "codewhale_worker",
+        "artifact_sources": {f"app/actions/{hid}.py": BUILD_RECORD_AGENT_SOURCE for hid in ids},
+        # Read by the product's own acceptance.py (authorship_floor) via
+        # n_required, and by the build status via the handler sources.
+        "authorship": {
+            "action_py": len(ids),
+            "agent_artifacts": list(ids),
+            "cli_authored_ids": list(ids),
+        },
+        "n_required": n_required,
+        "written_by": "factory (rendered from the stamped handlers on disk)",
+    }
+    if worker:
+        record["worker"] = dict(worker)
+    for key in BUILD_RECORD_CARRIED_FIELDS:
+        if carried and key in carried:
+            record[key] = carried[key]
+    return json.dumps(record, indent=2, sort_keys=True) + "\n"
+
+
+def stamped_handler_ids(root: Any) -> list:
+    """Handler ids under ``root`` whose AUTHORED_BY marker names the coding agent."""
+    from app.factory.build.authorship import agent_written_handler_ids_in_workspace
+
+    return agent_written_handler_ids_in_workspace(Path(root))

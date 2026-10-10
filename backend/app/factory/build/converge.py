@@ -194,6 +194,10 @@ def converge_writer_emitters(ctx: Any, *, fill_gaps_only: bool = False) -> Dict[
     if text != existing:
         ctx.workspace.write_text(prov_rel, text)
         copied.append("docs/provenance/provenance.json")
+    # The Factory's record: owned because it is written here (owned_registry).
+    from app.factory.build.owned_registry import register
+
+    register(ctx.workspace, prov_rel)
     return {"ok": True, "copied": copied, "skipped": ""}
 
 

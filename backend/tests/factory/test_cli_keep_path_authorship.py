@@ -121,12 +121,21 @@ def test_authorship_status_counts_cli_keep_and_surfaces_kept_ids(tmp_path):
         + "\n",
         encoding="utf-8",
     )
+    # Counted from Factory-side evidence only (owner spec, cycle 9): the
+    # handlers' AUTHORED_BY markers on disk, and the record because the
+    # Factory registered it. The record's other artifact claims are not read.
+    from app.factory.build.authorship import action_artifact_ids
+    from app.factory.build.owned_registry import register
+
+    register(root, "docs/build_provenance.json")
+    (root / "app" / "actions").mkdir(parents=True)
+    for cap in LETTINGS_KEEP:
+        (root / "app" / "actions" / f"{cap}.py").write_text(f"AUTHORED_BY = {CLI_SOURCE!r}\n", encoding="utf-8")
     status = _authorship(root)
     auth = status["authorship"]
     assert auth["agent_written"] == 4
-    assert auth["templated"] == 23
-    assert auth["artifacts"] == 27
-    assert set(auth["agent_artifacts"]) == set(LETTINGS_KEEP)
+    assert auth["action_py"] == 4
+    assert set(action_artifact_ids(auth["agent_artifacts"])) == set(LETTINGS_KEEP)
     assert set(auth["kept_handler_ids"]) == set(LETTINGS_KEEP)
 
 

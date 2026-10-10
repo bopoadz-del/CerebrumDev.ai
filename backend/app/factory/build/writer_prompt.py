@@ -334,11 +334,13 @@ Everything below is the original brief, unchanged.
 """
 
 
-def _factory_owned_lines() -> str:
-    """The declared list (factory_owned.factory_owned_paths), one per line."""
+def _factory_owned_lines(owned: Optional[Sequence[str]] = None) -> str:
+    """The owned set, one per line: the one handed in (derived for the
+    product's tree by the caller), else the set derived with no tree."""
     from app.factory.build.factory_owned import factory_owned_paths
 
-    return "\n".join(f"- {rel}" for rel in factory_owned_paths())
+    paths = sorted(set(owned)) if owned is not None else factory_owned_paths()
+    return "\n".join(f"- {rel}" for rel in paths)
 
 
 def _build_context_section(runtime_paths: Sequence[str]) -> str:
@@ -409,6 +411,7 @@ def render_writer_prompt(
     specialist_workers: int = 1,
     runtime_paths: Sequence[str] = (),
     locked_blocks: Optional[Mapping[str, Sequence[str]]] = None,
+    factory_owned: Optional[Sequence[str]] = None,
 ) -> str:
     """Fill the template from the brief. Deterministic by construction.
 
@@ -441,7 +444,7 @@ def render_writer_prompt(
         summary=summary,
         brief=(brief or "").strip(),
         specialist_workers=max(1, int(specialist_workers or 1)),
-        factory_owned=_factory_owned_lines(),
+        factory_owned=_factory_owned_lines(factory_owned),
         build_context=_build_context_section(runtime_paths),
         locked_blocks=_locked_blocks_section(locked_blocks or {}),
         # The Store gate's own checklist, rendered from the file the gate

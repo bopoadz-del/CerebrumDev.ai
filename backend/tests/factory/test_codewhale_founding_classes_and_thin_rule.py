@@ -169,6 +169,11 @@ def test_the_counts_the_rule_needs_are_published(tmp_path):
         ),
         encoding="utf-8",
     )
+    # The markers on disk are the evidence (owner spec, cycle 9).
+    actions = tmp_path / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "a.py").write_text('AUTHORED_BY = "coder CLI (codewhale exec)"\n', encoding="utf-8")
+    (actions / "b.py").write_text('AUTHORED_BY = "template (deterministic)"\n', encoding="utf-8")
 
     rec = _authorship(tmp_path)["authorship"]
 
