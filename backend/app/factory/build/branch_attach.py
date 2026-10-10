@@ -312,6 +312,63 @@ def carry_mains_gate(tree: Path) -> None:
         _git(["-c", "core.autocrlf=false", "checkout", "FETCH_HEAD", "--", rel], tree)
 
 
+#: The commit message of a carry that changed the branch's gate.
+CARRY_MESSAGE = "factory: carry main's Store gate before the gate runs"
+
+
+def carry_gate_onto_branch(branch: str, env: Mapping[str, str] | None = None) -> str:
+    """Make ``branch`` carry ``main``'s WHOLE Store gate; return its head sha.
+
+    A dispatch runs the gate workflow and its helpers from the dispatched
+    branch's own tree. A branch whose last checkpoint predates a gate fix runs
+    the OLD gate -- live 2026-10-10 (store-gate run 38040326004) an ops
+    re-dispatch on a branch cut before builds#41 ran its stale
+    ``repo_mount.exec_path``, the harness judged the mounted checkout instead
+    of the image, and a false 22/22 was written. So every dispatch first
+    carries ``main``'s gate (``carry_mains_gate``, as every checkpoint does);
+    a branch that already carries it is left untouched (no commit). Fails
+    closed: a branch that cannot be cloned, a ``main`` that cannot be fetched
+    or a carry that cannot be pushed raises, and nothing is dispatched.
+    """
+    import tempfile
+
+    from app.factory.build.builds_push import GIT_EMAIL, GIT_NAME, push_with_retry
+
+    env = env if env is not None else os.environ
+    token = builds_token(env)
+    if not token:
+        raise BuildsPushError("CEREBRUM_BUILDS_GITHUB_TOKEN missing -- cannot carry main's Store gate")
+    tmp = Path(tempfile.mkdtemp(prefix="cerebrum-gate-carry-"))
+    try:
+        proc = _git(["clone", "--quiet", "--depth=1", "--branch", branch, _remote_url(env), "."], tmp)
+        if proc.returncode != 0:
+            raise BuildsPushError(f"gate carry: cannot clone {branch}: {(proc.stderr or '')[-300:]}")
+        fetched = _git(["fetch", "--quiet", "--depth=1", "origin", "main"], tmp)
+        if fetched.returncode != 0:
+            raise BuildsPushError(
+                f"gate carry: cannot fetch main to carry its Store gate onto {branch}: "
+                f"{(fetched.stderr or '')[-300:]}"
+            )
+        carry_mains_gate(tmp)
+        _git(["add", "-A", "--", *STORE_GATE_PATHS], tmp)
+        if _git(["diff", "--cached", "--quiet"], tmp).returncode != 0:
+            _git(["-c", f"user.email={GIT_EMAIL}", "-c", f"user.name={GIT_NAME}",
+                  "commit", "-q", "-m", CARRY_MESSAGE], tmp)
+            push_with_retry(
+                lambda args, cwd: _git(args, cwd),
+                ["push", "origin", f"HEAD:{branch}"],
+                cwd=tmp,
+                token=token,
+                label="gate carry push failed",
+            )
+        sha = (_git(["rev-parse", "HEAD"], tmp).stdout or "").strip()
+        if not sha:
+            raise BuildsPushError(f"gate carry: no head sha for {branch}")
+        return sha
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def checkpoint(workspace: Path, branch: str, message: str, env: Mapping[str, str] | None = None) -> str:
     """Commit the exportable tree onto ``branch`` and push it. Returns the sha.
 

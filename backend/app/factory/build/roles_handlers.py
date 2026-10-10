@@ -3865,6 +3865,10 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
     from app.factory.build.writer_prompt import render_writer_prompt
 
     dest = persist_workspace_root(ctx.workspace)
+    from app.factory.build.image_sufficiency import locked_entries as image_locked_entries
+    from app.factory.build.image_sufficiency import runtime_paths as image_runtime_paths
+
+    product_tree = Path(getattr(ctx.workspace, "destination", None) or dest)
     prompt = render_writer_prompt(
         ctx.blueprint,
         brief=_compiled_writer_brief(ctx),
@@ -3873,6 +3877,21 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
         # here, not in the template: it follows the worker profile and the
         # operator override instead of going stale on the next plan.
         specialist_workers=writer_specialist_cap(),
+        # What the image must carry, read off the PRODUCT tree's lock: the
+        # writer's checkout is the staging tree, which does not show the
+        # CLONER's stock, and two writers left it out of the image because
+        # nothing named it (cycles 8 and 9). Only the ones the checkout does
+        # not show: those are the ones the prompt says are absent from it.
+        runtime_paths=[
+            rel
+            for rel in image_runtime_paths(product_tree)
+            if not (Path(dest) / rel).exists()
+        ],
+        # Where each locked block must load from -- every one, shown in the
+        # checkout or not. The WRITER gate refuses a block loaded from any
+        # other copy; two cycle-9 writers did exactly that because the rule
+        # was nowhere in the prompt (co-op, craft marketplace).
+        locked_blocks=image_locked_entries(product_tree),
     )
     try:
         # The writer narrates itself on the Floor: CLI progress lines

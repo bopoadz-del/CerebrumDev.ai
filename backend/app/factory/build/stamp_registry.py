@@ -139,10 +139,24 @@ def _deploy_gap(root: Any) -> Any:
     return backfill_deploy_substrate(_as_workspace(root))
 
 
+def _tree_blueprint(root: Any) -> Any:
+    """The blueprint the tree was compiled from (its own canonical copy, the
+    session's declared intake on it), or None."""
+    from app.factory.build.branch_attach import _branch_blueprint
+
+    base = getattr(root, "workspace", root)
+    try:
+        return _branch_blueprint(Path(base))
+    except Exception:  # noqa: BLE001 -- no readable brief: the tree's record stands
+        return None
+
+
 def _money(root: Any) -> Any:
     from app.factory.build.money_contract import emit_money_artifacts
 
-    return emit_money_artifacts(_as_workspace(root), None)
+    # The declared pair comes from the build's own record, never from a
+    # stamp that has none (PR #719 replay blanked a certified AE / AED build).
+    return emit_money_artifacts(_as_workspace(root), _tree_blueprint(root))
 
 
 def _domain_owned(root: Any) -> Any:
