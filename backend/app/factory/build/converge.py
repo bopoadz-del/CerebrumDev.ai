@@ -122,7 +122,6 @@ def converge_writer_emitters(ctx: Any, *, fill_gaps_only: bool = False) -> Dict[
     if not isinstance(plan, ProductPlan):
         return {"ok": False, "skipped": "plan is not ProductPlan"}
 
-    from app.cerebrum_product_kernel.provenance import build_provenance
     from app.factory.generator import ProductGenerator
     from app.product_dna.emit import emit_product_dna
 
@@ -186,6 +185,35 @@ def converge_writer_emitters(ctx: Any, *, fill_gaps_only: bool = False) -> Dict[
                 workspace.copy_file(src, rel)
                 copied.append(rel)
 
+    prov = provenance_record(ctx) or {}
+    prov_rel = Path("docs") / "provenance" / "provenance.json"
+    existing = None
+    if fill_gaps_only and ctx.workspace.exists(prov_rel):
+        existing = _read_workspace_text(ctx.workspace, prov_rel)
+    text = factory_provenance_text(existing, prov)
+    if text != existing:
+        ctx.workspace.write_text(prov_rel, text)
+        copied.append("docs/provenance/provenance.json")
+    return {"ok": True, "copied": copied, "skipped": ""}
+
+
+
+def provenance_record(ctx: Any) -> Optional[Dict[str, Any]]:
+    """The Factory's provenance fields for this build, or None when ``ctx``
+    carries no real blueprint and plan. Pure: reads ctx, writes nothing.
+
+    Rendered by converge after the writer AND, provisionally, before every
+    writer pass (factory_owned.prestamp): live cycle 7 (a3e1fd7) writers
+    found it absent, created it for their own self-check, and three builds
+    stopped on authoring a Factory-owned file."""
+    blueprint = getattr(ctx, "blueprint", None)
+    plan = getattr(ctx, "plan", None)
+    if not isinstance(blueprint, ProductBlueprint) or not isinstance(plan, ProductPlan):
+        return None
+    from app.cerebrum_product_kernel.provenance import build_provenance
+    from app.factory.build.build_provenance import resolve_provenance
+
+    resolved = resolve_provenance(ctx)
     payload = json.dumps(
         blueprint_to_dict(blueprint), sort_keys=True, separators=(",", ":")
     )
@@ -193,8 +221,8 @@ def converge_writer_emitters(ctx: Any, *, fill_gaps_only: bool = False) -> Dict[
     prov = build_provenance(
         product_id=blueprint.product_id,
         blueprint_id=f"{blueprint.product_id}:{blueprint.schema_version}",
-        factory_commit=factory_commit,
-        blocks_commit=blocks_commit,
+        factory_commit=resolved["factory_commit"],
+        blocks_commit=resolved["blocks_commit"],
         plan=plan.to_dict(),
         inputs_hash=inputs_hash,
     )
@@ -206,16 +234,7 @@ def converge_writer_emitters(ctx: Any, *, fill_gaps_only: bool = False) -> Dict[
     # own, so its canonical hash is the identifier.
     if resolved.get("writer_receipt"):
         prov["writer_receipt"] = resolved["writer_receipt"]
-    prov_rel = Path("docs") / "provenance" / "provenance.json"
-    existing = None
-    if fill_gaps_only and ctx.workspace.exists(prov_rel):
-        existing = _read_workspace_text(ctx.workspace, prov_rel)
-    text = factory_provenance_text(existing, prov)
-    if text != existing:
-        ctx.workspace.write_text(prov_rel, text)
-        copied.append("docs/provenance/provenance.json")
-    return {"ok": True, "copied": copied, "skipped": ""}
-
+    return prov
 
 def _read_workspace_text(workspace: Any, rel: Path) -> Optional[str]:
     reader = getattr(workspace, "read_path", None)
