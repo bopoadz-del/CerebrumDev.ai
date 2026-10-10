@@ -76,3 +76,51 @@ https://github.com/bopoadz-del/CerebrumDev.ai/actions/runs/37802479551/job/11339
 ## New rules / tools since the note above
 - Run `scripts/install_git_hooks.sh` in every clone: the hardwiring scan blocks the commit. Never pipe the scan (`scan | tail` masks its exit code — how a new form was once pushed).
 - Every gate PR replays incl. the known-bad fixture; a replay passes only if the known-bad build fails on its expected check.
+
+---
+
+# Update — cloud agent, 2026-10-09 → 10 (ops on Actions, cycles 5–7)
+
+## The proxy is not a wall: ops.yml
+Everything that needs `api.cerebrum-dev.com` or AWS runs on Actions: **`.github/workflows/ops.yml`** (`scripts/ops.py`). Dispatch with `gh workflow run ops.yml --ref master -f action=… [-f target=…] [-f run_id=…] [-f branch=…]`, **one target per dispatch** (concurrency is per target). Answers go to the run summary AND are committed to branch **`ops-results`** under `runs/<run id>/` — read them with `git fetch origin ops-results; git show origin/ops-results:runs/<id>/<file>`.
+- `ledger-dump` — full build ledger + service log lines for a session (target = session id, platform id, builds branch, or a cycle run name with `run_id`).
+- `gate-dispatch` — Store gate on a builds branch; with a target, then Continue on that session and follow it to its end.
+- `export-check` — export zip via the API, strip audit, Your Platforms listing.
+- `service-events` — ECS events, stopped tasks + exit codes, memory/CPU maxima, lifecycle log lines. AWS only; never calls the API.
+Every job fails closed with one readable reason. The live API endpoint `GET /v1/sessions/{id}/product/ledger` (owner-scoped, sanitized) serves the full ledger.
+
+## Landed
+| Repo | PR | What | sha |
+|---|---|---|---|
+| CerebrumDev.ai | #714 | ops.yml + ledger endpoint; distinct writer failures are distinct (`_failure_keys` uses declared `finding_shape`, else the gate's reason); gate-run probe env; withdrawn certification reopens the Store gate; cycle 3 voided in the rotation seed | `d024b231` |
+| CerebrumDev.ai | #715 | `factory_owned.prestamp` renders every renderable owned file before each writer pass; same failure = same files touched the same way (`finding_shape`) | `75a5a1ef` |
+| cerebrum-builds | #43 | Store gate off Docker Hub's anonymous limit: postgres service from `public.ecr.aws/docker/library/postgres:16`; product image built through a BuildKit builder mirroring docker.io via `mirror.gcr.io` (falls back to plain build); runner disk freed first. Replay: 3/3 certified 22/22, known-bad still caught on `cross_tenant_404` | `847e50b` |
+| CerebrumDev.ai | #716 | **Exit-signal guard**: uvicorn (PID 1) refuses SIGTERM/SIGINT while a coding agent is live or ended <30 s ago (`agent_process.guard_exit_signals`, installed in the lifespan); smoke reads DEAD without it. ops `service-events`; ops-results commit retries ×8; `gate-replay.yml` has `workflow_dispatch` (input `sha`); production image base from `public.ecr.aws/docker/library/python:3.11-slim-bookworm`; cycle 6 voided | **`a3e1fd7`** (live) |
+
+## Cycle results
+| Cycle | Commit | Smoke A | Co-op | Vineyard | Pick 1 | Pick 2 | Smoke B |
+|---|---|---|---|---|---|---|---|
+| 5 (37952813841) | d024b231 | pass | fail | fail | fintech fail | **motor insurance CERTIFIED** 523,358 B; export-check PASS (ops 37968033430) | fail |
+| 6 (37972176731) | 75a5a1ef | pass | orphaned | orphaned | fintech orphaned | clinic orphaned | pass — **cycle voided** |
+| 7 (37997314010) | a3e1fd7 | **fail** | **CERTIFIED** | fail | fintech fail | **clinic CERTIFIED** (fresh) | running at handover |
+
+- Cycle 5 failures: `writer_authored_factory_file` twice — owned files absent at writer start (fixed #715).
+- Cycle 6: at 18:57:52Z the server logged `Shutting down` in the same second fintech's writer CLI exited; ECS stopped nothing, memory 33% (ops service-events 37985812586). Agents already sit in their own session, so the signal was aimed at the server by name/pid (products serve `app.main:app` too — `pkill -f` on a probe server matches). Every writer was orphaned. Fixed by the exit-signal guard (#716). The inferred `pkill` is not yet proven from a transcript (the writer's `docs/writer_progress.*` is on the service's disk; nothing serves it).
+- Cycle 7: guard proven live — smoke A: `server refuses exit signals while an agent runs — samples=68 guarded=68`, no restart since the 22:03Z deploy (ops 38002880238). Ledgers (ops 38005613672 / 38005618405 / 38005622872 / 38005627283):
+  - fintech `sess_ff83576d9ec541f3`: reworks UI wiring → TESTER collection → writer created `conftest.py` → writer created `docs/provenance/provenance.json` → **STOP** (WRITER gate budget).
+  - vineyard `sess_5502380a293a493d`: TESTER `cross_tenant_404` (401≠404) → created `conftest.py` → UI wiring → created `conftest.py` again → **STOP**.
+  - smoke A: STOP on `provenance.json` created by the writer.
+  - **Classification: Factory** — #715's prestamp skipped the two owned files rendered only after the pass (TESTER's rootdir bootstrap, converge's provenance); writers create them for their own self-check.
+
+## Open at handover
+1. **Branch `fix/prestamp-bootstrap-and-provenance`** (commit "TESTER's bootstrap and the provenance record exist before every writer pass"): `factory_owned.prestamp_late_files` renders `conftest.py` (fixed template `_CONFTEST`) and the provenance record (`converge.provenance_record(ctx)`, now shared with converge) when absent; the writer step passes `ctx`. Targeted tests green (34). **Next:** open the PR → CI → Gate replay (it touches no gate-path file, so dispatch it: `gh workflow run gate-replay.yml --ref fix/prestamp-bootstrap-and-provenance -f sha=<head>`) → wait for cycle 7 to finish → squash merge → deploy → cycle 8 (rotation: fintech repeat; vineyard is an anchor).
+2. **Smoke B re-cert** of `plt_5ac16f50c9384536` (session `sess_ad4e3cbb755543a5`, account 0) — not done; run after a cycle: `gh workflow run ops.yml --ref master -f action=gate-dispatch -f branch=build/plt_5ac16f50c9384536 -f target=sess_ad4e3cbb755543a5`. Expect 21/22 → writer rework → export; report the rework diff.
+3. **Fintech export-check** once fintech certifies (`action=export-check -f target=<fintech sess>`).
+4. Small follow-up: add `"exit-signal guard"` to `LIFECYCLE_TERMS` in `scripts/ops.py` so `service-events` shows refusals.
+5. **Fork RAG_SCRUB_RULES** — draft **the_fork#863** (`fix/scrub-rules-as-data`, head `fe6c379`), DO NOT MERGE: coverage run 37945248586 — 11 secret rules, 9 match the live corpus, 10,781 matches, structural rules cover 0. Owner decision needed; committing the names would itself leak them.
+6. Owner UI checks: Fork #852/#854, Your Platforms download.
+
+## Notes
+- Docker Hub throttled/failed the runners 2026-10-09 ~20:59–21:35Z (429, then auth 504). Gate and production image now pull from mirrors; do not reintroduce bare `FROM python:…` in the Factory Dockerfile (`backend/tests/test_production_image_base_registry.py`).
+- `gh run download` / job-log blob URLs are proxy-blocked in the sandbox; read logs via the GitHub MCP `get_job_logs` (`return_content=true`) or route through ops.yml.
+- The pre-commit hardwiring scan takes ~3 min; run commits in the background and never pipe the scan.
