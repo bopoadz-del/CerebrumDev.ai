@@ -555,6 +555,29 @@ def _cycle_fields(ledger: Any, terminal: Any) -> Dict[str, Any]:
     }
 
 
+def _handler_sources_on_disk(root: Path) -> Optional[Dict[str, str]]:
+    """``{"app/actions/<id>.py": the source its AUTHORED_BY marker names}`` for
+    every handler file in the tree that carries the marker, or None when none
+    does (then the manifest is all there is to read)."""
+    from app.factory.build.authorship import action_artifact_id, marker_source
+
+    actions = root / "app" / "actions"
+    if not actions.is_dir():
+        return None
+    found: Dict[str, str] = {}
+    for path in sorted(actions.glob("*.py")):
+        rel = f"app/actions/{path.name}"
+        if action_artifact_id(rel) is None:
+            continue
+        try:
+            source = marker_source(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        if source:
+            found[rel] = source
+    return found or None
+
+
 def _authorship(
     output_dir: Path | str,
     *,
@@ -579,6 +602,7 @@ def _authorship(
     except (OSError, ValueError):
         return {}
     from app.factory.build.authorship import (
+        action_artifact_id,
         cli_authored_ids_from,
         coding_agent_artifact_ids,
         action_artifact_ids,
@@ -587,7 +611,22 @@ def _authorship(
         writer_authorship_counts,
     )
 
-    sources = prov.get("artifact_sources") or {}
+    sources = dict(prov.get("artifact_sources") or {})
+    # The handlers themselves are read off the disk when the tree carries
+    # them -- the WRITER gate's rule: "counted from the workspace files the
+    # writer actually produced, never from the writer's own status claim".
+    # The manifest may be the writer's own (an agent-written one is left
+    # alone); live cycle 9 vineyard (sess_a7c02f0cf81a4178) listed models and
+    # docs but no handler, and a 22/22 Store-green build with 8 agent-stamped
+    # handlers graded action_py=0. A handler file's own AUTHORED_BY marker
+    # is its attribution, over whatever the manifest says: a stamped handler
+    # the manifest omits counts, and one it claims whose stamp names another
+    # source does not. A file with no marker keeps the manifest's word.
+    on_disk = _handler_sources_on_disk(Path(output_dir))
+    if on_disk:
+        stamped = {action_artifact_id(rel) for rel in on_disk}
+        sources = {k: v for k, v in sources.items() if action_artifact_id(k) not in stamped}
+        sources.update(on_disk)
     counts = writer_authorship_counts(sources)
     agent = coding_agent_artifact_ids(sources)
     action_ids = action_artifact_ids(agent)

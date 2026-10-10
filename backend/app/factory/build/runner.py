@@ -1202,6 +1202,7 @@ class RoleRunner:
         test_defect_rounds: int = 0,
         reopen: bool = False,
         factory_file_reprompts: int = 0,
+        handed: Sequence[str] = (),
     ) -> GateDecision:
         """THE runner rule for a failed phase verdict -- every gate, one place.
 
@@ -1219,6 +1220,9 @@ class RoleRunner:
         4. Every decision is written to the ledger with its class and round.
         ``reopen``: the verdict arrived after the run ended (the N3 Store
         gate) -- the REWORK re-opens WRITER, TESTER and STORE_MANAGER.
+        ``handed``: the work list the failed pass was given. A REPROMPT keeps
+        what it still owes (the pass was rejected before anything else was
+        judged).
         """
         from app.factory.build import brief_gates, failure_owner
 
@@ -1341,7 +1345,7 @@ class RoleRunner:
             )
 
         if role is BuildRole.WRITER and getattr(verdict, "reason", "") == WRITER_AUTHORED_FACTORY_FILE:
-            return self._reprompt_factory_files(role, verdict, factory_file_reprompts)
+            return self._reprompt_factory_files(role, verdict, factory_file_reprompts, handed)
 
         current = _failure_keys(verdict, [d["nodeid"] for d in defects])
         again = failure_owner.repeated(self._all_rework_failures(), current)
@@ -1437,7 +1441,9 @@ class RoleRunner:
         )
         return GateDecision(DECISION_REWORK, work_list=work, record=rec)
 
-    def _reprompt_factory_files(self, role: BuildRole, verdict: Any, reprompts: int) -> GateDecision:
+    def _reprompt_factory_files(
+        self, role: BuildRole, verdict: Any, reprompts: int, handed: Sequence[str] = ()
+    ) -> GateDecision:
         """A writer pass touched Factory-owned files: re-prompt, never rework.
 
         The pass is rejected on the FIRST such write (the WRITER gate checks
@@ -1471,11 +1477,25 @@ class RoleRunner:
             build_round=build_rounds,
             reason=f"re-prompt {reprompts + 1} (no rework budget): Factory-owned files touched",
         )
-        work = tuple(getattr(verdict, "findings", None) or ()) + (
+        own = tuple(getattr(verdict, "findings", None) or ()) + (
             "[factory_owned] those files were put back as the Factory renders them; this pass is "
             "re-prompted at no rework cost. Leave every path under FACTORY-OWNED FILES in the brief "
             "alone -- create, edit or delete none of them -- and finish the product.",
         )
+        # What the rejected pass was handed and still owes: the gate refused it
+        # on the Factory-owned files before judging anything else, so a rework
+        # finding it was sent to fix is still open. Live cycle 9 co-op
+        # (sess_e41f2375a98342d1): the re-prompt named only the touched file,
+        # the next pass never heard the rework finding, and the build stopped
+        # on it as SAME_FAILURE_TWICE. Lines an earlier re-prompt wrote are
+        # not carried: they named files this pass may not have touched.
+        earlier = getattr(self, "_reprompt_lines", set())
+        carried = tuple(
+            item for item in dict.fromkeys(str(i) for i in handed or ())
+            if item not in earlier and item not in own
+        )
+        self._reprompt_lines = earlier | set(own)
+        work = own + carried
         self._grant_rework_wall(role, build_round=build_rounds)
         self.ledger.append(
             EventKind.NOTE,
@@ -2695,6 +2715,7 @@ class RoleRunner:
                     rework_used=rework_used,
                     test_defect_rounds=test_defect_rounds,
                     factory_file_reprompts=factory_file_reprompts,
+                    handed=work_list,
                 )
                 if decision.kind == DECISION_ADVISORY:
                     done.add(role)

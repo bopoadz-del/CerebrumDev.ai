@@ -339,6 +339,23 @@ def runtime_paths(root: Path | str) -> List[str]:
     return sorted({rel for rel in locked_paths(root).values() if (root / rel).exists()})
 
 
+def locked_entries(root: Path | str) -> Dict[str, List[str]]:
+    """``{block id: the module files directly under its locked path}``, read
+    off the product tree (the lock and the files it points at -- data).
+
+    What the app's loader must open for each locked block: the writer is told
+    these, because the WRITER gate refuses a block whose load did not read
+    under its locked path. A locked path the tree does not carry (or that
+    holds no module file) is named as the path itself."""
+    root = Path(root)
+    out: Dict[str, List[str]] = {}
+    for bid, rel in sorted(locked_paths(root).items()):
+        base = root / rel
+        modules = sorted(p.name for p in base.glob("*.py") if p.is_file()) if base.is_dir() else []
+        out[bid] = [f"{rel}/{name}" for name in modules] or [rel]
+    return out
+
+
 def _misloaded(result: dict, image: Path, root: Path) -> List[str]:
     """A locked block that LOADED counts as loaded from its lock only when the
     run opened a file under its locked path (at start-up or on the call --
