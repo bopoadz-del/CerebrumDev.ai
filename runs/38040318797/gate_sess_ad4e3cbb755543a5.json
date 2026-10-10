@@ -1,0 +1,115 @@
+{
+  "live": {
+    "health": "ok",
+    "git_sha": "efe7cbc079a08bbbe8c14fa83d31ce10bbeae68f"
+  },
+  "session_id": "sess_ad4e3cbb755543a5",
+  "gate": {
+    "branch": "build/plt_5ac16f50c9384536",
+    "sha": "157c84c05f4e4a1150f735c8c9d043f897c1a48c",
+    "state": "success",
+    "description": "acceptance.py in Docker 22/22",
+    "passed": 22,
+    "total": 22,
+    "checks": [],
+    "run": "https://github.com/bopoadz-del/cerebrum-builds/actions/runs/38040326004",
+    "conclusion": "success"
+  },
+  "continue": {
+    "continue_http": 200,
+    "continue_reply": "ship_floor\\\", \\\"status\\\": \\\"PASS\\\", \\\"detail\\\": \\\"satisfied (itemised by the store-gate status)\\\", \\\"owner\\\": \\\"FACTORY\\\", \\\"evidence\\\": \\\"\\\", \\\"evidence_rows\\\": []}], \\\"checks\\\": [\\\"no_token_401\\\", \\\"missing_field_422\\\", \\\"enum_422\\\", \\\"ui_served_200\\\", \\\"rag_roundtrip_hit\\\", \\\"single_persistence_root\\\", \\\"ci_present_and_full_suite\\\", \\\"handler_bodies_distinct\\\", \\\"health_fail_closed\\\", \\\"openapi_committed\\\", \\\"docker_health_200\\\", \\\"cross_tenant_404\\\", \\\"migration_no_create_all\\\", \\\"negative_floor\\\", \\\"postgres_boot_200\\\", \\\"one_live_connector\\\", \\\"metrics_served\\\", \\\"backup_restore_roundtrip\\\", \\\"bench_p95\\\", \\\"audit_clean\\\", \\\"no_token_literal\\\", \\\"authorship_floor\\\"], \\\"product_passed\\\": 18, \\\"product_total\\\": 18, \\\"product_score\\\": \\\"18/18\\\", \\\"product_ok\\\": true, \\\"factory_owed\\\": [], \\\"harness_ran\\\": true}}}\"\n\nevent: delta\ndata: \"product \"\n\nevent: delta\ndata: \"is \"\n\nevent: delta\ndata: \"already \"\n\nevent: delta\ndata: \"pilot-ready \"\n\nevent: delta\ndata: \"(Store-green, \"\n\nevent: delta\ndata: \"acceptance \"\n\nevent: delta\ndata: \"k/k) \"\n\nevent: delta\ndata: \"(5/5 \"\n\nevent: delta\ndata: \"phases). \"\n\nevent: delta\ndata: \"I \"\n\nevent: delta\ndata: \"did \"\n\nevent: delta\ndata: \"not \"\n\nevent: delta\ndata: \"start \"\n\nevent: delta\ndata: \"a \"\n\nevent: delta\ndata: \"new \"\n\nevent: delta\ndata: \"coding \"\n\nevent: delta\ndata: \"run. \"\n\nevent: delta\ndata: \"Download \"\n\nevent: delta\ndata: \"it \"\n\nevent: delta\ndata: \"from \"\n\nevent: delta\ndata: \"Your \"\n\nevent: delta\ndata: \"Platforms. \"\n\nevent: done\ndata: \"\"\n\n",
+    "build_state": "succeeded",
+    "failure": null,
+    "decisions": [
+      {
+        "build_ceiling": 6,
+        "check": "gates",
+        "class": "REWORK",
+        "finding": "FAILED tests/test_routes.py::test_every_capability_route_answers - AssertionError: compliance_and_label_governance: HTTP 422: {\"detail\":\"approver must be one of: director-jane\"}",
+        "gate": "TESTER",
+        "gate_budget": 2,
+        "gate_name": "suite_green",
+        "reason": "",
+        "round_build": 1,
+        "round_gate": 1
+      }
+    ],
+    "activity_tail": [
+      {
+        "ts": "2026-10-08T11:04:08+00:00",
+        "role": "WRITER",
+        "text": "writer: STEP 4 [DEVOPS]: staged the writer-lane product tree into this checkout (app/**, alembic/**, frontend/**, deploy/**, product-dna/**, docs lane files, Dockerfile, README, requirements, scripts/"
+      },
+      {
+        "ts": "2026-10-08T11:04:08+00:00",
+        "role": "WRITER",
+        "text": "writer: STEP 5 [VERIFY]: pytest (code + pilot) 58 passed / 4 skipped; scripts/factory_checks.py exit 0 with no halt or miss; scripts/acceptance.py --self-check 22/22 measured checks PASS and no FAIL."
+      },
+      {
+        "ts": "2026-10-08T11:05:04+00:00",
+        "role": "WRITER",
+        "text": "writer: STEP 6 [BACKEND]: pipeline guard added \u2014 when no peer this request drove is pipeline-eligible, the workflow is handed the peers its own registry carries instead of an empty list the block fill"
+      },
+      {
+        "ts": "2026-10-08T11:05:04+00:00",
+        "role": "WRITER",
+        "text": "writer: STEP 7 [VERIFY]: re-ran the gates after STEP 6 \u2014 pytest (code + pilot) 58 passed / 4 skipped on the landed tree plus the two reworked files; scripts/factory_checks.py exit 0, no halt/finding/m"
+      },
+      {
+        "ts": "2026-10-08T11:06:04+00:00",
+        "role": "WRITER",
+        "text": "writer working \u2014 11m07s in, 150 file(s) on disk, 7 step(s) reported so far."
+      },
+      {
+        "ts": "2026-10-08T11:06:11+00:00",
+        "role": "WRITER",
+        "text": "writer: STEP 8 [VERIFY]: fresh-copy reproduction on an isolated tree (landed product + the two reworked files) \u2014 pytest 58 passed / 4 skipped, factory_checks exit 0, acceptance --self-check 22/22; com"
+      },
+      {
+        "ts": "2026-10-08T11:06:28+00:00",
+        "role": "WRITER",
+        "text": "FACTORY_CODE_CLI session finished \u2014 codewhale writer CLI exited"
+      },
+      {
+        "ts": "2026-10-08T11:06:41+00:00",
+        "role": "WRITER",
+        "text": "CHECKPOINT WRITER -> [redacted]@a801de8"
+      },
+      {
+        "ts": "2026-10-08T11:06:42+00:00",
+        "role": "TESTER",
+        "text": "TESTER wrote 10 test file(s)"
+      },
+      {
+        "ts": "2026-10-08T11:06:51+00:00",
+        "role": "TESTER",
+        "text": "CHECKPOINT TESTER -> [redacted]@75979cc"
+      },
+      {
+        "ts": "2026-10-08T11:06:54+00:00",
+        "role": "STORE_MANAGER",
+        "text": "CHECKPOINT STORE_MANAGER -> [redacted]@86015a3"
+      },
+      {
+        "ts": "2026-10-08T11:06:54+00:00",
+        "role": "",
+        "text": "code-phase SUCCESS; auto-opening Store-green cycle (build level production stops at STORE)"
+      },
+      {
+        "ts": "2026-10-08T11:07:04+00:00",
+        "role": "TESTER",
+        "text": "CHECKPOINT TESTER -> [redacted]@4fbc7d0"
+      },
+      {
+        "ts": "2026-10-08T11:07:12+00:00",
+        "role": "STORE_MANAGER",
+        "text": "docker unavailable \u2014 workspace handed off to cerebrum-builds; N3 store-gate is next"
+      },
+      {
+        "ts": "2026-10-08T11:07:12+00:00",
+        "role": "STORE_MANAGER",
+        "text": "failure narrative (ledger)"
+      }
+    ]
+  }
+}
