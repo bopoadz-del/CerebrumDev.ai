@@ -175,11 +175,47 @@ def render_declared_locale(locale: Optional[Mapping[str, str]]) -> str:
     return json.dumps(body, indent=2, sort_keys=True) + "\n"
 
 
+def _read_workspace_text(workspace: Any, rel: Path) -> Optional[str]:
+    """``rel`` read through a workspace handle (staging, then destination) or
+    a bare root; None when it is absent or unreadable."""
+    try:
+        if isinstance(workspace, (str, Path)):
+            return (Path(workspace) / rel).read_text(encoding="utf-8")
+        return workspace.read_text(rel)
+    except Exception:  # noqa: BLE001 -- an unreadable record declares nothing
+        return None
+
+
+def recorded_locale(workspace: Any) -> Optional[Dict[str, str]]:
+    """The pair the tree's declared record already carries, or None."""
+    text = _read_workspace_text(workspace, DECLARED_LOCALE_REL)
+    try:
+        raw = json.loads(text) if text else None
+    except ValueError:
+        return None
+    if not isinstance(raw, Mapping):
+        return None
+    return declared_locale(raw.get("country"), raw.get("currency"))
+
+
+def stamped_locale(workspace: Any, blueprint: Any) -> Optional[Dict[str, str]]:
+    """The pair the stamp writes: the build's declared one (its blueprint --
+    the session's typed intake). With none declared there, the pair the tree
+    already declares stays: a re-stamp never erases a declaration, and never
+    invents one.
+
+    Live (PR #719 replay, cerebrum-builds 38031528519): the registry stamp
+    rendered build/plt_7056c46ae14f4c4b's AE / AED record with no blueprint,
+    blanked it, and the certified 22/22 build stopped at its console build."""
+    return locale_of(blueprint) or recorded_locale(workspace)
+
+
 def emit_money_artifacts(workspace: Any, blueprint: Any) -> None:
     """Stamp the declared pair and the settings module (Factory-owned)."""
     from app.factory.build.data_lifecycle import write_workspace_text
 
-    write_workspace_text(workspace, DECLARED_LOCALE_REL, render_declared_locale(locale_of(blueprint)))
+    locale = stamped_locale(workspace, blueprint)
+    write_workspace_text(workspace, DECLARED_LOCALE_REL, render_declared_locale(locale))
     write_workspace_text(workspace, MONEY_SETTINGS_REL, render_money_settings())
 
 
