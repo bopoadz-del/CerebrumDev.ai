@@ -412,6 +412,13 @@ def test_inspect_file_templated_is_not_capability_templated(tmp_path):
     assert snap["artifact_files"] == 36
 
 
+def _plant_stamped_handlers(root, caps, source="coder CLI (/usr/local/bin/kimi)"):
+    actions = Path(root) / "app" / "actions"
+    actions.mkdir(parents=True, exist_ok=True)
+    for cid in caps:
+        (actions / f"{cid}.py").write_text(f"AUTHORED_BY = {source!r}\n", encoding="utf-8")
+
+
 def test_stale_hard_stop_inspect_does_not_poison_store_green_status(tmp_path):
     ledger = _ledger_with_written(tmp_path)
     ledger.append(
@@ -437,20 +444,10 @@ def test_stale_hard_stop_inspect_does_not_poison_store_green_status(tmp_path):
     assert reconciled["superseded_by"] == "RUN_SUCCEEDED"
 
     # 0.5: build_status re-evaluates the authorship floor; this pilot
-    # success carries 7 CLI-authored capabilities, so record them in the
-    # provenance the floor reads (unmeasured is now below floor).
-    docs = tmp_path / "build" / "docs"
-    docs.mkdir(parents=True, exist_ok=True)
-    (docs / "build_provenance.json").write_text(
-        json.dumps(
-            {
-                "artifact_sources": {
-                    cid: "coder CLI (/usr/local/bin/kimi)" for cid in INSURE_CAPS
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
+    # success carries 7 CLI-authored capabilities. The floor reads the
+    # handlers' AUTHORED_BY markers on disk (Factory-side evidence, owner
+    # spec cycle 9), so the handlers are planted stamped.
+    _plant_stamped_handlers(tmp_path / "build", INSURE_CAPS)
 
     status = build_status(tmp_path / "build")
     assert status["state"] == "succeeded"
@@ -501,20 +498,9 @@ def test_pilot_success_closing_inspect_matches_ledger(tmp_path):
     assert last.get("stage") == "pilot_close"
     assert last.get("pilot_ready") is True
     assert last.get("decision") == "already_pilot_ready"
-    # 0.5: the authorship floor is re-evaluated against the provenance;
-    # this pilot success carries 7 CLI-authored capabilities.
-    docs = tmp_path / "build" / "docs"
-    docs.mkdir(parents=True, exist_ok=True)
-    (docs / "build_provenance.json").write_text(
-        json.dumps(
-            {
-                "artifact_sources": {
-                    cid: "coder CLI (/usr/local/bin/kimi)" for cid in INSURE_CAPS
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
+    # 0.5: the authorship floor is re-evaluated against the handlers'
+    # AUTHORED_BY markers on disk; this pilot success carries 7.
+    _plant_stamped_handlers(tmp_path / "build", INSURE_CAPS)
     status = build_status(tmp_path / "build")
     assert status["pilot_ready"] is True
     assert status["budget_inspect"]["pilot_ready"] is True
