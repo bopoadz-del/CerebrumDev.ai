@@ -2627,8 +2627,12 @@ class RoleRunner:
                             ).branch
                         # App-token pushes do not trigger workflow runs;
                         # dispatch the store-gate explicitly or the handoff
-                        # waits forever.
-                        dispatch_store_gate(gate_branch, env=os.environ)
+                        # waits forever. The dispatch carries main's whole
+                        # gate onto the branch first, so the commit it
+                        # gates may be newer than the push: N3 reads THAT.
+                        gated = dispatch_store_gate(gate_branch, env=os.environ)
+                        if isinstance(gated, str) and gated.strip():
+                            gate_sha = gated.strip()
                         self.ledger.append(
                             EventKind.NOTE,
                             role=role,
