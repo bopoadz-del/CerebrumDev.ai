@@ -114,8 +114,10 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Backend requirements (export-check reads the export rule from the code)
-        if: steps.req.outputs.action == 'export-check'
+      - name: Backend requirements (export-check reads the export rule; gate-dispatch carries main's Store gate)
+        # gate-dispatch carries main's whole Store gate onto the branch with
+        # the checkpoint's own carry (branch_attach) before it dispatches.
+        if: steps.req.outputs.action == 'export-check' || steps.req.outputs.action == 'gate-dispatch'
         run: pip install -q -r backend/requirements.txt
 
       - name: The cycle's repros.json

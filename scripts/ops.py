@@ -462,7 +462,41 @@ def _failing_checks(payload: Any) -> List[Dict[str, Any]]:
     return failed
 
 
-def dispatch_gate(repo: str, branch: str, token: str, *, wait_s: float, poll_s: float = 20.0) -> Dict[str, Any]:
+def carry_mains_gate_onto(repo: str, branch: str, token: str) -> str:
+    """Make ``branch`` carry cerebrum-builds ``main``'s whole Store gate; return
+    the head sha the gate will judge. The SAME carry every checkpoint makes
+    (branch_attach.carry_gate_onto_branch)."""
+    sys.path.insert(0, str(ROOT / "backend"))
+    from app.factory.build.branch_attach import carry_gate_onto_branch  # noqa: PLC0415
+    from app.factory.build.builds_push import BUILDS_REPO_ENV, BUILDS_TOKEN_ENV  # noqa: PLC0415
+
+    return carry_gate_onto_branch(branch, {BUILDS_TOKEN_ENV: token, BUILDS_REPO_ENV: repo})
+
+
+def dispatch_gate(
+    repo: str,
+    branch: str,
+    token: str,
+    *,
+    wait_s: float,
+    poll_s: float = 20.0,
+    carry: Callable[[str, str, str], str] = carry_mains_gate_onto,
+) -> Dict[str, Any]:
+    """Run the Store gate on ``branch`` and read its verdict.
+
+    ``workflow_dispatch`` runs store-gate.yml and .github/store_gate/* from the
+    dispatched branch's OWN tree. Live 2026-10-10 (store-gate run 38040326004)
+    this dispatched a branch cut before a gate fix: its stale helper ran the
+    harness from the mounted checkout and a false 22/22 was written. So
+    ``main``'s whole gate is carried onto the branch first -- no commit when it
+    already carries it -- and a carry that cannot be made fails closed before
+    anything is dispatched."""
+    try:
+        carried = str(carry(repo, branch, token) or "").strip()
+    except Exception as exc:  # noqa: BLE001 -- named, and nothing is dispatched
+        raise OpsError(f"cannot carry main's Store gate onto {repo}@{branch}: {redact(exc)}") from exc
+    if not carried:
+        raise OpsError(f"cannot carry main's Store gate onto {repo}@{branch}: no head sha")
     started = time.time()
     status, body = gh_req(
         "POST", f"/repos/{repo}/actions/workflows/store-gate.yml/dispatches", token, {"ref": branch}
@@ -496,6 +530,7 @@ def dispatch_gate(repo: str, branch: str, token: str, *, wait_s: float, poll_s: 
     if run.get("status") != "completed":
         raise OpsError(f"store-gate run {run.get('html_url')} still {run.get('status')} after {int(wait_s)} s")
     verdict = gate_verdict(repo, branch, token)
+    verdict["gate_carried_to"] = carried
     verdict["run"] = run.get("html_url")
     verdict["conclusion"] = run.get("conclusion")
     return verdict
@@ -786,6 +821,7 @@ def gate_summary(gate: Mapping[str, Any]) -> str:
     lines = [
         f"### Store gate on `{gate.get('branch')}` @ `{str(gate.get('sha'))[:12]}`",
         "",
+        f"- main's Store gate carried onto the branch: head `{str(gate.get('gate_carried_to') or '')[:12]}`",
         f"- run {gate.get('run')} conclusion **{gate.get('conclusion')}**",
         f"- store-gate status **{gate.get('state')}**: {gate.get('description')}",
     ]
