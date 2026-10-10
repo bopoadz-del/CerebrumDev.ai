@@ -1,0 +1,30 @@
+{
+  "live": {
+    "health": "ok",
+    "git_sha": "efe7cbc079a08bbbe8c14fa83d31ce10bbeae68f"
+  },
+  "session_id": "sess_a7ed669cb1814989",
+  "package_http": 200,
+  "strip": {
+    "files": 225,
+    "bytes": 463427,
+    "leaked": [],
+    "ok": true
+  },
+  "your_platforms": {
+    "listing_http": 200,
+    "listed": true,
+    "card": {
+      "session_id": "sess_a7ed669cb1814989",
+      "user_id": "acct_ccf8e44398c143c5",
+      "phase": 1,
+      "phase_status": "in_progress",
+      "title": "payments platform for a small money-transfer bu\u2026",
+      "stage": "build",
+      "updated_at": "2026-10-10T05:13:37.759477"
+    },
+    "product_http": 200,
+    "has_generation": true
+  },
+  "ok": true
+}
