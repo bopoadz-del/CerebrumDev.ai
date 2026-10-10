@@ -115,6 +115,10 @@ class Verdict:
     #: Locked blocks the loader took from somewhere other than their locked
     #: path (a silent local fallback), one finding each.
     misloaded: List[str] = field(default_factory=list)
+    #: Per missing image path, what the build context says about it (the
+    #: context file it would come from, and the .dockerignore rule that
+    #: excludes it, if one does) -- so the rework names the line to change.
+    causes: Dict[str, str] = field(default_factory=dict)
 
 
 # -- .dockerignore -------------------------------------------------------------------
@@ -381,6 +385,30 @@ def _missing_paths(result: dict, image: Path, root: Path) -> Tuple[List[str], bo
     return missing, judgeable or bool(missing)
 
 
+def context_cause(path: str, workdir: str, root: Path, rules: Sequence[Tuple[bool, str]]) -> str:
+    """Why an image path under the final WORKDIR is absent, read off the build
+    context: the context file it would be copied from, and whether
+    .dockerignore excludes it or no COPY/ADD of the final stage places it."""
+    base = str(PurePosixPath(workdir)).rstrip("/") + "/"
+    if not path.startswith(base):
+        return ""
+    rel = path[len(base):]
+    if not (root / rel).is_file():
+        return ""
+    parts = PurePosixPath(rel).parts
+    prefixes = ["/".join(parts[: i + 1]) for i in range(len(parts))]
+    excluding = ""
+    for negated, pattern in rules:
+        if any(_matches(p, pattern) for p in prefixes):
+            excluding = "" if negated else pattern
+    if excluding:
+        return f"the build context has {rel}, but .dockerignore rule {excluding!r} excludes it"
+    return (
+        f"the build context has {rel}, but no COPY/ADD in the Dockerfile's final stage "
+        f"puts {parts[0]}/ under {workdir}"
+    )
+
+
 def _probe_env(cwd: Path) -> dict:
     env = {k: os.environ[k] for k in _OS_STARTUP_VARS if os.environ.get(k)}
     env.update(GATE_RUN_ENV)
@@ -442,9 +470,12 @@ def check(root: Path | str, *, python: str = sys.executable, timeout_s: int = PR
         if not judgeable:
             return Verdict(ok=True, judged=False, detail="not judgeable here: a third-party package is not installed")
         if missing:
+            rules = read_dockerignore(root)
+            causes = {p: c for p in missing if (c := context_cause(p, workdir, root, rules))}
             return Verdict(
                 ok=False, judged=True, missing=missing,
                 detail="; ".join(f"image missing {p}" for p in missing),
+                causes=causes,
             )
         last = (result["traces"][-1].strip().splitlines() or [""])[-1]
         return Verdict(ok=False, judged=True, detail=f"image cannot load the app: {_in_image(last, image)[:300]}")

@@ -49,6 +49,10 @@ MONEY_SETTINGS_MODULE = "app.money_settings"
 COUNTRY_ENV = "PLATFORM_COUNTRY"
 CURRENCY_ENV = "PLATFORM_CURRENCY"
 TAX_RATE_ENV = "PLATFORM_TAX_RATE"
+#: Every other rate the customer owns (a fee, an fx rate, a discount, a
+#: commission) is a named operator setting: ``PLATFORM_RATE_<NAME>``. The
+#: product names the rate; the Factory names none.
+RATE_ENV_PREFIX = "PLATFORM_RATE_"
 
 WITHHELD_NO_CURRENCY = "no currency declared"
 
@@ -99,6 +103,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -144,6 +149,23 @@ def tax_rate() -> float:
     if not raw:
         raise MoneySettingMissing("no tax rate set ({TAX_RATE_ENV})")
     return float(raw)
+
+
+_RATE_NAME = re.compile(r"[a-z][a-z0-9_]*")
+
+
+def rate(name: str) -> float:
+    """A named rate the operator sets (a fee, an fx rate, a discount):
+    {RATE_ENV_PREFIX}<NAME>. With none set, the money path that needs it
+    refuses -- a rate is never a value in code."""
+    key = str(name or "").strip().lower()
+    if not _RATE_NAME.fullmatch(key):
+        raise ValueError(f"a rate name is lower_snake_case, not {{name!r}}")
+    env = {RATE_ENV_PREFIX!r} + key.upper()
+    raw = (os.getenv(env) or "").strip()
+    if not raw:
+        raise MoneySettingMissing(f"no {{key}} rate set ({{env}})")
+    return float(raw)
 '''
 
 
@@ -184,9 +206,11 @@ def money_brief_lines(blueprint: Any) -> List[str]:
         "- MONEY: " + declared,
         "- MONEY: declare every money field with type money in its model spec "
         "(the emitted model lists them in MONEY_FIELDS). Take currency, "
-        f"country and every rate (tax, fx, discount) from {MONEY_SETTINGS_MODULE} "
-        "at the point of use, and scale an amount only by a factor read from "
-        "it; keep codes and rates out of the source.",
+        f"country and every rate from {MONEY_SETTINGS_MODULE} at the point of use: "
+        "tax_rate() for tax, rate('<name>') for any other rate the customer owns "
+        f"(a fee, an fx rate, a discount -- the operator sets {RATE_ENV_PREFIX}<NAME>). "
+        "Scale an amount only by a factor read from it; keep codes and rates "
+        "out of the source.",
     ]
 
 
@@ -315,9 +339,24 @@ def _module_findings(path: Path, rel: str, locale: Mapping[str, str], money: Set
                 found.append(f"{rel}:{node.lineno}: a money value is scaled by the literal {factor.value!r} -- a rate is a setting ({MONEY_SETTINGS_MODULE}.tax_rate())")
                 break
             if not _reads_settings(factor, aliases):
-                found.append(f"{rel}:{node.lineno}: a money value is scaled by a factor not taken from {MONEY_SETTINGS_MODULE}")
+                found.append(
+                    f"{rel}:{node.lineno}: a money value is scaled by a factor not taken from {MONEY_SETTINGS_MODULE}"
+                    f" -- `{_snippet(node)}` scales a money value by `{_snippet(factor)}`; read that factor from "
+                    f"{MONEY_SETTINGS_MODULE} (tax_rate(), or rate('<name>') for a rate the customer owns)"
+                )
             break
-    return found
+    # A nested expression (a * b / c) is visited once per operator on one line:
+    # one finding per distinct line and text.
+    return list(dict.fromkeys(found))
+
+
+def _snippet(node: ast.AST, limit: int = 80) -> str:
+    """The expression as the writer wrote it, so the rework names the code."""
+    try:
+        text = ast.unparse(node)
+    except Exception:  # noqa: BLE001 -- a finding never fails on its own quote
+        return "?"
+    return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
 def money_verdict(workspace: Path) -> MoneyVerdict:

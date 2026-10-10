@@ -306,3 +306,38 @@ def test_the_stand_in_reading_app_sources_never_counts_as_loading_a_block(tmp_pa
     # block is judged only by what the loader itself opened.
     verdict = image_sufficiency.check(_product(tmp_path, FULL, main=REQUIRED_SETTING_MAIN))
     assert verdict.misloaded == []
+
+
+# -- the rework names the line to change (cycle 8 co-op anchor) ----------------------
+#
+# sess_ece9a0e5c44e4650: the writer's Dockerfile left vendor/ out of the image;
+# round 1 named only the image paths, the writer fixed it, then a later pass
+# rewrote the Dockerfile and dropped vendor/ again. The finding now says which
+# context file is missing from the image and why.
+
+SRV_APP_ONLY = "FROM python:3.12-slim\nWORKDIR /srv/app\nCOPY app ./app\nCOPY blocks.lock.json ./\n"
+
+
+def test_a_missing_path_names_the_context_file_and_the_missing_copy(tmp_path):
+    root = _product(tmp_path, SRV_APP_ONLY)
+    cause = image_sufficiency.context_cause(
+        "/srv/app/vendor/blocks/ledger/block.py", "/srv/app", root, image_sufficiency.read_dockerignore(root)
+    )
+    assert "vendor/blocks/ledger/block.py" in cause
+    assert "no COPY/ADD" in cause and "vendor/" in cause and "/srv/app" in cause
+
+
+def test_a_missing_path_names_the_dockerignore_rule_that_drops_it(tmp_path):
+    root = _product(tmp_path, FULL, dockerignore="vendor/\n")
+    cause = image_sufficiency.context_cause(
+        "/app/vendor/blocks/ledger/block.py", "/app", root, image_sufficiency.read_dockerignore(root)
+    )
+    assert ".dockerignore rule 'vendor'" in cause
+
+
+def test_the_writer_gate_finding_carries_the_cause():
+    import inspect
+
+    from app.factory.build import gates
+
+    assert "image.causes" in inspect.getsource(gates.gate_writer_contract)

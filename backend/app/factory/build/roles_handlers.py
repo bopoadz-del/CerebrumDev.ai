@@ -4110,7 +4110,32 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
         backfill_deploy_substrate,
         stamp_factory_deploy_modules,
     )
-    from app.factory.build.domain_acceptance import backfill_domain_substrate
+    from app.factory.build.declared_specs import product_root
+    from app.factory.build.domain_acceptance import (
+        backfill_domain_gaps,
+        domain_specs,
+        stamp_domain_substrate,
+    )
+
+    # The domain acceptance driver and the kernel it runs on are Factory-owned
+    # (cycle 8: the kernel was never vendored on this path and the suite died
+    # at collection). Rendered whole, from the specs TESTER stamps its suite
+    # from; a writer that touched them was already put back above.
+    domain_root = product_root(
+        (getattr(ctx.workspace, "workspace", None), getattr(ctx.workspace, "destination", None))
+    )
+    domain_stamped = stamp_domain_substrate(
+        ctx.workspace,
+        domain_specs(dict(ctx.state.get("model_specs") or {}), domain_root),
+    )
+    if domain_stamped:
+        ctx.note(
+            "domain acceptance driver stamped by the factory (Factory-owned): "
+            + ", ".join(domain_stamped[:6])
+            + (f" (+{len(domain_stamped) - 6} kernel file(s))" if len(domain_stamped) > 6 else ""),
+            stage="substrate",
+            source="factory",
+        )
 
     # health/observe/revision are Factory-owned: the stamped suite reads
     # their SHAPES (health body, log line, revision identity), not only the
@@ -4128,7 +4153,7 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
         ("deploy", backfill_deploy_substrate(ctx.workspace)),
         (
             "domain",
-            backfill_domain_substrate(
+            backfill_domain_gaps(
                 ctx.workspace, dict(ctx.state.get("model_specs") or {})
             ),
         ),

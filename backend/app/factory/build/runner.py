@@ -91,9 +91,11 @@ REWORK_CEILING = 6
 #: The four things the runner can do with a failed phase verdict. One rule
 #: (``RoleRunner.decide``) picks one, from data, and records it.
 from app.factory.build import findings as _findings  # noqa: E402
+from app.factory.build.factory_owned import WRITER_AUTHORED as WRITER_AUTHORED_FACTORY_FILE  # noqa: E402
 from app.factory.build.rule_decision import (  # noqa: E402
     ADVISORY as DECISION_ADVISORY,
     REGENERATE_TEST as DECISION_REGENERATE_TEST,
+    REPROMPT as DECISION_REPROMPT,
     REWORK as DECISION_REWORK,
     STOP as DECISION_STOP,
 )
@@ -813,6 +815,18 @@ class RoleRunner:
             changed = refresh_factory_files(
                 self.workspace, name, self.blueprint, render_absent=True
             )
+            # The domain acceptance driver follows the specs TESTER is about to
+            # stamp its suite from (cycle 8 vineyard: rendered with the
+            # WRITER's empty specs, it named no capability the suite asks for).
+            from app.factory.build.domain_acceptance import domain_specs, stamp_domain_substrate
+            from app.factory.build.stamp_registry import _as_workspace
+
+            specs = domain_specs(dict(self.state.get("model_specs") or {}), self.workspace)
+            changed = list(changed) + [
+                rel
+                for rel in stamp_domain_substrate(_as_workspace(self.workspace), specs)
+                if rel not in changed
+            ]
         except Exception as exc:  # noqa: BLE001 -- recorded; the gates still judge
             self.ledger.append(
                 EventKind.NOTE,
@@ -1187,12 +1201,15 @@ class RoleRunner:
         rework_used: int,
         test_defect_rounds: int = 0,
         reopen: bool = False,
+        factory_file_reprompts: int = 0,
     ) -> GateDecision:
         """THE runner rule for a failed phase verdict -- every gate, one place.
 
         1. Classify from data: a check the brief never defined is ADVISORY
            (logged, no rework, no budget); a writer test that demanded the
            impossible of a declared contract is REGENERATE_TEST (no budget);
+           a writer pass that touched a Factory-owned file is REPROMPT (no
+           budget, its own bound; past it a FACTORY stop);
            a brief-defined failure on product code is REWORK.
         2. REWORK spends the build's shared budget (``budget.max_rework``,
            REWORK_BUDGET from the Floor): the writer gets the typed findings
@@ -1323,6 +1340,9 @@ class RoleRunner:
                 payload={"factory_owned": factory_rows, "routed": "PRODUCT"},
             )
 
+        if role is BuildRole.WRITER and getattr(verdict, "reason", "") == WRITER_AUTHORED_FACTORY_FILE:
+            return self._reprompt_factory_files(role, verdict, factory_file_reprompts)
+
         current = _failure_keys(verdict, [d["nodeid"] for d in defects])
         again = failure_owner.repeated(self._all_rework_failures(), current)
         if again:
@@ -1416,6 +1436,62 @@ class RoleRunner:
             payload=payload,
         )
         return GateDecision(DECISION_REWORK, work_list=work, record=rec)
+
+    def _reprompt_factory_files(self, role: BuildRole, verdict: Any, reprompts: int) -> GateDecision:
+        """A writer pass touched Factory-owned files: re-prompt, never rework.
+
+        The pass is rejected on the FIRST such write (the WRITER gate checks
+        it before anything else; the Factory's versions are already back) and
+        the writer is sent straight back with the paths. It is not the
+        product's failure, so it spends none of the gate's rework budget and
+        never counts toward the same-failure-twice history (owner, cycle 8:
+        the fintech writer created TESTER's suites in rounds 1 and 2, then
+        stopped on its first real finding with "WRITER gate rework budget of
+        2 spent"). Bounded by its own count: a writer that keeps touching them
+        after being told is a FACTORY stop, never charged to the product."""
+        from app.factory.build import factory_owned
+
+        touched = list((getattr(verdict, "payload", None) or {}).get("touched") or [])
+        paths = ", ".join(str(row.get("path")) for row in touched) or str(verdict.detail)
+        gate_rounds = self._rework_rounds_at(role)
+        build_rounds = self._rework_rounds_this_build()
+        if reprompts >= self.budget.max_rework:
+            return self._stop(
+                Outcome.FAILED_GATE,
+                f"FACTORY_FAULT: the writer touched Factory-owned files after {reprompts} "
+                f"re-prompt(s) naming them: {paths}",
+                verdict,
+                role,
+            )
+        rec = self._decision_record(
+            DECISION_REPROMPT,
+            role=role,
+            verdict=verdict,
+            gate_round=gate_rounds,
+            build_round=build_rounds,
+            reason=f"re-prompt {reprompts + 1} (no rework budget): Factory-owned files touched",
+        )
+        work = tuple(getattr(verdict, "findings", None) or ()) + (
+            "[factory_owned] those files were put back as the Factory renders them; this pass is "
+            "re-prompted at no rework cost. Leave every path under FACTORY-OWNED FILES in the brief "
+            "alone -- create, edit or delete none of them -- and finish the product.",
+        )
+        self._grant_rework_wall(role, build_round=build_rounds)
+        self.ledger.append(
+            EventKind.NOTE,
+            role=REWORK_TARGET,
+            detail=f"REPROMPT {reprompts + 1}/{self.budget.max_rework} (no rework budget): {paths}",
+            payload={
+                "reprompt": reprompts + 1,
+                "touched": touched,
+                "finding_shape": factory_owned.finding_shape(touched) if touched else "",
+                "work_list": list(work),
+                "writer_dispatched": True,
+                "product_failure": False,
+                "decision": rec,
+            },
+        )
+        return GateDecision(DECISION_REPROMPT, work_list=work, record=rec)
 
     def _grant_rework_wall(
         self, role: BuildRole, *, reopen: bool = False, build_round: int = 0
@@ -2235,6 +2311,9 @@ class RoleRunner:
         # Writer-test regenerations for TEST_DEFECTs: their own count, never
         # the product rework budget.
         test_defect_rounds = 0
+        # WRITER passes re-prompted for touching Factory-owned files: their own
+        # count, never the rework budget (_reprompt_factory_files).
+        factory_file_reprompts = 0
         work_list: Sequence[str] = ()
         collected: list[str] = []
 
@@ -2615,6 +2694,7 @@ class RoleRunner:
                     verdict,
                     rework_used=rework_used,
                     test_defect_rounds=test_defect_rounds,
+                    factory_file_reprompts=factory_file_reprompts,
                 )
                 if decision.kind == DECISION_ADVISORY:
                     done.add(role)
@@ -2632,6 +2712,8 @@ class RoleRunner:
                     )
                 if decision.kind == DECISION_REGENERATE_TEST:
                     test_defect_rounds += 1
+                elif decision.kind == DECISION_REPROMPT:
+                    factory_file_reprompts += 1
                 else:
                     rework_used += 1
                 work_list = decision.work_list
