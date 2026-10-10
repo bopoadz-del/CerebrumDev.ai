@@ -34,6 +34,10 @@ PROVENANCE_REL = "docs/provenance/provenance.json"
 #: never shipped.
 VIOLATIONS_REL = "docs/writer_factory_owned.json"
 
+#: The WRITER gate's reason for a pass that touched a Factory-owned file. The
+#: runner re-prompts on it without spending a rework round.
+WRITER_AUTHORED = "writer_authored_factory_file"
+
 CREATED = "created"
 MODIFIED = "modified"
 DELETED = "deleted"
@@ -76,6 +80,98 @@ def prestamp(root: Path | str, blueprint: Any = None, ctx: Any = None) -> List[s
     for rel in prestamp_late_files(base, ctx):
         if rel not in changed:
             changed.append(rel)
+    # Cycle 8 (19fc746c): the domain acceptance driver was absent when the
+    # writer started, so the construction writer authored its own and the run
+    # halted on a substrate conflict. Present from the start, it is the
+    # Factory's to keep; its final version follows the suite's specs.
+    from app.factory.build.domain_acceptance import domain_specs, stamp_domain_substrate
+
+    state = getattr(ctx, "state", None) or {}
+    specs = domain_specs(dict(state.get("model_specs") or {}), base)
+    for rel in stamp_domain_substrate(_as_workspace(base), specs):
+        if rel not in changed:
+            changed.append(rel)
+    # The money settings (re-stamped before every pass by run_writer; here too,
+    # so every writer path finds them as the Factory renders them).
+    from app.factory.build.money_contract import DECLARED_LOCALE_REL, MONEY_SETTINGS_REL, emit_money_artifacts
+
+    money = [Path(r).as_posix() for r in (MONEY_SETTINGS_REL, DECLARED_LOCALE_REL)]
+    money_before = {rel: (base / rel).read_bytes() if (base / rel).is_file() else None for rel in money}
+    emit_money_artifacts(_as_workspace(base), blueprint)
+    for rel in money:
+        if (base / rel).read_bytes() != money_before[rel] and rel not in changed:
+            changed.append(rel)
+    # Cycle 8 smoke B / fintech: whatever owned path is still absent.
+    for rel in prestamp_absent_owned(base, ctx):
+        if rel not in changed:
+            changed.append(rel)
+    return changed
+
+
+#: Owned paths a build carries in rather than renders: the Store gate workflow
+#: comes with the checkpoint from cerebrum-builds ``main``.
+def carried_paths() -> Tuple[str, ...]:
+    from app.factory.build.builds_push import STORE_GATE_PATH
+
+    return (STORE_GATE_PATH,)
+
+
+def prestamp_absent_owned(root: Path | str, ctx: Any = None) -> List[str]:
+    """Every Factory-owned path still ABSENT before a writer pass, rendered by
+    the renderer that owns it; returns what was written. Driven by the one
+    list (:func:`factory_owned_paths`), never by naming a file.
+
+    Live cycle 8 (19fc746c): smoke B's writer created constraints.txt and the
+    fintech writer created TESTER's suites -- Factory-owned files that did not
+    exist yet when the writer ran -- and each was charged a rework round.
+    constraints.txt was rendered only beside a requirements.txt; TESTER's
+    suites only by TESTER. Here TESTER's own stamping runs against the tree as
+    it stands, into a scratch tree, and only the owned paths still absent are
+    copied in (TESTER renders the final versions as before); constraints.txt
+    is rendered from whatever the tree declares so far."""
+    import shutil
+    import tempfile
+
+    base = Path(root)
+    absent = [rel for rel in factory_owned_paths() if rel not in carried_paths() and not (base / rel).exists()]
+    if not absent:
+        return []
+    changed: List[str] = []
+    from app.factory.build.dependency_pins import CONSTRAINTS_REL, constraints_for_tree
+
+    if CONSTRAINTS_REL in absent:
+        (base / CONSTRAINTS_REL).write_text(constraints_for_tree(base), encoding="utf-8")
+        changed.append(CONSTRAINTS_REL)
+    rest = [rel for rel in absent if rel not in changed]
+    if not rest or ctx is None:
+        return changed
+    from types import SimpleNamespace
+
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.roles import RoleContext
+    from app.factory.build.roles_handlers import run_tester
+    from app.factory.build.workspace import RoleWorkspace
+
+    with tempfile.TemporaryDirectory(prefix="tester-prestamp-") as scratch:
+        tester = RoleContext(
+            role=BuildRole.TESTER,
+            workspace=RoleWorkspace(BuildRole.TESTER, base, staging=scratch),
+            blueprint=getattr(ctx, "blueprint", None),
+            plan=getattr(ctx, "plan", None) or SimpleNamespace(capabilities=()),
+            state=dict(getattr(ctx, "state", None) or {}),
+        )
+        try:
+            run_tester(tester)
+        except Exception:  # noqa: BLE001 -- TESTER still stamps its suites later
+            import logging
+
+            logging.getLogger(__name__).warning("TESTER suites not pre-rendered", exc_info=True)
+        for rel in rest:
+            src = Path(scratch) / rel
+            if src.is_file():
+                (base / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(src, base / rel)
+                changed.append(rel)
     return changed
 
 

@@ -139,12 +139,32 @@ def _deploy_gap(root: Any) -> Any:
     return backfill_deploy_substrate(_as_workspace(root))
 
 
+def _money(root: Any) -> Any:
+    from app.factory.build.money_contract import emit_money_artifacts
+
+    return emit_money_artifacts(_as_workspace(root), None)
+
+
+def _domain_owned(root: Any) -> Any:
+    from app.factory.build.domain_acceptance import stamp_domain_substrate
+
+    return stamp_domain_substrate(_as_workspace(root), {})
+
+
+def _domain_gap(root: Any) -> Any:
+    from app.factory.build.domain_acceptance import backfill_domain_gaps
+
+    return backfill_domain_gaps(_as_workspace(root), {})
+
+
 def stamps() -> Tuple[Stamp, ...]:
     """The table, built from each stamp's own path constants."""
     from app.factory.build.data_lifecycle import platform_substrate
     from app.factory.build.dependency_pins import CONSTRAINTS_REL
     from app.factory.build.deploy import FACTORY_OWNED_DEPLOY_MODULES, deploy_substrate
+    from app.factory.build.domain_acceptance import DOMAIN_GAP_RELS, domain_owned_paths
     from app.factory.build.kernel_publish import JOBS_REL
+    from app.factory.build.money_contract import DECLARED_LOCALE_REL, MONEY_SETTINGS_REL
     from app.factory.build.placeholder_connectors import CONTRACT_TEST
     from app.factory.build.product_suites import PRODUCT_SUITES
     from app.factory.build.roles_constants import CONFTEST_REL
@@ -177,6 +197,16 @@ def stamps() -> Tuple[Stamp, ...]:
             tuple(dict.fromkeys((*PRODUCT_SUITES, rel(CONTRACT_TEST), "tests/test_data_lifecycle.py",
                                  "tests/test_deploy.py"))),
         ),
+        # Re-stamped whole before EVERY writer pass (run_writer): owned, so a
+        # writer edit is rejected by name, never silently overwritten.
+        Stamp("money settings", OWNED, (rel(MONEY_SETTINGS_REL), rel(DECLARED_LOCALE_REL)), _money,
+              staged_writer=True),
+        # The driver TESTER's domain acceptance suite performs through, and the
+        # kernel it runs on (live cycle 8: vineyard collection failure,
+        # construction substrate conflict). Re-rendered with the suite's specs.
+        Stamp("domain acceptance driver + product kernel", OWNED, domain_owned_paths(), _domain_owned,
+              staged_writer=True),
+        Stamp("domain substrate (gaps)", GAP, DOMAIN_GAP_RELS, _domain_gap, staged_writer=True),
         Stamp("platform substrate (gaps)", GAP, tuple(rel(p) for p, _t in platform_substrate()), _platform_gap,
               staged_writer=True),
         Stamp(

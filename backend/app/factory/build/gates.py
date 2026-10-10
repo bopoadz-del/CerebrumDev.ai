@@ -931,9 +931,9 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
         return GateResult(
             ok=False,
             gate=WRITER_CONTRACT_CHECK,
-            reason="writer_authored_factory_file",
+            reason=factory_owned.WRITER_AUTHORED,
             detail=(
-                "writer_authored_factory_file: the writer touched "
+                f"{factory_owned.WRITER_AUTHORED}: the writer touched "
                 + ", ".join(row["path"] for row in touched)
                 + " -- Factory-owned, restored to the Factory's version"
             ),
@@ -1024,6 +1024,7 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
             detail=f"image_missing_runtime_path: {image.detail}",
             findings=[
                 f"image missing {path}: the Dockerfile does not put it in the image, but the app loads it at runtime"
+                + (f" -- {image.causes[path]}" if image.causes.get(path) else "")
                 for path in image.missing
             ] or [image.detail],
             payload={"image_missing": list(image.missing)},

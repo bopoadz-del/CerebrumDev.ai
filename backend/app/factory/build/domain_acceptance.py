@@ -1078,6 +1078,110 @@ def backfill_domain_substrate(
     )
 
 
+# -- the domain acceptance driver is the Factory's (owner rule, 2026-10-08) ----------
+#
+# ``tests/test_domain_acceptance.py`` is TESTER's suite and asserts what
+# ``app/domain_ops.perform_all`` reports; domain_ops performs the ten outcomes
+# through the vendored product kernel. Two live failures (cycle 8, 19fc746c):
+#
+# * vineyard (sess_180779be6a7c4f70, build/plt_a33ca5e4ea2643da): the CodeWhale
+#   path wrote domain_ops (``from app.cerebrum_product_kernel...``) but never
+#   vendored the kernel -- ``_vendor_product_kernel`` sits below the CodeWhale
+#   return -- so the suite died at COLLECTION (ModuleNotFoundError), twice, and
+#   the writer was billed a rework round for a module it was never asked for.
+#   The module was also rendered with the WRITER's empty specs while TESTER
+#   stamps the suite with the product's, so the two named different
+#   capabilities.
+# * construction (sess_4663392a9d904352): absent when the writer started, the
+#   writer authored its own domain_ops (perform_all, no OUTCOMES) and the run
+#   halted on factory_substrate_conflict.
+#
+# The driver of a Factory-stamped acceptance suite is the Factory's outright:
+# rendered before every writer pass, re-rendered whole with the specs the
+# suite is stamped from, listed as Factory-owned, and a writer that touches it
+# is put back and told. The kernel it runs through ships with it. The two
+# modules the product's own code also calls (the work queue, the kernel
+# bridge) stay gap substrate: written where absent, never over the writer's.
+
+#: The vendored product kernel, as every product carries it.
+KERNEL_REL = "app/cerebrum_product_kernel"
+#: The Factory-owned half of the domain substrate (plus the kernel files).
+DOMAIN_OWNED_RELS: Tuple[str, ...] = ("app/domain_ops.py", "docs/domain_acceptance.json")
+#: The gap half: written only where the product has none.
+DOMAIN_GAP_RELS: Tuple[str, ...] = ("app/work_queue.py", "app/kernel_bridge.py")
+
+
+def _host_kernel_root() -> Path:
+    """The kernel package the Factory itself runs (the one ProductGenerator and
+    the template path vendor)."""
+    return Path(__file__).resolve().parents[2] / "cerebrum_product_kernel"
+
+
+def product_kernel_files() -> List[Tuple[str, str]]:
+    """``(relpath, text)`` for every file of the product kernel."""
+    root = _host_kernel_root()
+    out: List[Tuple[str, str]] = []
+    for item in sorted(root.rglob("*")):
+        if not item.is_file() or "__pycache__" in item.parts or item.suffix in {".pyc", ".pyo"}:
+            continue
+        rel = f"{KERNEL_REL}/{item.relative_to(root).as_posix()}"
+        out.append((rel, item.read_text(encoding="utf-8")))
+    return out
+
+
+def domain_owned_files(specs: Dict[str, Dict[str, Any]]) -> List[Tuple[str, str]]:
+    """``(relpath, text)`` of every Factory-owned domain file for ``specs``."""
+    rendered = dict(domain_substrate(specs))
+    return [(rel, rendered[rel]) for rel in DOMAIN_OWNED_RELS] + product_kernel_files()
+
+
+def domain_owned_paths() -> Tuple[str, ...]:
+    """The Factory-owned domain paths (spec-independent)."""
+    return tuple(rel for rel, _text in domain_owned_files({}))
+
+
+def domain_gap_files() -> List[Tuple[str, str]]:
+    """``(relpath, text)`` of the domain modules the Factory writes only where
+    the product has none."""
+    from app.factory.build.roles_handlers import _render_kernel_bridge
+
+    rendered = dict(domain_substrate({}))
+    return [("app/work_queue.py", rendered["app/work_queue.py"]), ("app/kernel_bridge.py", _render_kernel_bridge())]
+
+
+def domain_specs(state_specs: Optional[Dict[str, Any]], root: Any) -> Dict[str, Dict[str, Any]]:
+    """The specs TESTER stamps the domain suite from: the state spec merged with
+    the product's declared models (declared_specs, one source)."""
+    from app.factory.build.declared_specs import merge_declared_specs, specs_from_product_models
+
+    specs = dict(state_specs or {})
+    if root is not None and (Path(root) / "app" / "models.py").is_file():
+        specs = merge_declared_specs(specs, specs_from_product_models(Path(root)))
+    return specs
+
+
+def stamp_domain_substrate(workspace: Any, specs: Dict[str, Dict[str, Any]]) -> List[str]:
+    """Write every Factory-owned domain file whole; return the ones that changed."""
+    changed: List[str] = []
+    for rel, text in domain_owned_files(specs):
+        try:
+            current = workspace.read_text(rel) if workspace.exists(rel) else None
+        except (OSError, UnicodeDecodeError):
+            current = None
+        if current == text:
+            continue
+        workspace.write_text(Path(rel), text)
+        changed.append(rel)
+    return changed
+
+
+def backfill_domain_gaps(workspace: Any, specs: Dict[str, Dict[str, Any]]) -> Dict[str, List[str]]:
+    """Write the gap half of the domain substrate where the product has none."""
+    from app.factory.build.substrate_contract import reconcile_substrate
+
+    return reconcile_substrate(workspace, domain_gap_files(), [render_product_tests(specs)])
+
+
 def _normalised_sources(path: Path) -> Dict[str, str]:
     findings_as_files: Dict[str, str] = {}
     target = Path(path)

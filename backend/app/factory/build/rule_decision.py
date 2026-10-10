@@ -18,7 +18,7 @@ DECISION_KEY = "decision"
 GATE = "gate"  # the phase whose gate failed: WRITER / TESTER / STORE_MANAGER
 CHECK = "check"  # the brief check id that failed
 FINDING = "finding"  # the first finding, as the gate stated it
-CLASS = "class"  # REWORK / ADVISORY / REGENERATE_TEST / STOP
+CLASS = "class"  # REWORK / ADVISORY / REGENERATE_TEST / REPROMPT / STOP
 ROUND_GATE = "round_gate"  # this gate's rework round (n of its budget)
 ROUND_BUILD = "round_build"  # the build's rework round (n of the ceiling)
 
@@ -26,6 +26,11 @@ ROUND_BUILD = "round_build"  # the build's rework round (n of the ceiling)
 REWORK = "REWORK"
 ADVISORY = "ADVISORY"
 REGENERATE_TEST = "REGENERATE_TEST"
+#: A writer pass that touched a Factory-owned file: the Factory's version is
+#: put back and the writer re-prompted with the paths -- never a rework round
+#: (owner, cycle 8: a writer that burns its budget on Factory files is a
+#: FACTORY defect, never charged to the product).
+REPROMPT = "REPROMPT"
 STOP = "STOP"
 
 #: A NOTE carrying this key resets the rework budget: rounds before it no
