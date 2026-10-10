@@ -91,6 +91,16 @@ def prestamp(root: Path | str, blueprint: Any = None, ctx: Any = None) -> List[s
     for rel in stamp_domain_substrate(_as_workspace(base), specs):
         if rel not in changed:
             changed.append(rel)
+    # The money settings (re-stamped before every pass by run_writer; here too,
+    # so every writer path finds them as the Factory renders them).
+    from app.factory.build.money_contract import DECLARED_LOCALE_REL, MONEY_SETTINGS_REL, emit_money_artifacts
+
+    money = [Path(r).as_posix() for r in (MONEY_SETTINGS_REL, DECLARED_LOCALE_REL)]
+    money_before = {rel: (base / rel).read_bytes() if (base / rel).is_file() else None for rel in money}
+    emit_money_artifacts(_as_workspace(base), blueprint)
+    for rel in money:
+        if (base / rel).read_bytes() != money_before[rel] and rel not in changed:
+            changed.append(rel)
     # Cycle 8 smoke B / fintech: whatever owned path is still absent.
     for rel in prestamp_absent_owned(base, ctx):
         if rel not in changed:
