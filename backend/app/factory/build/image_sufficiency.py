@@ -328,6 +328,17 @@ def locked_paths(root: Path) -> Dict[str, str]:
     }
 
 
+def runtime_paths(root: Path | str) -> List[str]:
+    """The paths the app's loader reads at runtime that the product tree
+    carries: every locked block's path (blocks.lock.json, data), sorted.
+
+    The writer is told these before it writes a Dockerfile. It works in a
+    staging checkout that does not show the CLONER's tree, and two writers
+    (cycles 8 and 9) built images without it because nothing named it."""
+    root = Path(root)
+    return sorted({rel for rel in locked_paths(root).values() if (root / rel).exists()})
+
+
 def _misloaded(result: dict, image: Path, root: Path) -> List[str]:
     """A locked block that LOADED counts as loaded from its lock only when the
     run opened a file under its locked path (at start-up or on the call --
@@ -401,10 +412,17 @@ def context_cause(path: str, workdir: str, root: Path, rules: Sequence[Tuple[boo
     for negated, pattern in rules:
         if any(_matches(p, pattern) for p in prefixes):
             excluding = "" if negated else pattern
+    # The build context is the product tree the writer's pass is merged into,
+    # not the writer's staging checkout: say so, or a writer that cannot see
+    # the path reads "the build context has it" as untrue (cycle 9 smoke A).
+    context = (
+        "the build context (the product tree your pass is merged into, which "
+        "carries it even when your checkout does not)"
+    )
     if excluding:
-        return f"the build context has {rel}, but .dockerignore rule {excluding!r} excludes it"
+        return f"{context} has {rel}, but .dockerignore rule {excluding!r} excludes it"
     return (
-        f"the build context has {rel}, but no COPY/ADD in the Dockerfile's final stage "
+        f"{context} has {rel}, but no COPY/ADD in the Dockerfile's final stage "
         f"puts {parts[0]}/ under {workdir}"
     )
 

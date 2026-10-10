@@ -8,13 +8,24 @@ change: bump the version, log it, re-run the determinism test.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Dict, List, Sequence
 
 from app.factory.build.acceptance_floor import (
     render_for_prompt as render_acceptance_floor,
 )
 
 #: Version log.
+#: v13 -- THE BUILD CONTEXT, NAMED. The writer works in a staging checkout
+#:   that starts empty; the CLONER's vendored blocks live only in the product
+#:   tree its pass is merged into, which is what the Dockerfile is built from.
+#:   Nothing in the prompt said so or named a runtime path, and two writers
+#:   (cycle 8 co-op sess_ece9a0e5c44e4650, cycle 9 smoke A
+#:   sess_83c0da8c463948fd) left vendor/ out of the image -- the second one
+#:   wrote why into its Dockerfile: "absent from a writer's staging checkout
+#:   ... so neither is listed here". The paths the app's loader reads are now
+#:   read off the product's lock (image_sufficiency.runtime_paths, data) and
+#:   rendered as BUILD CONTEXT: what the image must COPY and .dockerignore
+#:   must keep, sealed for the writer, absent from its checkout.
 #: v11 -- THE UI BAR, HELD. The prompt told the agent "a UI nothing builds is
 #:   decoration, and the gate refuses it" and that answers carry an authority
 #:   label. ui_e2e filed both as `advisory` and returned ok=True, with a note
@@ -84,7 +95,7 @@ from app.factory.build.acceptance_floor import (
 #:   contract from red tests, one rework round per file. v3 names what the
 #:   factory backfills (data_lifecycle.platform_substrate) and what the agent
 #:   owns (store.py, 0001_baseline), with the exact surface the suite calls.
-PROMPT_VERSION = "writer_worker_prompt.v12"
+PROMPT_VERSION = "writer_worker_prompt.v13"
 
 _TEMPLATE = """You are the WRITER role of the CerebrumDev factory, manufacturing a
 governed platform. Work headless in this checkout. Produce real, runnable
@@ -130,7 +141,7 @@ missing file is a missing gate, so write it all under this checkout root:
   one of the Factory's files listed under FACTORY-OWNED FILES)
 - frontend/src/App.tsx, Dockerfile, README.md, requirements.txt
 
-FACTORY-OWNED FILES -- the Factory renders these into the product before or
+{build_context}FACTORY-OWNED FILES -- the Factory renders these into the product before or
 after your pass. Never create, edit or delete one: a pass that touches one
 is sent back to rework naming the file, and the Factory's version is kept.
 {factory_owned}
@@ -319,6 +330,38 @@ def _factory_owned_lines() -> str:
     return "\n".join(f"- {rel}" for rel in factory_owned_paths())
 
 
+def _build_context_section(runtime_paths: Sequence[str]) -> str:
+    """What the image must carry that this checkout does not show.
+
+    Built only from the paths handed in (the product's locked paths), grouped
+    by their top-level directory -- the unit a COPY line carries. No path, no
+    section."""
+    roots: Dict[str, List[str]] = {}
+    for raw in runtime_paths or ():
+        rel = str(raw or "").replace("\\", "/").strip("/")
+        if not rel:
+            continue
+        roots.setdefault(rel.split("/", 1)[0], []).append(rel)
+    if not roots:
+        return ""
+    lines = [
+        "BUILD CONTEXT -- the Dockerfile is built from the PRODUCT tree, not from",
+        "this checkout alone. Your pass is merged over the product the Factory has",
+        "already assembled, and the image is built from the merged tree. The app",
+        "loads the paths below at runtime. They are already in the product tree,",
+        "sealed -- never create, edit or delete them -- and they are",
+        "not in this checkout: their absence here is not absence from the build.",
+        "The Dockerfile's final stage must COPY each directory below into the image",
+        "under its WORKDIR (COPY . . does, or one COPY line per directory), and",
+        ".dockerignore must not exclude it. The writer gate lays the image out from",
+        "the merged tree and refuses one that cannot load them.",
+    ]
+    for root in sorted(roots):
+        lines.append(f"- {root}/")
+        lines.extend(f"    {rel}" for rel in sorted(set(roots[root])))
+    return "\n".join(lines) + "\n\n"
+
+
 def render_writer_prompt(
     blueprint: Any,
     *,
@@ -326,6 +369,7 @@ def render_writer_prompt(
     version: str = PROMPT_VERSION,
     resume: bool = False,
     specialist_workers: int = 1,
+    runtime_paths: Sequence[str] = (),
 ) -> str:
     """Fill the template from the brief. Deterministic by construction.
 
@@ -334,6 +378,10 @@ def render_writer_prompt(
     worker budget and passes it in -- rendering stays a pure function of its
     arguments, and the template never hardcodes a number that would be wrong
     on the next plan.
+
+    ``runtime_paths`` are the paths the app's loader reads at runtime, read
+    by the caller off the product tree (image_sufficiency.runtime_paths) --
+    the writer's checkout may not show them, and the image must carry them.
 
     Brief/summary text is inserted verbatim: str.format interprets braces
     only in the template, never in values, so user/model content passes
@@ -351,6 +399,7 @@ def render_writer_prompt(
         brief=(brief or "").strip(),
         specialist_workers=max(1, int(specialist_workers or 1)),
         factory_owned=_factory_owned_lines(),
+        build_context=_build_context_section(runtime_paths),
         # The Store gate's own checklist, rendered from the file the gate
         # grades against. The agent used to be judged on thirteen checks it
         # was never shown, and discovered them one rework round at a time.
