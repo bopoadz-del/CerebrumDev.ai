@@ -36,6 +36,7 @@ on:
       - "backend/app/factory/build/branch_attach.py"
       - "backend/app/factory/build/build_level.py"
       - "backend/app/factory/build/builds_push.py"
+      - "backend/app/factory/build/concurrency_floor.py"
       - "backend/app/factory/build/data_lifecycle.py"
       - "backend/app/factory/build/dependency_pins.py"
       - "backend/app/factory/build/deploy.py"

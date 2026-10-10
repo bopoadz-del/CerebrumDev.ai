@@ -569,6 +569,9 @@ def failing_tests_from_junit(workspace: Path, junit_path: Path) -> Optional[List
                 "exc_type": (problem.get("type") or "").rsplit(".", 1)[-1],
                 # The innermost frame of the traceback: where it actually broke.
                 "innermost": frames[-1].replace("\\", "/") if frames else "",
+                # Every frame, outermost first: a library that raised under a
+                # product call has the product on its stack (failure_owner).
+                "frames": [f.replace("\\", "/") for f in frames],
                 "text": (problem.text or "")[:4000],
             }
         )
@@ -675,8 +678,9 @@ def _verdict_from_junit(
                     k: f[k]
                     for k in (
                         "nodeid", "file", "name", "kind", "message", "innermost",
-                        "placeholder_refusals", "capabilities",
+                        "frames", "placeholder_refusals", "capabilities",
                     )
+                    if k in f
                 }
                 for f in failing
             ],

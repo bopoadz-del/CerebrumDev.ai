@@ -26,10 +26,10 @@ from app.factory.build import factory_owned
 
 
 def _allowed_absent(blueprint, ctx=None) -> set:
-    from app.factory.build.builds_push import STORE_GATE_PATH
     from app.factory.build.placeholder_connectors import CONTRACT_TEST, render_contract_tests
 
-    allowed = {STORE_GATE_PATH}
+    # The Store gate's files are carried in from cerebrum-builds, not rendered.
+    allowed = set(factory_owned.carried_paths())
     if not render_contract_tests(blueprint, {}):
         allowed.add(CONTRACT_TEST)  # the blueprint declares no placeholder connector
     if ctx is not None:

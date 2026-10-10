@@ -3865,15 +3865,40 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
     from app.factory.build.writer_prompt import render_writer_prompt
 
     dest = persist_workspace_root(ctx.workspace)
-    prompt = render_writer_prompt(
-        ctx.blueprint,
-        brief=_compiled_writer_brief(ctx),
-        resume=bool(ctx.state.get("writer_resumed")),
-        # How many specialist agents this instance can carry at once. Read
-        # here, not in the template: it follows the worker profile and the
-        # operator override instead of going stale on the next plan.
-        specialist_workers=writer_specialist_cap(),
-    )
+    from app.factory.build.image_sufficiency import locked_entries as image_locked_entries
+    from app.factory.build.image_sufficiency import runtime_paths as image_runtime_paths
+
+    product_tree = Path(getattr(ctx.workspace, "destination", None) or dest)
+
+    def _render_prompt(owned):
+        # Rendered after the Factory has stamped its files, so the prompt
+        # names the owned set DERIVED for this tree (owned_registry).
+        return render_writer_prompt(
+            ctx.blueprint,
+            brief=_compiled_writer_brief(ctx),
+            resume=bool(ctx.state.get("writer_resumed")),
+            # How many specialist agents this instance can carry at once. Read
+            # here, not in the template: it follows the worker profile and the
+            # operator override instead of going stale on the next plan.
+            specialist_workers=writer_specialist_cap(),
+            # What the image must carry, read off the PRODUCT tree's lock: the
+            # writer's checkout is the staging tree, which does not show the
+            # CLONER's stock, and two writers left it out of the image because
+            # nothing named it (cycles 8 and 9). Only the ones the checkout does
+            # not show: those are the ones the prompt says are absent from it.
+            runtime_paths=[
+                rel
+                for rel in image_runtime_paths(product_tree)
+                if not (Path(dest) / rel).exists()
+            ],
+            # Where each locked block must load from -- every one, shown in the
+            # checkout or not. The WRITER gate refuses a block loaded from any
+            # other copy; two cycle-9 writers did exactly that because the rule
+            # was nowhere in the prompt (co-op, craft marketplace).
+            locked_blocks=image_locked_entries(product_tree),
+            factory_owned=owned,
+        )
+
     try:
         # The writer narrates itself on the Floor: CLI progress lines
         # become throttled ledger NOTEs (one per ~3s), so build-status
@@ -3988,7 +4013,8 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
                     stage="factory-owned",
                     source="factory",
                 )
-        owned_before = factory_owned.snapshot(Path(dest))
+        owned_before = factory_owned.snapshot(Path(dest), also=(product_tree,))
+        prompt = _render_prompt(tuple(owned_before))
         try:
             receipt = run_worker_job(
                 prompt,
@@ -4052,7 +4078,9 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
     # each one.
     from app.factory.build import factory_owned
 
-    touched = factory_owned.writer_touched(owned_before, factory_owned.snapshot(Path(dest)))
+    touched = factory_owned.writer_touched(
+        owned_before, factory_owned.snapshot(Path(dest), paths=list(owned_before))
+    )
     if touched:
         factory_owned.restore(Path(dest), owned_before, touched)
         ctx.note(
@@ -4280,62 +4308,44 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
             location="WRITER",
             notes={"codewhale_worker": receipt.to_dict()},
         )
-    # docs/build_provenance.json is part of WRITER's contract. It is the
-    # FACTORY's record and does not ship (builds_push.FACTORY_INTERNAL_PATHS);
-    # scripts/release_gate.py used to fail the image build without it, which
-    # reported 0/13 on platforms whose suite passed, and no longer reads it as
-    # a requirement. run_writer() writes it, but far below its CodeWhale early
-    # return, so on the production path it only existed when the agent
-    # happened to write one itself (live: the vet build had it and went 13/13;
-    # the dental build did not and died in Docker on exactly this line).
-    # Written here when absent, attributed from what is actually on disk;
-    # an agent-written manifest is left alone.
-    prov_rel = Path("docs") / "build_provenance.json"
-    if not ctx.workspace.exists(prov_rel):
-        handler_ids = list(authored or carried_over)
-        ctx.workspace.write_text(
-            prov_rel,
-            json.dumps(
-                {
-                    "schema_version": "build_provenance.v1",
-                    "product_id": getattr(ctx.blueprint, "product_id", "unknown"),
-                    "product_name": getattr(ctx.blueprint, "product_name", ""),
-                    "engine": "codewhale_worker",
-                    "artifact_sources": {
-                        f"app/actions/{hid}.py": "coder CLI (codewhale exec)"
-                        for hid in handler_ids
-                    },
-                    # Read by the product's own acceptance.py (authorship_floor,
-                    # the 13th check) via full_pilot_authorship_from: without
-                    # these the image builds and then fails the floor.
-                    "authorship": {
-                        "action_py": len(handler_ids),
-                        "agent_artifacts": list(handler_ids),
-                        "cli_authored_ids": list(handler_ids),
-                    },
-                    "n_required": len(
-                        list(getattr(ctx.blueprint, "capabilities", None) or [])
-                    )
-                    or len(handler_ids),
-                    "written_by": "factory (the agent did not emit a manifest)",
-                    "worker": {
-                        "status": receipt.status,
-                        "provider": getattr(receipt, "provider", ""),
-                        "model": getattr(receipt, "model", ""),
-                        "tools": len(receipt.tools),
-                    },
-                },
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
-        )
-        ctx.note(
-            "docs/build_provenance.json written by the factory (the agent did "
-            "not emit one; the product image cannot build without it)",
-            stage="provenance",
-            source="factory",
-        )
+    # docs/build_provenance.json is part of WRITER's contract and the
+    # FACTORY's record (factory_owned.BUILD_RECORD_REL; it does not ship --
+    # builds_push.FACTORY_INTERNAL_PATHS). Rendered before the pass, and here
+    # again from the stamped handlers on disk, every pass: a writer's own
+    # version was restored above and re-prompted by name. Live cycle 9
+    # vineyard (sess_a7c02f0cf81a4178): the Factory left an agent-written
+    # record alone, it named no handler, and a 22/22 build graded action_py=0.
+    from app.factory.build.build_provenance import (
+        BUILD_RECORD_REL,
+        build_record_text,
+        carried_record_fields,
+    )
+
+    handler_ids = list(authored or carried_over)
+    previous = Path(getattr(ctx.workspace, "destination", None) or dest) / BUILD_RECORD_REL
+    from app.factory.build.owned_registry import write_owned
+
+    write_owned(
+        ctx.workspace,
+        BUILD_RECORD_REL,
+        build_record_text(
+            ctx.blueprint,
+            handler_ids,
+            worker={
+                "status": receipt.status,
+                "provider": getattr(receipt, "provider", ""),
+                "model": getattr(receipt, "model", ""),
+                "tools": len(receipt.tools),
+            },
+            carried=carried_record_fields(previous),
+        ),
+    )
+    ctx.note(
+        f"{BUILD_RECORD_REL} rendered by the factory from the {len(handler_ids)} "
+        "stamped handler(s) on disk",
+        stage="provenance",
+        source="factory",
+    )
     return RoleResult(
         ok=True,
         detail=(

@@ -421,10 +421,16 @@ class TestProvenanceOnTheProductionPath:
         floor = full_pilot_authorship_from(prov, tmp_path / "build")
         assert floor.meets_floor, (floor.need, floor.action_py, floor.cli_authored_ids)
 
-    def test_an_agent_written_manifest_is_left_alone(self, tmp_path, monkeypatch):
+    def test_an_agent_written_manifest_never_stands(self, tmp_path, monkeypatch):
+        """Superseded rule (owner, cycle 9): the record is the Factory's. An
+        agent-written one was left alone, and the vineyard anchor
+        (sess_a7c02f0cf81a4178) graded 8 stamped handlers as action_py=0
+        from the writer's own record. The Factory renders it from disk."""
         mine = {"schema_version": "build_provenance.v1", "artifact_sources": {"x": "coder CLI"}, "by": "agent"}
 
-        assert self._run(tmp_path, monkeypatch, agent_wrote=mine) == mine
+        prov = self._run(tmp_path, monkeypatch, agent_wrote=mine)
+        assert "by" not in prov and prov["written_by"].startswith("factory")
+        assert prov["artifact_sources"] == {"app/actions/cap.py": "coder CLI (codewhale exec)"}
 
 
 class TestEveryStampedSuiteImportsSomethingProductionWrites:

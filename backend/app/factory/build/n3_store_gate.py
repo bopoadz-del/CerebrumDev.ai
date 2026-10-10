@@ -221,23 +221,34 @@ def dispatch_store_gate(
     *,
     env: Optional[Mapping[str, str]] = None,
     opener: Callable[..., Any] = urlopen,
-) -> None:
-    """Trigger the cerebrum-builds store-gate workflow for *branch*.
+    carry: Optional[Callable[..., str]] = None,
+) -> str:
+    """Trigger the cerebrum-builds store-gate workflow for *branch*; return
+    the sha the gate will judge ('' when the builds repo is not armed).
 
     The handoff pushes the workspace with a GitHub App token
     (x-access-token), and pushes made with App tokens do NOT trigger
     workflow runs on GitHub. Without an explicit dispatch the store-gate
     never runs and the build waits in HANDOFF_TO_N3 forever (live retail
-    build sess_c8b01eb6de53495c). Best-effort: the handoff already
-    fail-closed if the push itself failed.
+    build sess_c8b01eb6de53495c).
+
+    The dispatch runs the gate from the branch's OWN tree, so ``main``'s whole
+    gate is carried onto the branch first (branch_attach.carry_gate_onto_branch;
+    a no-op when the branch already carries it). A branch whose gate predates a
+    fix would otherwise be judged by the old gate (live 2026-10-10, run
+    38040326004: a false 22/22). A carry that cannot be made raises -- nothing
+    is dispatched on a gate that is not main's.
     """
     blob = env if env is not None else os.environ
     token = builds_token(blob)
     if not token:
-        return
+        return ""
     owner, _name, _url = parse_builds_repo(blob)
     from app.factory.build.builds_push import github_request
 
+    if carry is None:
+        from app.factory.build.branch_attach import carry_gate_onto_branch as carry
+    gated = str(carry(branch, blob) or "").strip()
     github_request(
         "POST",
         f"/repos/{owner}/{_name}/actions/workflows/store-gate.yml/dispatches",
@@ -245,6 +256,7 @@ def dispatch_store_gate(
         opener=opener,
         body={"ref": branch},
     )
+    return gated
 
 
 def handoff_awaiting_n3(output_dir: Path | str) -> bool:

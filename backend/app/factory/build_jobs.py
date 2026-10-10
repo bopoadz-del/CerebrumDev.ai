@@ -555,6 +555,46 @@ def _cycle_fields(ledger: Any, terminal: Any) -> Dict[str, Any]:
     }
 
 
+def _handler_sources_on_disk(root: Path) -> Dict[str, str]:
+    """``{"app/actions/<id>.py": the source its AUTHORED_BY marker names, or
+    ''}`` for every handler file in the tree -- the Factory-side evidence of
+    who wrote it (the marker the WRITER gate reads)."""
+    from app.factory.build.authorship import action_artifact_id, marker_source
+
+    actions = root / "app" / "actions"
+    found: Dict[str, str] = {}
+    if not actions.is_dir():
+        return found
+    for path in sorted(actions.glob("*.py")):
+        rel = f"app/actions/{path.name}"
+        if action_artifact_id(rel) is None:
+            continue
+        try:
+            found[rel] = marker_source(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+    return found
+
+
+def _factory_build_record(root: Path) -> Dict[str, Any]:
+    """The build record, only when the FACTORY wrote it: it is in the tree's
+    owned set (owned_registry -- registered by the renderer at write time).
+    A record the writer wrote is not evidence and reads as empty."""
+    import json
+
+    from app.factory.build.build_provenance import BUILD_RECORD_REL
+    from app.factory.build.owned_registry import is_registered
+
+    path = root / BUILD_RECORD_REL
+    if not path.is_file() or not is_registered(BUILD_RECORD_REL, root):
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def _authorship(
     output_dir: Path | str,
     *,
@@ -568,35 +608,31 @@ def _authorship(
     them"). A background build cannot: nothing is stubbed yet when it
     starts. Moving the disclosure to the completion status is what keeps it
     truthful -- degraded output is acceptable, invisible degradation is not.
-    """
-    import json
 
-    manifest = Path(output_dir) / "docs" / "build_provenance.json"
-    if not manifest.is_file():
-        return {}
-    try:
-        prov = json.loads(manifest.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+    Counted ONLY from Factory-side evidence (owner spec, cycle 9): each
+    handler's AUTHORED_BY marker on disk, and the build record when the
+    Factory wrote it (its owned set says so). Never a json the writer wrote:
+    live vineyard (sess_a7c02f0cf81a4178, build/plt_7232365d00e34f53) wrote
+    its own docs/build_provenance.json naming no handler, and a 22/22 build
+    with 8 stamped handlers graded action_py=0.
+    """
+    root = Path(output_dir)
     from app.factory.build.authorship import (
+        action_artifact_ids,
         cli_authored_ids_from,
         coding_agent_artifact_ids,
-        action_artifact_ids,
         kept_handler_ids_from,
         n_required_capabilities_from,
         writer_authorship_counts,
     )
 
-    sources = prov.get("artifact_sources") or {}
+    prov = _factory_build_record(root)
+    sources = _handler_sources_on_disk(root)
+    if not sources and not prov:
+        return {}
     counts = writer_authorship_counts(sources)
     agent = coding_agent_artifact_ids(sources)
     action_ids = action_artifact_ids(agent)
-    # Capability work, counted apart from the factory's own plumbing. The
-    # templated-majority rule compared ALL artifacts, so the substrate the
-    # factory is supposed to write (alembic, authority, block_inputs, the
-    # backfilled lifecycle files) counted against the agent: FinOps
-    # (sess_065fc3eac75c4f62) graded "overwhelmingly templated" at 13 vs 13
-    # with every one of its 8 handlers agent-written.
     all_action_ids = action_artifact_ids(sources.keys())
     dispatch = prov.get("brief_dispatch") or {}
     cli_ids = cli_authored_ids_from(dispatch)

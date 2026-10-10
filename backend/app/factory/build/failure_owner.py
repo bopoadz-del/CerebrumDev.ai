@@ -105,6 +105,22 @@ def _asserts_a_comparison(text: str) -> bool:
     return False
 
 
+def _product_on_stack(row: Dict[str, Any]) -> bool:
+    """A library raised with the product's code on the stack beneath the test:
+    the innermost frame is neither the product nor the suite, and a frame
+    between them is ``app/**`` (typed ``frames``, outermost first). The product
+    made the call that failed, so the writer can fix it. Live cycle 9 smoke B:
+    app/store.py -> sqlalchemy pool TimeoutError, billed FACTORY on the
+    innermost frame alone."""
+    frames = [str(f or "").replace("\\", "/") for f in (row.get("frames") or ())]
+    if not frames:
+        return False
+    innermost = frames[-1]
+    if innermost.startswith(("app/", "tests/")):
+        return False
+    return any(f.startswith("app/") for f in frames[:-1])
+
+
 def _is_product_failure(row: Dict[str, str]) -> bool:
     """The product, not the test code, is why this row is red.
 
@@ -122,7 +138,7 @@ def _is_product_failure(row: Dict[str, str]) -> bool:
     is the test code or its mined contract breaking -- that stays the factory's.
     """
     innermost = str(row.get("innermost") or "")
-    if innermost.startswith("app/") or "/app/" in innermost:
+    if innermost.startswith("app/") or "/app/" in innermost or _product_on_stack(row):
         return True
     if not _is_assertion_failure(row):
         return False
@@ -220,6 +236,7 @@ def classify(
             is_product = (
                 innermost.startswith("app/")
                 or "/app/" in innermost
+                or _product_on_stack(row)
                 or (rel in behavior and _is_assertion_failure(row))
             )
         else:
