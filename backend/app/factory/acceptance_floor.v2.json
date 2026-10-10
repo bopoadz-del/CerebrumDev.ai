@@ -1,6 +1,6 @@
 {
   "schema": "acceptance_floor.v2",
-  "version": 7,
+  "version": 8,
   "note": "ONE SPEC, TWO CONSUMERS. The C-BRIEF renders `requirement` into the coder's prompt so it builds toward the floor on the first pass; the Store gate executes `check` as its checklist. Neither side is hand-edited and neither may carry its own copy -- test_acceptance_floor_is_one_source fails if they drift. Order is the gate's reporting order and `authorship_floor` stays last. Every check also declares `subject` -- what it judges: `runtime` (the booted product's answers), `tree:<path>` (a file or directory in the tree) or `factory_record` (the Factory's own bookkeeping). The owner of a failure is DERIVED from that subject and from who wrote it (acceptance_floor.owner_of): a file the Factory renders is the Factory's failure wherever it lands, never the product's. There is no list of check names anywhere that says who owns what.",
   "checks": [
     {
@@ -109,6 +109,15 @@
       "brief_render": "- cross_tenant_404: A record belonging to another tenant is invisible: reading it answers 404, never 403 and never the record. Tenancy is resolved from the authenticated principal, never from the payload.",
       "gate_fn": "check_cross_tenant_404",
       "check": "another tenant's record answers 404",
+      "universal": true,
+      "subject": "runtime"
+    },
+    {
+      "id": "concurrent_writes_hold",
+      "requirement_text": "Every write path holds under concurrency: N simultaneous creates on each capability that persists a record all answer the declared success with their own stored id, and all N are stored -- through the HTTP route and through app.store.save from N threads. N is twice the database pool's capacity (pool_size + max_overflow of the engine app.db builds; the library default 5 + 10 when none is configured) and never fewer than the sync threadpool (FASTAPI_SYNC_THREADPOOL). Never hold a pooled connection while checking out another (e.g. save() calling get() on a fresh connection): that exhausts the pool and fails this.",
+      "brief_render": "- concurrent_writes_hold: Every write path holds under concurrency: N simultaneous creates on each capability that persists a record all answer the declared success with their own stored id, and all N are stored -- through the HTTP route and through app.store.save from N threads. N is twice the database pool's capacity (pool_size + max_overflow of the engine app.db builds; the library default 5 + 10 when none is configured) and never fewer than the sync threadpool (FASTAPI_SYNC_THREADPOOL). Never hold a pooled connection while checking out another (e.g. save() calling get() on a fresh connection): that exhausts the pool and fails this.",
+      "gate_fn": "check_concurrent_writes_hold",
+      "check": "N = 2x pool capacity concurrent creates per write path, all stored",
       "universal": true,
       "subject": "runtime"
     },

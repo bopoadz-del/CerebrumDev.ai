@@ -1008,6 +1008,11 @@ def render_acceptance_script(blueprint: Any = None) -> str:
     _CREATE_THROUGH_DECLARED_ENTITY = "\n".join(
         [*render_payload_helpers(), ENTITY_RESOLVER_SRC]
     )
+    # The concurrency floor: every declared write path driven at 2x the
+    # product's pool capacity (app/factory/build/concurrency_floor.py).
+    from app.factory.build.concurrency_floor import render_concurrent_writes
+
+    _CONCURRENT_WRITES = render_concurrent_writes()
     return _with_deploy_time_settings(f'''#!/usr/bin/env python3
 """Store-green acceptance — ≥12 measured checks. Presence-only is a fail.
 
@@ -1248,7 +1253,7 @@ class _Url:
             hdrs.setdefault("Content-Type", "application/json")
         req = urllib.request.Request(self.base + path, data=data, headers=hdrs, method=method.upper())
         try:
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            with urllib.request.urlopen(req, timeout=_kw.get("timeout") or 8) as resp:
                 return _Resp(resp.status, resp.read(), resp.headers)
         except urllib.error.HTTPError as exc:
             return _Resp(exc.code, exc.read(), exc.headers)
@@ -2341,6 +2346,7 @@ def check_cross_tenant_404(http: _Http) -> Tuple[str, str]:
             os.environ["TENANT_TOKENS"] = previous
 
 
+{_CONCURRENT_WRITES}
 {_RENDERED_MARKER_READER}
 
 def check_authorship_floor() -> Tuple[str, str]:
