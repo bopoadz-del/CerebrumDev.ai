@@ -8,13 +8,24 @@ change: bump the version, log it, re-run the determinism test.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from app.factory.build.acceptance_floor import (
     render_for_prompt as render_acceptance_floor,
 )
 
 #: Version log.
+#: v14 -- THE LOAD RULE, STATED. The WRITER gate refuses a locked block that
+#:   loads from anywhere but its locked path (image_sufficiency._misloaded);
+#:   the prompt never said so. Two cycle-9 writers loaded every block from a
+#:   copy they could see -- the runtime package the locked file imports (co-op
+#:   sess_e41f2375a98342d1) and a re-implementation under app/ (craft
+#:   marketplace sess_97062cf0afd54e2a, which fixed it on rework, then lost it
+#:   on a later pass that started from an empty checkout and a work list that
+#:   no longer named it). LOCKED BLOCKS now states the rule on every pass,
+#:   with each locked block's module files read off the product's lock
+#:   (image_sufficiency.locked_entries, data), whether or not the checkout
+#:   shows them.
 #: v13 -- THE BUILD CONTEXT, NAMED. The writer works in a staging checkout
 #:   that starts empty; the CLONER's vendored blocks live only in the product
 #:   tree its pass is merged into, which is what the Dockerfile is built from.
@@ -95,7 +106,7 @@ from app.factory.build.acceptance_floor import (
 #:   contract from red tests, one rework round per file. v3 names what the
 #:   factory backfills (data_lifecycle.platform_substrate) and what the agent
 #:   owns (store.py, 0001_baseline), with the exact surface the suite calls.
-PROMPT_VERSION = "writer_worker_prompt.v13"
+PROMPT_VERSION = "writer_worker_prompt.v14"
 
 _TEMPLATE = """You are the WRITER role of the CerebrumDev factory, manufacturing a
 governed platform. Work headless in this checkout. Produce real, runnable
@@ -141,7 +152,7 @@ missing file is a missing gate, so write it all under this checkout root:
   one of the Factory's files listed under FACTORY-OWNED FILES)
 - frontend/src/App.tsx, Dockerfile, README.md, requirements.txt
 
-{build_context}FACTORY-OWNED FILES -- the Factory renders these into the product before or
+{locked_blocks}{build_context}FACTORY-OWNED FILES -- the Factory renders these into the product before or
 after your pass. Never create, edit or delete one: a pass that touches one
 is sent back to rework naming the file, and the Factory's version is kept.
 {factory_owned}
@@ -362,6 +373,33 @@ def _build_context_section(runtime_paths: Sequence[str]) -> str:
     return "\n".join(lines) + "\n\n"
 
 
+def _locked_blocks_section(locked_blocks: Mapping[str, Sequence[str]]) -> str:
+    """Where each locked block loads from, and the rule the WRITER gate holds.
+
+    Built only from the entries handed in (``{block id: module files under its
+    locked path}``, read off the product's lock); no entry, no section."""
+    rows = []
+    for bid in sorted(locked_blocks or {}):
+        files = sorted({str(f or "").replace("\\", "/").strip("/") for f in locked_blocks[bid] or ()} - {""})
+        if bid and files:
+            rows.append(f"- {bid}: " + ", ".join(files))
+    if not rows:
+        return ""
+    lines = [
+        "LOCKED BLOCKS -- blocks.lock.json pins each block below to one path in the",
+        "product tree. The app's block loader (app.dispatch.load_block) must load",
+        "each one from the file(s) listed for it, and from nowhere else: not from a",
+        "package that file itself imports, not from a copy or a re-implementation",
+        "under app/, not from whatever your checkout happens to show.",
+        "A locked block absent from its path is an error raised at start-up,",
+        "never a fallback. The writer gate imports the app inside the image and",
+        "refuses any locked block whose load did not read its locked path. This",
+        "holds on every pass, including a rework for another finding.",
+        *rows,
+    ]
+    return "\n".join(lines) + "\n\n"
+
+
 def render_writer_prompt(
     blueprint: Any,
     *,
@@ -370,6 +408,7 @@ def render_writer_prompt(
     resume: bool = False,
     specialist_workers: int = 1,
     runtime_paths: Sequence[str] = (),
+    locked_blocks: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> str:
     """Fill the template from the brief. Deterministic by construction.
 
@@ -382,6 +421,10 @@ def render_writer_prompt(
     ``runtime_paths`` are the paths the app's loader reads at runtime, read
     by the caller off the product tree (image_sufficiency.runtime_paths) --
     the writer's checkout may not show them, and the image must carry them.
+
+    ``locked_blocks`` are the module files under each locked block's path
+    (image_sufficiency.locked_entries), read the same way: what the app's
+    loader must load each locked block from.
 
     Brief/summary text is inserted verbatim: str.format interprets braces
     only in the template, never in values, so user/model content passes
@@ -400,6 +443,7 @@ def render_writer_prompt(
         specialist_workers=max(1, int(specialist_workers or 1)),
         factory_owned=_factory_owned_lines(),
         build_context=_build_context_section(runtime_paths),
+        locked_blocks=_locked_blocks_section(locked_blocks or {}),
         # The Store gate's own checklist, rendered from the file the gate
         # grades against. The agent used to be judged on thirteen checks it
         # was never shown, and discovered them one rework round at a time.
